@@ -10,6 +10,9 @@
 //       Fails unless the three files agree (and match the tag, when given). Used by the pipeline.
 //   pnpm release --print
 //       Prints the current version.
+//   pnpm release --sync
+//       Copies the version in package.json to the other files and prints it. The Release workflow
+//       runs it on every push to main, so bumping package.json alone is enough to release.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -77,7 +80,12 @@ function setVersion(next) {
 const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
 
 const args = process.argv.slice(2);
-if (args.includes("--print")) {
+if (args.includes("--sync")) {
+  const version = JSON.parse(read(files.pkg)).version;
+  if (!SEMVER.test(version)) fail(`package.json has "${version}", not a version like 1.2.3`);
+  setVersion(version);
+  console.log(check());
+} else if (args.includes("--print")) {
   console.log(check());
 } else if (args.includes("--check")) {
   const tag = args.find((a) => a !== "--check");

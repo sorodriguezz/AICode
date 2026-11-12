@@ -1,9 +1,11 @@
 # Builds AICode and publishes it as a GitHub release: a .dmg to download and install, and the signed
 # update archives + latest.json that "Check for Updates…" in the app reads.
 #
-# Start it with `pnpm release patch --push` (or minor / major / 1.2.3), which sets the version,
-# tags vX.Y.Z and pushes. Or run it by hand from the Actions tab: it releases the version in
-# package.json.
+# Runs on every push to main and releases the version in package.json — so to release, change
+# "version" in package.json and push. If vX.Y.Z is already released, the push does nothing.
+# The workflow copies the version to src-tauri/Cargo.toml, tauri.conf.json and Cargo.lock (one
+# "chore(release): vX.Y.Z" commit on main when they differ), tags vX.Y.Z and builds that tag.
+# It can also be run by hand from the Actions tab, which does the same.
 #
 # Secrets (Settings → Secrets and variables → Actions):
 #   TAURI_SIGNING_PRIVATE_KEY           required — contents of ~/.tauri/aicode.key
@@ -20,7 +22,7 @@ name: Release
 
 on:
   push:
-    tags: ["v*.*.*"]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -38,28 +40,39 @@ jobs:
     name: Prepare release
     runs-on: ubuntu-latest
     outputs:
+      release: ${{ steps.version.outputs.release }}
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      sha: ${{ steps.tag.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
 
-      - name: Check the version
+      - name: Read the version in package.json
         id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            node scripts/release.mjs --check "$GITHUB_REF_NAME"
-          else
-            node scripts/release.mjs --check
-          fi
-          version=$(node scripts/release.mjs --print)
+          version=$(node -p 'require("./package.json").version')
+          tag="v$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ "$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)" = "false" ]; then
+            echo "$tag is already released: nothing to do. To release, change \"version\" in package.json." >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::$tag is already released. Change \"version\" in package.json to make a new release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Releasing $tag." >> "$GITHUB_STEP_SUMMARY"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Check the signing key is set
+        if: steps.version.outputs.release == 'true'
         env:
           KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
@@ -68,25 +81,52 @@ jobs:
             exit 1
           fi
 
+      # The tag can already exist (made by "pnpm release", or by a run that failed later): then
+      # build it as it is. Otherwise copy the version to the other files, commit that to main when
+      # something changed, and tag it.
+      - name: Tag the release
+        id: tag
+        if: steps.version.outputs.release == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            git checkout -q "$TAG"
+            node scripts/release.mjs --check "$TAG"
+          else
+            if [ "$GITHUB_REF_NAME" != "main" ]; then
+              echo "::error::Run the release from main (this run is on $GITHUB_REF_NAME)."
+              exit 1
+            fi
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            node scripts/release.mjs --sync
+            if [ -n "$(git status --porcelain)" ]; then
+              git commit -qam "chore(release): $TAG"
+            fi
+            git tag -a "$TAG" -m "AICode $VERSION"
+            git push --atomic origin HEAD:main "$TAG"
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Create the draft release
+        if: steps.version.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ steps.tag.outputs.sha }}
         run: |
-          if gh release view "$TAG" --json isDraft --jq .isDraft > is_draft 2>/dev/null; then
-            if [ "$(cat is_draft)" = "true" ]; then
-              echo "Re-using the draft release $TAG."
-              exit 0
-            fi
-            echo "::error::$TAG is already released. Set a new version with: pnpm release patch --push"
-            exit 1
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Re-using the draft release $TAG."
+            exit 0
           fi
 
           # What changed since the last release, from the commits and pull requests.
           previous=$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')
           gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
-            -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" ${previous:+-f previous_tag_name="$previous"} \
+            -f tag_name="$TAG" -f target_commitish="$SHA" ${previous:+-f previous_tag_name="$previous"} \
             --jq .body > changes.md
 
           cat > body.md <<EOF
@@ -102,9 +142,10 @@ jobs:
           EOF
           cat changes.md >> body.md
 
-          gh release create "$TAG" --draft --title "AICode $VERSION" --notes-file body.md --target "$GITHUB_SHA"
+          gh release create "$TAG" --draft --title "AICode $VERSION" --notes-file body.md --verify-tag
 
       - name: Keep the release notes for the update feed
+        if: steps.version.outputs.release == 'true'
         run: |
           [ -f changes.md ] || gh release view "${{ steps.version.outputs.tag }}" --json body --jq .body > changes.md
           # The update dialog shows plain text: drop HTML comments and the changelog link line.
@@ -113,6 +154,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - uses: actions/upload-artifact@v4
+        if: steps.version.outputs.release == 'true'
         with:
           name: notes
           path: notes.md
@@ -120,6 +162,7 @@ jobs:
   build:
     name: Build (${{ matrix.arch }})
     needs: prepare
+    if: needs.prepare.outputs.release == 'true'
     strategy:
       fail-fast: true
       matrix:
@@ -136,6 +179,8 @@ jobs:
       TAG: ${{ needs.prepare.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
 
       - uses: pnpm/action-setup@v4
 
@@ -206,6 +251,7 @@ jobs:
   publish:
     name: Publish release
     needs: [prepare, build]
+    if: needs.prepare.outputs.release == 'true'
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -213,6 +259,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
 
       - uses: actions/setup-node@v4
         with:

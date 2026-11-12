@@ -130,17 +130,15 @@ whenever you like. Installing downloads the update, checks its signature, replac
 restarts it — windows, tabs and unsaved text come back as they were (hot exit).
 *Settings → Updates → Check on Startup* (off by default) checks once per launch.
 
-**Making a release**:
-
-```sh
-pnpm release patch --push   # or minor / major / 1.2.3
-```
-
-sets the version in `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json` and
-`Cargo.lock`, commits, tags `vX.Y.Z` and pushes; the tag starts the workflow. The release stays a
-draft until both builds are uploaded, then `latest.json` is written and the release is published,
-so installed copies see it at once. (The workflow can also be run by hand from the Actions tab: it
-releases the version already in `package.json`.)
+**Making a release**: change `"version"` in `package.json` (say `0.2.0`) and push to `main`. The
+workflow runs on every push to `main`; when `v0.2.0` is not released yet it copies the version to
+`src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json` and `Cargo.lock` (a `chore(release): v0.2.0`
+commit on `main` when they differ — `git pull` afterwards), tags `v0.2.0`, builds and publishes it.
+A push that leaves the version as it is does nothing. The release stays a draft until both builds
+are uploaded, then `latest.json` is written and the release is published, so installed copies see
+it at once. `pnpm release patch --push` (or minor / major / 1.2.3) still works: it sets the version
+everywhere, commits, tags and pushes in one step. The workflow can also be run by hand from the
+Actions tab.
 
 **One-time setup** — the repository secrets the workflow needs (*Settings → Secrets and
 variables → Actions*):
@@ -182,7 +180,7 @@ mods/                bundled mods
 docs/MOD-GUIDE.md    JSON mods, for people and AIs (mod.schema.json validates them)
 docs/MODS.md         mods with code
 scripts/release.mjs  sets the version everywhere, tags a release
-.github/workflows/   release.yml: build, sign and publish a release
+.github/workflows/   release.yml: on push to main, build, sign and publish the version in package.json
 ```
 
 ## Not there yet
