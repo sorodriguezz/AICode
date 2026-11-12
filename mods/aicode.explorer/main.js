@@ -56,7 +56,7 @@ body .explorer .tree-row .twistie .codicon { font-size: 16px; }
 `;
 
 export async function activate(ctx) {
-  const { h, icon, iconButton, clear, basename, dirname, joinPath, fileIcon, fileIconColor, fileIconEl } = ctx.ui;
+  const { h, icon, iconButton, clear, basename, dirname, joinPath, fileIcon, fileIconColor, fileIconEl, folderIconEl } = ctx.ui;
   const style = document.createElement("style");
   style.textContent = STYLE;
   document.head.append(style);
@@ -701,6 +701,10 @@ export async function activate(ctx) {
     return el;
   };
 
+  /** A folder's icon when the file icon theme draws folders (VS Code Icons); null with Seti or none. */
+  const folderGlyph = (name, open) => folderIconEl?.(name, open) ?? null;
+  const themeHasFolders = () => !!folderIconEl?.("", false);
+
   const guides = (path, depth, activeDir) => {
     const out = [];
     const parts = rel(path).split("/");
@@ -767,13 +771,15 @@ export async function activate(ctx) {
     if (r.edit) {
       const isFolder = editing.kind === "folder";
       const { input, msg, setGlyph } = editInput(r.depth);
-      const glyph = isFolder ? null : fileGlyph("file");
-      setGlyph(glyph);
+      const withFolders = themeHasFolders();
+      const glyph = isFolder ? (withFolders ? folderGlyph("", false) : null) : fileGlyph("file");
+      setGlyph(isFolder ? null : glyph);
       return h(
         "div",
         { class: "list-row tree-row editing", style: { paddingLeft: `${PAD + r.depth * INDENT}px` } },
         folder() ? guides(joinPath(r.dir, "x"), r.depth, activeDir) : null,
-        h("span", { class: "twistie" }, isFolder ? icon("chevron-right") : glyph),
+        h("span", { class: "twistie" }, isFolder ? icon("chevron-right") : withFolders ? null : glyph),
+        withFolders ? glyph : null,
         input,
         msg,
       );
@@ -798,6 +804,9 @@ export async function activate(ctx) {
       r.setGlyph = setGlyph;
     } else nameEl = h("span", { class: "name", style: color ? { color } : null }, e.name);
     const glyph = e.is_dir ? null : fileGlyph(e.name);
+    // A theme with folder icons: arrow, then the icon (files get an empty arrow column), as VS Code.
+    const folderEl = e.is_dir ? folderGlyph(e.name, open) : null;
+    const withFolders = e.is_dir ? !!folderEl : themeHasFolders();
     if (renaming) r.setGlyph(glyph);
     const badge = dec?.badge && !renaming ? h("span", { class: `deco${e.is_dir ? " dot" : ""}`, style: color ? { color } : null }, e.is_dir ? "•" : dec.badge) : null;
     const el = h(
@@ -833,7 +842,8 @@ export async function activate(ctx) {
       guides(path, r.depth, activeDir),
       // Like VS Code with an icon theme that has no folder icons: a file's icon sits where a
       // folder's arrow would, so files and folders of one level line up.
-      h("span", { class: "twistie" }, e.is_dir ? icon(open ? "chevron-down" : "chevron-right") : glyph),
+      h("span", { class: "twistie" }, e.is_dir ? icon(open ? "chevron-down" : "chevron-right") : withFolders ? null : glyph),
+      withFolders ? folderEl ?? glyph : null,
       nameEl,
       e.is_symlink && !renaming ? h("span", { class: "hint", style: { marginLeft: "6px" } }, icon("arrow-small-right")) : null,
       badge,

@@ -75,6 +75,17 @@ Unsaved text goes along with it.
 `workbench.scrollbars.*`, `workbench.focusOutline`, `workbench.fontFamily`, `workbench.fontSize`,
 `workbench.cornerRadius`, `workbench.titleBar.height`, `workbench.statusBar.height`.
 
+### File icons
+`workbench.iconTheme` picks the icons files and folders show with, from the icon themes mods
+contribute (`contributes.iconThemes`, see [MODS.md](MODS.md)). The File Icon Themes mod
+(`aicode.icons`, on in every profile by default) has `"seti"` (the default, VS Code's), `"vscode-icons"`
+and one pack per stack: `"vscode-icons-angular"`, `-react`, `-nextjs`, `-vue`, `-nestjs`, `-bun`,
+`-spring`, `-dotnet`, `-fastapi`, `-django`, `-laravel` — and `"vscode-icons-auto"`, which draws each
+window with the pack its folder calls for, read off the folder's root (`angular.json`, `nest-cli.json`,
+`package.json` dependencies, a Spring Boot `pom.xml`, `manage.py`, a `.sln`…; General when nothing
+matches), as CodeFlow does. `"none"` (or no icon theme mod) shows plain codicons. *Preferences: File
+Icon Theme…* previews each one as you move through the list.
+
 ### Colors over any theme
 ```jsonc
 "workbench.colorCustomizations": {
@@ -108,7 +119,7 @@ preset. Its commands cycle the material and the strength.
 ### Hide, move, add
 | Setting | What it does |
 |---|---|
-| `workbench.hide` | Part names (`titleBar.mods`, `tab.close`, `activityBar.badge`, `breadcrumbs`…), `"statusBar.item:<id>"` or `"titleBar.item:<id>"` for one item, or `"css:<selector>"` for anything else. |
+| `workbench.hide` | Part names (`titleBar.layoutControls`, `tab.close`, `activityBar.badge`, `breadcrumbs`…), `"statusBar.item:<id>"` or `"titleBar.item:<id>"` for one item, or `"css:<selector>"` for anything else. |
 | `workbench.hiddenViews` | Views taken off the window without turning their mod off (`"scm"`, `"search"`). |
 | `workbench.titleBar.items` | Your own title bar buttons: `[{ "icon": "rocket", "text": "Deploy", "command": "…", "align": "left" \| "center" \| "right" }]`. |
 | `workbench.statusBar.items` | Your own status bar items, in the same shape. |
@@ -118,7 +129,7 @@ preset. Its commands cycle the material and the strength.
 **Part names.** Every part of the window has `data-part="<name>"`:
 
 `titleBar`, `titleBar.nav`, `titleBar.commandCenter`, `titleBar.items`, `titleBar.item`,
-`titleBar.mods`, `titleBar.layoutControls`, `titleBar.pin`, `activityBar`, `activityBar.badge`,
+`titleBar.layoutControls`, `titleBar.pin`, `activityBar`, `activityBar.badge`,
 `sideBar`, `sideBar.header`, `secondarySideBar`, `secondarySideBar.header`, `panel`, `panel.header`,
 `editor`, `tabs`, `tab`, `tab.icon`, `tab.close`, `tab.actions`, `breadcrumbs`, `editorSide`,
 `centerView`, `watermark`, `statusBar`, `statusBar.item`, `sash`, `tooltip`, `windowBackground`.

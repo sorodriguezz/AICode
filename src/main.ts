@@ -14,7 +14,7 @@ import { Workspace } from "./core/workspace";
 import { ModHost, decorations } from "./core/mods";
 import { registerModManager } from "./core/modManager";
 import { applyTheme, BUILTIN_DARK, BUILTIN_LIGHT, ThemeEntry } from "./core/theme";
-import { configureFileIcons } from "./core/fileIcons";
+import { configureFileIcons, setIconTheme, iconThemes, currentIconTheme } from "./core/fileIcons";
 import { quickInput, fuzzyScore, highlight, pick, notify, QuickItem, dialog } from "./core/widgets";
 import { basename, h, icon } from "./core/ui";
 import { motionEnabled, setMotion } from "./core/motion";
@@ -140,8 +140,10 @@ async function boot() {
     editors.useModal = config.core<string>("workbench.editor.useModal", "some") !== "off";
     editors.dragTabsToWindow = config.core("workbench.tabs.dragToWindow", true) !== false;
     if (has("workbench.iconTheme")) {
-      configureFileIcons({ enabled: config.core<string>("workbench.iconTheme", "seti") !== "none" });
-      if (!all) {
+      // An icon theme a mod contributes (contributes.iconThemes), or "none": plain codicons.
+      const before = currentIconTheme();
+      await setIconTheme(config.core<string>("workbench.iconTheme", "seti"));
+      if (!all && currentIconTheme() !== before) {
         editors.refreshTabs();
         decorations.onDidChange.fire(); // lists that show files repaint
       }
@@ -169,6 +171,7 @@ async function boot() {
       applyTheme(entry, await entry.load());
       configureFileIcons({ light: entry.uiTheme === "vs" });
       editors.refreshTabs();
+      decorations.onDidChange.fire(); // icon themes have light variants: lists that show files repaint
       if (persist) await config.update("core", "theme", entry.id);
     } catch (e) {
       notify("error", `Could not load the theme ${entry.label}: ${e}`);
@@ -762,10 +765,19 @@ function registerWorkbenchCommands(
   reg("window.toggleMaximize", "Toggle Maximize", () => getCurrentWindow().toggleMaximize(), "Window");
   reg("preferences.theme", "Color Theme", async () => {
     // Like VS Code: the theme under the keyboard applies right away; Escape puts the old one back.
-    const list = themes();
+    // Dark themes first, then light ones under a line, as VS Code groups them.
+    const isLight = (t: { uiTheme: string }) => t.uiTheme === "vs";
+    const list = [...themes().filter((t) => !isLight(t)), ...themes().filter(isLight)];
     const before = list.find((t) => t.id === currentThemeId());
     let previewing = Promise.resolve();
-    const choice = await pick(list.map((t) => ({ label: t.label, description: t.source === "core" ? "built in" : `from ${t.source}`, id: t.id })), {
+    const firstLight = list.findIndex(isLight);
+    const items = list.map((t, i) => ({
+      label: t.label,
+      description: `${i === 0 ? "dark themes · " : i === firstLight ? "light themes · " : ""}${t.source === "core" ? "built in" : `from ${t.source}`}`,
+      id: t.id,
+      separator: i === firstLight && i > 0,
+    }));
+    const choice = await pick(items, {
       placeholder: "Select Color Theme (Up/Down Keys to Preview)",
       activeIndex: Math.max(0, list.findIndex((t) => t.id === currentThemeId())),
       onActive: (item) => {
@@ -777,6 +789,36 @@ function registerWorkbenchCommands(
     const entry = list.find((t) => t.id === choice?.id);
     if (entry) await setTheme(entry);
     else if (before && before.id !== currentThemeId()) await setTheme(before, false);
+  }, "Preferences");
+  reg("preferences.fileIconTheme", "File Icon Theme", async () => {
+    // Like the color theme: the icons under the keyboard show right away; Escape puts the old ones back.
+    const list = [...iconThemes()];
+    const before = currentIconTheme() ?? "none";
+    const repaint = () => {
+      editors.refreshTabs();
+      decorations.onDidChange.fire(); // lists that show files repaint
+    };
+    let previewing = Promise.resolve();
+    const show = (id: string) => (previewing = previewing.then(async () => {
+      if ((currentIconTheme() ?? "none") === id) return;
+      await setIconTheme(id);
+      repaint();
+    }));
+    const items = [
+      { label: "None", description: "plain icons", id: "none" },
+      ...list.map((t) => ({ label: t.label, description: `from ${t.source}`, id: t.id })),
+    ];
+    if (!list.length) notify("info", "No mod contributes a file icon theme. Turn on File Icon Themes (aicode.icons) in Mods.");
+    const choice = await pick(items, {
+      placeholder: "Select File Icon Theme (Up/Down Keys to Preview)",
+      activeIndex: Math.max(0, items.findIndex((t) => t.id === before)),
+      onActive: (item) => void show(item.id),
+    });
+    await previewing;
+    if (choice) {
+      await show(choice.id);
+      await config.update("core", "workbench.iconTheme", choice.id);
+    } else await show(before);
   }, "Preferences");
   reg("profiles.switch", "Switch Profile…", async (target?: string) => {
     if (typeof target === "string" && target) return switchProfile(target);

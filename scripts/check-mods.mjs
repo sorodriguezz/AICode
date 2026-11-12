@@ -34,6 +34,22 @@ for (const dir of ids) {
     if (m.main && !(m.activation ?? []).some((a) => a === `onView:${v.id}` || a === "onStartup" || a === "*")) fail(dir, `view ${v.id} has no activation event that loads it`);
   }
   for (const t of c.themes ?? []) if (!existsSync(join(base, t.path))) fail(dir, `theme file ${t.path} missing`);
+  // File icon themes: the JSON parses, and every font and picture it names is in the mod.
+  for (const t of c.iconThemes ?? []) {
+    if (!t?.id || !t?.path) { fail(dir, `icon theme without id/path`); continue; }
+    const file = join(base, t.path);
+    if (!existsSync(file)) { fail(dir, `icon theme file ${t.path} missing`); continue; }
+    let theme;
+    try { theme = JSON.parse(readFileSync(file, "utf8")); } catch (e) { fail(dir, `${t.path}: ${e.message}`); continue; }
+    const defs = theme.iconDefinitions ?? {};
+    if (!Object.keys(defs).length) fail(dir, `${t.path}: no iconDefinitions`);
+    const files = new Set([...(theme.fonts ?? []).flatMap((f) => (f.src ?? []).map((s) => s.path)), ...Object.values(defs).map((d) => d.iconPath).filter(Boolean)]);
+    for (const f of files) if (!existsSync(join(dirname(file), f))) fail(dir, `${t.path}: ${f} missing`);
+    for (const tables of [theme, theme.light ?? {}]) {
+      const ids = [tables.file, tables.folder, tables.folderExpanded, ...["fileExtensions", "fileNames", "folderNames", "folderNamesExpanded", "languageIds", "fileNamePatterns", "folderNamePatterns"].flatMap((k) => Object.values(tables[k] ?? {}))];
+      for (const id of new Set(ids.filter(Boolean))) if (!defs[id]) fail(dir, `${t.path}: icon ${id} is not in iconDefinitions`);
+    }
+  }
   for (const s of c.snippets ?? []) if (!existsSync(join(base, s.path))) fail(dir, `snippet file ${s.path} missing`);
   for (const st of c.styles ?? []) {
     const path = typeof st === "string" ? st : st?.path;
@@ -41,6 +57,11 @@ for (const dir of ids) {
     if (!path && typeof st?.css !== "string" && !Array.isArray(st?.css)) fail(dir, `a style needs "path" or "css"`);
   }
   for (const t of c.titleBar ?? []) if (!t?.command) fail(dir, `title bar item ${t?.id ?? "?"} has no command`);
+  if (c.chatAgents) {
+    if (!m.main) fail(dir, `chatAgents needs a main that exports them`);
+    if (!(m.dependencies ?? []).includes("aicode.agents")) fail(dir, `chatAgents needs "aicode.agents" in dependencies`);
+    for (const a of c.chatAgents) if (!a?.id || !a?.name) fail(dir, `a chat agent needs id and name`);
+  }
   if (c.configurationDefaults !== undefined && (typeof c.configurationDefaults !== "object" || Array.isArray(c.configurationDefaults))) fail(dir, `configurationDefaults must be an object`);
   for (const [name, l] of Object.entries(c.windowLayouts ?? {})) {
     if (!l || typeof l !== "object") fail(dir, `window layout ${name} must be an object`);

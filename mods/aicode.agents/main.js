@@ -1,12 +1,15 @@
-// AI Chat: the secondary side bar's chat. Every answer comes from a CLI the user installed, run
-// headless in the open folder; with the MCP Server mod on, Claude Code and Codex also get AICode's
-// tools, so the edits they propose open as a diff to accept or reject.
+// AI Chat: the secondary side bar's chat — the panel only. The agents come from other mods (Claude,
+// Codex, Gemini, Grok, OpenCode, Cline, Ollama, custom commands): each declares
+// `contributes.chatAgents` and exports `chatAgents` from activate(), usually built with the `kit`
+// this mod exports (see kit.js). An agent answers through its CLI (the user's subscription) or its
+// API (an API key); with the MCP Server mod on, CLI agents that support it also get AICode's tools,
+// so the edits they propose open as a diff to accept or reject.
 //
 // Laid out like VS Code's chat: attachments over the input (the active file, files picked with
 // "Add Context…"), agent and model pickers under it, slash commands, actions on each message,
 // and a history of past chats.
 
-import { BUILTIN_AGENTS, customAgent, stripAnsi, claudeStreamParser } from "./agents.js";
+import { kit } from "./kit.js";
 import { renderMarkdown } from "./markdown.js";
 
 const isMac = navigator.platform.toLowerCase().includes("mac");
@@ -103,14 +106,6 @@ body .pick .codicon { font-size: 12px; }
 .slash-menu .item.active span { color: inherit; opacity: .8; }
 `;
 
-/** Models worth offering per agent (the CLI's default is always first). Any other name can be typed. */
-const MODELS = {
-  claude: ["opus", "sonnet", "haiku"],
-  codex: ["gpt-5", "gpt-5-codex", "o4-mini"],
-  gemini: ["gemini-2.5-pro", "gemini-2.5-flash"],
-  ollama: ["llama3.2", "qwen2.5-coder", "deepseek-r1"],
-};
-
 /** /commands: a short way to ask the usual things. */
 const SLASH = [
   { name: "explain", detail: "Explain how the selected code or the active file works", prompt: "Explain how this code works, step by step." },
@@ -130,14 +125,49 @@ export async function activate(ctx) {
   document.head.append(style);
   ctx.subscriptions.push({ dispose: () => style.remove() });
 
-  const custom = (await ctx.settings.get("customAgents", [])).map(customAgent);
-  const agents = [...BUILTIN_AGENTS, ...custom];
-  const installed = new Map(); // id -> path | null
-  await Promise.all(agents.map(async (a) => installed.set(a.id, await ctx.process.which(a.bin).catch(() => null))));
+  // ---------- agents (from other mods) ----------
 
+  /** The agent objects, and what each one says about itself (ready? which mode? models?). */
+  let agents = [];
+  const statuses = new Map();
+  let agentsState = "loading"; // "loading" | "ready"
   let agentId = await ctx.settings.get("agent", null);
-  if (!agents.some((a) => a.id === agentId) || !installed.get(agentId)) agentId = agents.find((a) => installed.get(a.id))?.id ?? agents[0].id;
   const models = await ctx.settings.get("models", {});
+  const refreshStatuses = (fresh = false) =>
+    Promise.all(agents.map(async (a) => statuses.set(a.id, await a.status(fresh).catch((e) => ({ ready: false, detail: String(e), models: [] })))));
+  // Loaded once the chat is first drawn — never inside activate(), since each agent mod asks this
+  // one for its kit while it activates.
+  let loading = null;
+  const loadAgents = () =>
+    (loading ??= (async () => {
+      const owners = [...new Set(ctx.mods.contributions("chatAgents").map((c) => c.mod))];
+      const found = [];
+      for (const id of owners) {
+        try {
+          const exported = await ctx.mods.get(id);
+          for (const a of Object.values(exported?.chatAgents ?? {})) if (a?.id && a.run) found.push(a);
+        } catch (e) {
+          console.error(`AI Chat: the agent mod ${id} failed`, e);
+        }
+      }
+      agents = found;
+      await refreshStatuses();
+      const ready = (id) => statuses.get(id)?.ready;
+      if (!agents.some((a) => a.id === agentId) || !ready(agentId)) agentId = agents.find((a) => ready(a.id))?.id ?? (agents.some((a) => a.id === agentId) ? agentId : agents[0]?.id ?? null);
+      agentsState = "ready";
+      paintPickers();
+      paint();
+    })());
+  const statusOf = (a) => (a ? statuses.get(a.id) : null);
+  const configureAgent = async (a = agent()) => {
+    if (!a?.configure) return;
+    if (await a.configure()) {
+      statuses.set(a.id, await a.status(true));
+      paintPickers();
+      paint();
+    }
+  };
+  const showAgentMods = () => ctx.commands.execute("mods.manage", "agent");
   let includeActive = true;
   let attachments = []; // { kind: "file", path } | { kind: "selection", path, title, startLine, endLine, text, language }
   let chat = newChatState();
@@ -177,7 +207,7 @@ export async function activate(ctx) {
   const loadChat = (entry) => {
     if (running) stop();
     chat = { id: entry.id, title: entry.title, sessions: { ...(entry.sessions ?? {}) }, at: entry.at, messages: entry.messages.map((m) => ({ ...m, tools: m.tools ?? [], log: "", shown: true })) };
-    if (entry.agent && agents.some((a) => a.id === entry.agent)) agentId = entry.agent;
+    if (entry.agent && (agentsState === "loading" || agents.some((a) => a.id === entry.agent))) agentId = entry.agent;
     paintPickers();
     paint();
     ctx.settings.set("current", chat.id);
@@ -216,6 +246,7 @@ export async function activate(ctx) {
     }
   };
 
+  /** The context as text; `a` is the agent's status (does it read the folder itself?). */
   const contextBlock = async (a) => {
     const parts = [];
     const clip = (t) => (t.length > 120_000 ? t.slice(0, 120_000) + "\n… (truncated)" : t);
@@ -244,9 +275,10 @@ export async function activate(ctx) {
     return parts.join("\n\n");
   };
 
+  /** The earlier turns: as messages for API agents, as text for CLI agents without sessions. */
+  const pastTurns = (n) => chat.messages.filter((m) => !m.error && !m.pending && m.text).slice(-n).map((m) => ({ role: m.role === "user" ? "user" : "assistant", text: m.sent ?? m.text }));
   const transcript = () => {
-    // Agents without their own sessions get the last turns as text.
-    const turns = chat.messages.filter((m) => !m.error && !m.pending).slice(-8);
+    const turns = pastTurns(8);
     if (!turns.length) return "";
     return "Conversation so far:\n" + turns.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`).join("\n\n") + "\n\n";
   };
@@ -307,9 +339,15 @@ export async function activate(ctx) {
       return newChat();
     }
     const question = expanded.text;
+    await loadAgents();
     const a = agent();
-    if (!installed.get(a.id)) {
-      ctx.window.showWarning(`${a.name} (${a.bin}) is not installed or not on your PATH.`, { label: "Choose Another Agent", run: () => pickAgent() });
+    if (!a) {
+      ctx.window.showInfo("Turn on an agent mod first (Claude, Codex, Gemini…).", { label: "Show Agent Mods", run: showAgentMods });
+      return;
+    }
+    const st = statuses.get(a.id) ?? (await a.status());
+    if (!st.ready) {
+      ctx.window.showWarning(`${a.name}: ${st.detail}`, { label: `Configure ${a.name}…`, run: () => configureAgent(a) }, { label: "Choose Another Agent", run: () => pickAgent() });
       return;
     }
     if (!opts.keepInput) {
@@ -319,64 +357,66 @@ export async function activate(ctx) {
       autosize();
       hideSlash();
     }
-    const context = await contextBlock(a);
+    const context = await contextBlock(st);
     const refs = [];
     const c = includeActive ? activeContext() : null;
     if (c) refs.push({ label: c.active.title + (c.sel ? `:${c.sel.startLine}-${c.sel.endLine}` : ""), path: c.active.path, line: c.sel?.startLine });
     for (const at of attachments) refs.push(at.kind === "file" ? { label: basename(at.path), path: at.path } : { label: `${at.title}:${at.startLine}-${at.endLine}`, path: at.path, line: at.startLine });
     attachments = [];
-    const mcp = a.id === "claude" || a.id === "codex" ? await mcpConnection() : null;
-    const previous = !a.resumable || !chat.sessions[a.id] ? transcript() : "";
-    const prompt = [previous, context, question].filter(Boolean).join("\n\n") +
-      (mcp ? "\n\n(You are running inside the AICode editor. Its MCP tools — server `aicode` — read what is open, unsaved text included; to change a file the user has open, use propose_edit so they can review it.)" : "");
+    const mcp = st.mcp ? await mcpConnection() : null;
+    const history = pastTurns(20);
+    const previous = !st.resumable || !chat.sessions[a.id] ? transcript() : "";
+    const mcpNote = mcp ? "\n\n(You are running inside the AICode editor. Its MCP tools — server `aicode` — read what is open, unsaved text included; to change a file the user has open, use propose_edit so they can review it.)" : "";
+    const message = [context, question].filter(Boolean).join("\n\n") + mcpNote;
+    const prompt = [previous, context, question].filter(Boolean).join("\n\n") + mcpNote;
     if (!chat.title) chat.title = (expanded.shown ?? question).split("\n")[0].slice(0, 80);
     chat.messages.push({ role: "user", text: expanded.shown ?? question, sent: question, refs });
     const reply = { role: "assistant", agent: a.name, text: "", tools: [], log: "", error: "", meta: "", pending: true, started: Date.now() };
     chat.messages.push(reply);
     paint();
 
-    const { args, env } = a.build({ prompt, sessionId: chat.sessions[a.id], mcp, model: models[a.id] });
     const onText = (t) => {
-      if (reply.text && !reply.text.endsWith("\n") && a.parser === "claude-stream") reply.text += "\n\n";
       reply.text += t;
       paintLast();
     };
-    const parse =
-      a.parser === "claude-stream"
-        ? claudeStreamParser({
-            onText,
-            onTool: (name, input) => {
-              const target = input?.target || input?.path || input?.file_path || input?.pattern || input?.command;
-              reply.tools.push(`${name.replace(/^mcp__aicode__/, "aicode · ")}${target ? ` — ${String(target).includes("/") ? basename(String(target)) : String(target).slice(0, 60)}` : ""}`);
-              paintLast();
-            },
-            onSession: (id) => (chat.sessions[a.id] = id),
-            onResult: (r) => {
-              if (r.isError) reply.error = r.text || "The agent reported an error.";
-              else if (!reply.text && r.text) reply.text = r.text;
-              const bits = [];
-              if (r.cost) bits.push(`$${r.cost.toFixed(4)}`);
-              if (r.turns) bits.push(`${r.turns} turn${r.turns === 1 ? "" : "s"}`);
-              reply.meta = bits.join(" · ");
-            },
-          })
-        : (chunk) => onText(stripAnsi(chunk));
+    const onTool = (name, input) => {
+      const target = input?.target || input?.path || input?.file_path || input?.pattern || input?.command;
+      reply.tools.push(`${String(name).replace(/^mcp__aicode__/, "aicode · ")}${target ? ` — ${String(target).includes("/") ? basename(String(target)) : String(target).slice(0, 60)}` : ""}`);
+      paintLast();
+    };
+    const onResult = (r) => {
+      if (r.isError) reply.error = r.text || "The agent reported an error.";
+      else if (!reply.text && r.text) reply.text = r.text;
+      const bits = [];
+      if (r.cost) bits.push(`$${r.cost.toFixed(4)}`);
+      if (r.turns) bits.push(`${r.turns} turn${r.turns === 1 ? "" : "s"}`);
+      if (r.tokens) bits.push(`${r.tokens.toLocaleString()} tokens`);
+      if (r.model) bits.push(r.model);
+      reply.meta = bits.join(" · ");
+    };
 
     const tick = setInterval(() => reply.pending && paintLast(), 1000);
     try {
-      running = await ctx.process.spawn(a.bin, args, {
+      running = await a.run({
+        prompt,
+        message,
+        history,
+        sessionId: chat.sessions[a.id],
+        mcp,
+        model: models[a.id] || st.defaultModel || "",
         cwd: ctx.workspace.folder() ?? undefined,
-        env,
-        onData: (data, stream) => {
-          if (stream === "stdout") parse(data);
-          else reply.log += stripAnsi(data);
-          if (stream === "stderr") paintLast();
+        onText,
+        onTool,
+        onResult,
+        onSession: (id) => (chat.sessions[a.id] = id),
+        onLog: (t) => {
+          reply.log += t;
+          paintLast();
         },
       });
       paint();
-      const code = await running.done;
-      if (code !== 0 && code !== null && !reply.error) reply.error = `${a.bin} exited with code ${code}${reply.log ? " — see the agent log below." : "."}`;
-      if (code === null && !reply.error) reply.error = "Stopped.";
+      const result = await running.done;
+      if (result?.error && !reply.error) reply.error = result.error;
     } catch (e) {
       reply.error = String(e);
     } finally {
@@ -633,17 +673,40 @@ export async function activate(ctx) {
   const paint = () => {
     if (!log) return;
     clear(log);
-    if (!chat.messages.length) {
+    if (!chat.messages.length && (agentsState === "loading" || !agents.length)) {
+      log.append(
+        agentsState === "loading"
+          ? h("div", { class: "chat-welcome" }, icon("loading", "codicon-modifier-spin"), h("div", { class: "sub" }, "Loading agents…"))
+          : h(
+              "div",
+              { class: "chat-welcome" },
+              icon("chat-sparkle"),
+              h("div", { class: "title" }, "Add an agent to chat with"),
+              h("div", { class: "sub" }, "Each AI is a mod of its own — Claude, Codex, Gemini, Grok, OpenCode, Cline, Ollama, or your own command. Turn on the ones you use, then sign in with their CLI (your subscription) or give them an API key."),
+              h("div", { class: "chat-suggest" }, h("button", { onclick: showAgentMods }, icon("extensions"), "Show Agent Mods")),
+            ),
+      );
+    } else if (!chat.messages.length) {
       const a = agent();
-      const ok = installed.get(a.id);
+      const st = statusOf(a);
+      const ok = !!st?.ready;
       const c = activeContext();
       log.append(
         h(
           "div",
           { class: "chat-welcome" },
           icon("chat-sparkle"),
-          h("div", { class: "title" }, ok ? `Ask ${a.name}` : `${a.name} is not installed`),
-          h("div", { class: "sub" }, ok ? `It runs in ${ctx.workspace.folder() ? basename(ctx.workspace.folder()) : "your home folder"}${a.custom ? "" : ` with your own ${a.bin} login`}. AI answers can be wrong: review what it proposes.` : `Install the ${basename(a.bin)} CLI, or pick another agent below.`),
+          h("div", { class: "title" }, ok ? `Ask ${a.name}` : `${a.name} is not set up`),
+          h(
+            "div",
+            { class: "sub" },
+            ok
+              ? st.mode === "api"
+                ? `It answers through the ${a.name} API with your key; the files you attach go along as text. AI answers can be wrong: review what it proposes.`
+                : `It runs in ${ctx.workspace.folder() ? basename(ctx.workspace.folder()) : "your home folder"} with ${st.label} and your own login. AI answers can be wrong: review what it proposes.`
+              : st?.detail ?? "",
+          ),
+          !ok ? h("div", { class: "chat-suggest" }, h("button", { onclick: () => configureAgent(a) }, icon("settings-gear"), `Configure ${a.name}…`)) : null,
           ok
             ? h(
                 "div",
@@ -658,9 +721,11 @@ export async function activate(ctx) {
           h(
             "div",
             { class: "chat-tip" },
-            ctx.mods.isEnabled("aicode.mcp-server")
-              ? "The active file goes along as context, and Claude Code / Codex can propose edits through AICode's MCP server — you review each one as a diff."
-              : "The active file goes along as context. Type / for commands. Enable the MCP Server mod to let agents propose edits you review as a diff.",
+            !st?.mcp
+              ? "The active file goes along as context. Type / for commands."
+              : ctx.mods.isEnabled("aicode.mcp-server")
+                ? `The active file goes along as context, and ${a.name} can propose edits through AICode's MCP server — you review each one as a diff.`
+                : "The active file goes along as context. Type / for commands. Enable the MCP Server mod to let the agent propose edits you review as a diff.",
           ),
         ),
       );
@@ -687,20 +752,27 @@ export async function activate(ctx) {
   const paintPickers = () => {
     if (!agentBtn) return;
     const a = agent();
-    agentBtn.replaceChildren(icon("sparkle"), h("span", { class: "label" }, a.name), icon("chevron-down"));
-    agentBtn.title = `Agent: ${a.name}${installed.get(a.id) ? ` (${installed.get(a.id)})` : " — not installed"}`;
-    const model = models[a.id] || (a.needsModel ? a.defaultModel : "");
+    const st = statusOf(a);
+    agentBtn.replaceChildren(icon(a?.icon ?? "sparkle"), h("span", { class: "label" }, a ? a.name : agentsState === "loading" ? "Agents…" : "Add Agent…"), icon("chevron-down"));
+    agentBtn.title = a ? `Agent: ${a.name} — ${st?.detail ?? ""}` : "Choose an agent";
+    modelBtn.style.display = a ? "" : "none";
+    const model = (a && models[a.id]) || st?.defaultModel || "";
     modelBtn.replaceChildren(h("span", { class: "label" }, model || "Default model"), icon("chevron-down"));
     modelBtn.title = model ? `Model: ${model}` : "The CLI's default model";
-    if (textarea) textarea.placeholder = `Ask ${a.name}… (/ for commands)`;
+    if (textarea) textarea.placeholder = a ? `Ask ${a.name}… (/ for commands)` : "Turn on an agent mod to chat";
   };
 
   const pickAgent = (e) => {
     const r = e?.currentTarget?.getBoundingClientRect?.();
+    const current = agent();
     const items = [
-      ...agents.map((a) => ({ label: `${a.name}${installed.get(a.id) ? "" : " — not installed"}${a.note ? ` (${a.note})` : ""}`, checked: a.id === agentId, disabled: !installed.get(a.id), run: () => selectAgent(a.id) })),
+      ...agents.map((a) => {
+        const st = statusOf(a);
+        return { label: `${a.name}${st?.ready ? (st.modes?.length > 1 ? ` · ${st.mode === "api" ? "API" : "CLI"}` : "") : " — not set up"}`, checked: a.id === agentId, run: () => selectAgent(a.id) };
+      }),
       { separator: true, label: "" },
-      { label: "Add a Custom Agent Command…", run: () => ctx.commands.execute("agents.addCustom") },
+      ...(current?.configure ? [{ label: `Configure ${current.name}…`, run: () => configureAgent(current) }] : []),
+      { label: "Add More Agents…", run: showAgentMods },
     ];
     if (r) ctx.window.contextMenu(r.left, r.top - items.length * 24 - 14, items);
     else ctx.commands.execute("agents.pickAgent");
@@ -708,9 +780,11 @@ export async function activate(ctx) {
 
   const pickModel = async (e) => {
     const a = agent();
+    if (!a) return;
+    const st = statusOf(a) ?? {};
     const r = e?.currentTarget?.getBoundingClientRect?.();
     const current = models[a.id] ?? "";
-    const known = [...new Set([...(MODELS[a.id] ?? []), ...(current ? [current] : [])])];
+    const known = [...new Set([...(st.models ?? []), ...(current ? [current] : [])])];
     const setModel = async (v) => {
       if (v) models[a.id] = v;
       else delete models[a.id];
@@ -718,13 +792,13 @@ export async function activate(ctx) {
       paintPickers();
     };
     const items = [
-      ...(a.needsModel ? [] : [{ label: "Default (the CLI's choice)", checked: !current, run: () => setModel("") }]),
-      ...known.map((m) => ({ label: m, checked: current === m || (!current && a.needsModel && m === a.defaultModel), run: () => setModel(m) })),
+      ...(st.needsModel ? [] : [{ label: "Default (the CLI's choice)", checked: !current, run: () => setModel("") }]),
+      ...known.map((m) => ({ label: m, checked: current === m || (!current && st.needsModel && m === st.defaultModel), run: () => setModel(m) })),
       { separator: true, label: "" },
       {
         label: "Other Model…",
         run: async () => {
-          const v = await ctx.window.showInputBox({ prompt: `Model name for ${a.name}`, value: current, placeholder: a.defaultModel ?? "model name" });
+          const v = await ctx.window.showInputBox({ prompt: `Model name for ${a.name}`, value: current, placeholder: st.defaultModel || "model name" });
           if (v !== undefined && v !== null) setModel(v.trim());
         },
       },
@@ -735,8 +809,11 @@ export async function activate(ctx) {
   const selectAgent = async (id) => {
     agentId = id;
     await ctx.settings.set("agent", id);
+    const a = agent();
+    if (a) statuses.set(a.id, await a.status(true));
     paintPickers();
     paint();
+    if (a && !statuses.get(a.id)?.ready) configureAgent(a);
   };
 
   // ---------- slash menu ----------
@@ -784,10 +861,13 @@ export async function activate(ctx) {
 
   const openInTerminal = async () => {
     if (!ctx.mods.isEnabled("aicode.terminal")) return ctx.window.showInfo("Enable the Terminal mod to run agents interactively.", { label: "Open Mods", run: () => ctx.commands.execute("mods.manage") });
+    await loadAgents();
     const a = agent();
+    if (!a) return showAgentMods();
+    const line = await a.terminal?.(models[a.id] || statusOf(a)?.defaultModel || "");
+    if (!line) return ctx.window.showInfo(`${a.name} answers through its API here. Switch it to its CLI to open it in a terminal.`, { label: `Configure ${a.name}…`, run: () => configureAgent(a) });
     const term = await ctx.mods.get("aicode.terminal");
-    const args = a.needsModel ? [...a.interactive, models[a.id] || a.defaultModel] : a.interactive;
-    term.open({ command: a.bin, args, name: a.name, cwd: ctx.workspace.folder() ?? undefined });
+    term.open({ command: line.command, args: line.args, name: a.name, cwd: ctx.workspace.folder() ?? undefined });
   };
 
   ctx.views.provide("agents.chat", {
@@ -813,7 +893,8 @@ export async function activate(ctx) {
           const r = e?.currentTarget?.getBoundingClientRect?.() ?? { left: 200, bottom: 60 };
           ctx.window.contextMenu(r.left - 180, r.bottom + 4, [
             { label: "Select Agent…", run: () => ctx.commands.execute("agents.pickAgent") },
-            { label: "Add a Custom Agent Command…", run: () => ctx.commands.execute("agents.addCustom") },
+            { label: `Configure ${agent()?.name ?? "Agent"}…`, disabled: !agent(), run: () => configureAgent() },
+            { label: "Add More Agents…", run: showAgentMods },
             { label: "Open Agent in Terminal", run: openInTerminal },
             { separator: true, label: "" },
             { label: "Show Chats…", run: () => showHistory() },
@@ -828,7 +909,7 @@ export async function activate(ctx) {
       chips = h("div", { class: "chat-chips" });
       textarea = h("textarea", {
         rows: 1,
-        placeholder: `Ask ${agent().name}… (/ for commands)`,
+        placeholder: "Ask… (/ for commands)",
         oninput: () => {
           autosize();
           slashIndex = 0;
@@ -885,6 +966,7 @@ export async function activate(ctx) {
       paintPickers();
       paint();
       textarea.focus();
+      loadAgents();
     },
     onShow: () => textarea?.focus(),
   });
@@ -914,8 +996,15 @@ export async function activate(ctx) {
     textarea?.focus();
   });
   ctx.commands.register("agents.pickAgent", async () => {
-    const choice = await ctx.window.showQuickPick(agents.map((a) => ({ label: a.name, description: installed.get(a.id) ?? "not installed", id: a.id })), { placeholder: "Select the agent to chat with" });
+    await loadAgents();
+    if (!agents.length) return ctx.window.showInfo("No agent mods are on.", { label: "Show Agent Mods", run: showAgentMods });
+    const choice = await ctx.window.showQuickPick(agents.map((a) => ({ label: a.name, description: statusOf(a)?.detail ?? "", id: a.id })), { placeholder: "Select the agent to chat with" });
     if (choice) selectAgent(choice.id);
+  });
+  ctx.commands.register("agents.configureAgent", async () => {
+    await loadAgents();
+    if (!agent()) return showAgentMods();
+    configureAgent();
   });
   ctx.commands.register("agents.openInTerminal", openInTerminal);
   ctx.commands.register("agents.clearHistory", async () => {
@@ -923,18 +1012,6 @@ export async function activate(ctx) {
     history = [];
     await ctx.settings.set("history", []);
   });
-  ctx.commands.register("agents.addCustom", async () => {
-    const name = await ctx.window.showInputBox({ prompt: "Name of the agent", placeholder: "My agent" });
-    if (!name) return;
-    const line = await ctx.window.showInputBox({ prompt: "Command line — {prompt} is replaced by the message, {model} by the model field", placeholder: "aider --message {prompt}" });
-    if (!line) return;
-    const [program, ...args] = line.match(/"[^"]*"|\S+/g).map((p) => p.replace(/^"|"$/g, ""));
-    const list = await ctx.settings.get("customAgents", []);
-    list.push({ id: `custom-${Date.now()}`, name, program, args: args.length ? args : ["{prompt}"] });
-    await ctx.settings.set("customAgents", list);
-    ctx.window.showInfo(`${name} added. Reload the window to use it.`, { label: "Reload", run: () => location.reload() });
-  });
-
   // For other mods (and JSON mods' "ask" actions): send a prompt to the chat, as if typed.
   return {
     ask: async (prompt) => {
@@ -947,5 +1024,7 @@ export async function activate(ctx) {
       await send(String(prompt));
     },
     attach: (path) => attachFile(path),
+    /** For agent mods: `kit.defineAgent(ctx, spec)` and the pieces it is made of (kit.js). */
+    kit,
   };
 }

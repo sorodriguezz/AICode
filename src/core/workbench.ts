@@ -212,9 +212,9 @@ export class Workbench {
         "div",
         { class: "titlebar-right", "data-tauri-drag-region": true },
         this.titleHosts.right,
-        // Right of the search box: the pages VS Code opens as modal editors.
-        // Settings live in the status bar's gear (Manage), not up here.
-        h("div", { class: "group", dataset: { part: "titleBar.mods" } }, this.pinButton, iconButton("extensions", `Mods (${commands.prettyKey("mod+shift+x").join(" ")})`, () => commands.execute("mods.manage"))),
+        // Mods and Settings live in the status bar's gear (Manage), not up here; a mod or
+        // workbench.titleBar.items can put a button back ({ "icon": "extensions", "command": "mods.manage" }).
+        h("div", { class: "group" }, this.pinButton),
         h("div", { class: "group", dataset: { part: "titleBar.layoutControls" }, "data-tauri-drag-region": true }, iconButton("layout", "Customize Layout…", () => this.customizeLayout()), this.toggles.sidebar, this.toggles.panel, this.toggles.secondary),
       ),
     );
@@ -919,6 +919,7 @@ export class Workbench {
       { label: "Settings", keybinding: "mod+,", run: () => commands.execute("preferences.settings") },
       { label: "Keyboard Shortcuts", run: () => commands.execute("workbench.keybindings") },
       { label: "Color Theme…", run: () => commands.execute("preferences.theme") },
+      { label: "File Icon Theme…", run: () => commands.execute("preferences.fileIconTheme") },
       { separator: true, label: "" },
       { label: "Check for Updates…", run: () => commands.execute("update.check") },
     ], { above: true });

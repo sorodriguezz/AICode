@@ -94,6 +94,67 @@ pub struct Profile {
     /// `[{ "key": "mod+k t", "command": "preferences.theme", "args": … }]`, applied over the mods' own.
     #[serde(default)]
     pub keybindings: Vec<Value>,
+    /// The mods of [`DEFAULT_ON`] this profile has already been given. Each is turned on once (a
+    /// new profile, or an old one the first time this AICode reads it), so one turned off stays off.
+    #[serde(default, rename = "defaultsOffered", skip_serializing_if = "Vec::is_empty")]
+    pub defaults_offered: Vec<String>,
+}
+
+/// Mods every profile starts with, because they do what the core itself used to: the file icons
+/// (Seti) were built in before they became `aicode.icons`, and the JSON/YAML keys in the
+/// breadcrumbs before they became `aicode.json-yaml`.
+pub const DEFAULT_ON: &[&str] = &["aicode.icons", "aicode.json-yaml"];
+
+/// Mods split out of another one: a profile that had the first on gets the others, once, so it
+/// keeps what it had (the AI Chat carried every agent; Glass carried pill tabs and the cursor).
+pub const SPLIT_FROM: &[(&str, &[&str])] = &[
+    (
+        "aicode.agents",
+        &[
+            "aicode.agent-claude",
+            "aicode.agent-codex",
+            "aicode.agent-gemini",
+            "aicode.agent-grok",
+            "aicode.agent-opencode",
+            "aicode.agent-cline",
+            "aicode.agent-ollama",
+            "aicode.agent-custom",
+        ],
+    ),
+    ("aicode.glass", &["aicode.soft-look"]),
+];
+
+impl Profile {
+    /// Turns on the default mods this profile was never given. True when something changed.
+    pub fn offer_defaults(&mut self) -> bool {
+        let mut changed = false;
+        for id in DEFAULT_ON {
+            if self.defaults_offered.iter().any(|d| d == id) {
+                continue;
+            }
+            self.defaults_offered.push(id.to_string());
+            if !self.enabled.iter().any(|e| e == id) {
+                self.enabled.push(id.to_string());
+            }
+            changed = true;
+        }
+        for (from, parts) in SPLIT_FROM {
+            let had = self.enabled.iter().any(|e| e == from);
+            for id in *parts {
+                if self.defaults_offered.iter().any(|d| d == id) {
+                    continue;
+                }
+                // Recorded either way: a one-time move, not a rule that fires when the user later
+                // turns the original mod on.
+                self.defaults_offered.push(id.to_string());
+                if had && !self.enabled.iter().any(|e| e == id) {
+                    self.enabled.push(id.to_string());
+                }
+                changed = true;
+            }
+        }
+        changed
+    }
 }
 
 pub struct ModsState {
@@ -137,10 +198,15 @@ fn migrate(name: &str) {
 
 pub fn read_profile(name: &str) -> Profile {
     migrate(name);
-    std::fs::read_to_string(profile_path(name))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+    let parsed: Option<Profile> = std::fs::read_to_string(profile_path(name)).ok().and_then(|s| serde_json::from_str(&s).ok());
+    let on_disk = parsed.is_some();
+    let mut profile = parsed.unwrap_or_default();
+    // The default mods, once per profile. Saved only over a profile.json that read fine: one that
+    // does not parse is the user's to fix, not to overwrite.
+    if profile.offer_defaults() && on_disk {
+        let _ = write_profile(name, &profile);
+    }
+    profile
 }
 
 pub fn write_profile(name: &str, profile: &Profile) -> Result<(), String> {
@@ -525,6 +591,36 @@ fn percent_decode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_mods_are_offered_once() {
+        // A profile from before aicode.icons existed gets it, once…
+        let mut p: Profile = serde_json::from_str(r#"{"enabled":["aicode.explorer"]}"#).unwrap();
+        assert!(p.offer_defaults());
+        assert!(p.enabled.contains(&"aicode.icons".to_string()));
+        // …and one that turned it off keeps it off.
+        p.enabled.retain(|e| e != "aicode.icons");
+        assert!(!p.offer_defaults());
+        assert!(!p.enabled.contains(&"aicode.icons".to_string()));
+        let saved = serde_json::to_string(&p).unwrap();
+        assert!(saved.contains("defaultsOffered"));
+        let mut again: Profile = serde_json::from_str(&saved).unwrap();
+        assert!(!again.offer_defaults());
+    }
+
+    #[test]
+    fn split_mods_follow_the_original_once() {
+        let mut p: Profile = serde_json::from_str(r#"{"enabled":["aicode.agents"]}"#).unwrap();
+        assert!(p.offer_defaults());
+        assert!(p.enabled.contains(&"aicode.agent-claude".to_string()));
+        assert!(!p.enabled.contains(&"aicode.soft-look".to_string()));
+        // Turning Glass on later does not pull Soft Look in: the move happened once.
+        p.enabled.push("aicode.glass".into());
+        p.enabled.retain(|e| e != "aicode.agent-claude");
+        assert!(!p.offer_defaults());
+        assert!(!p.enabled.contains(&"aicode.soft-look".to_string()));
+        assert!(!p.enabled.contains(&"aicode.agent-claude".to_string()));
+    }
 
     #[test]
     fn decodes_percent_escapes() {

@@ -471,7 +471,7 @@ export async function activate(ctx) {
     return h(
       "div",
       { class: `list-row${file.letter === "D" ? " deleted" : ""}`, style: { paddingLeft: "20px" }, title: `${file.path}${file.from ? ` ← ${file.from}` : ""}`, onclick: () => openDiff(file) },
-      icon(fileIcon(file.path)),
+      ctx.ui.fileIconEl ? ctx.ui.fileIconEl(basename(file.path)) : icon(fileIcon(file.path)),
       // One label for name and folder, cut once at its end: the name stays whole while it fits.
       h(
         "span",

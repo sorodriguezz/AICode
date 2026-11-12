@@ -730,6 +730,30 @@
             }
           }
         },
+        "iconThemes": {
+          "type": "array",
+          "description": "File icon themes: VS Code file-icon-theme JSON files (font glyphs or SVG iconPath). The setting workbench.iconTheme picks one by id.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "path"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "What workbench.iconTheme is set to, e.g. \"seti\"."
+              },
+              "label": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string",
+                "description": "The theme JSON, relative to the mod folder. Its fonts and iconPaths are relative to it."
+              }
+            }
+          }
+        },
         "languages": {
           "type": "array",
           "items": {
@@ -979,6 +1003,26 @@
                 "type": "object"
               }
             },
+            "additionalProperties": false
+          }
+        },
+        "chatAgents": {
+          "type": "array",
+          "description": "Agents for the AI Chat (aicode.agents). The mod needs a main that exports { chatAgents: { <id>: agent } } — see MODS.md, Agents for the AI Chat.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
             "additionalProperties": false
           }
         }

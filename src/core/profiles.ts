@@ -14,6 +14,7 @@ import * as commands from "./commands";
 import type { ThemeEntry } from "./theme";
 import { config, type SettingSchema } from "./config";
 import { appVersion, checkForUpdates, installUpdate, onDidChangeUpdateStatus, promptUpdate, updateStatus } from "./updates";
+import { iconThemes } from "./fileIcons";
 
 export interface ProfileView {
   name: string;
@@ -367,7 +368,9 @@ export function openSettings(deps: SettingsDeps) {
         const bySection = new Map<string, [string, SettingSchema][]>();
         for (const [key, raw] of Object.entries(config.schema("core"))) {
           if (raw.hidden) continue;
-          const sch = key === "theme" ? { ...raw, enum: deps.themes().map((t) => ({ value: t.id, label: `${t.label}${t.source === "core" ? "" : ` — ${t.source}`}` })), default: deps.themes()[0]?.id } : raw;
+          const sch = key === "theme" ? { ...raw, enum: deps.themes().map((t) => ({ value: t.id, label: `${t.label}${t.source === "core" ? "" : ` — ${t.source}`}` })), default: deps.themes()[0]?.id }
+            : key === "workbench.iconTheme" ? { ...raw, enum: [{ value: "none", label: "None (plain icons)" }, ...iconThemes().map((t) => ({ value: t.id, label: `${t.label} — ${t.source}` }))] }
+            : raw;
           if (!matches("core", key, sch)) continue;
           const section = sch.section ?? "Other";
           if (!bySection.has(section)) bySection.set(section, []);

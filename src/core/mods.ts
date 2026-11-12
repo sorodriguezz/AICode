@@ -16,7 +16,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { invoke, listen, onStream, ModInfo } from "./ipc";
 import * as commands from "./commands";
 import { Workbench, ViewProvider, StatusItem, TitleItem, ViewLocation, LayoutOptions } from "./workbench";
-import { EditorService, EditProposal, CustomTabSpec, TitleAction, EditorType, SidePaneSpec } from "./editor";
+import { EditorService, EditProposal, CustomTabSpec, TitleAction, EditorType, SidePaneSpec, BreadcrumbProvider } from "./editor";
 import { Workspace } from "./workspace";
 import { notify, pick, inputBox, confirm, contextMenu, QuickItem, MenuItem } from "./widgets";
 import { h, icon, iconButton, clear, basename, dirname, joinPath, fileIcon, fileIconColor, Disposable, toDisposable } from "./ui";
@@ -24,7 +24,7 @@ import { ThemeEntry, VsTheme } from "./theme";
 import type { GrammarSource } from "./textmate";
 import { Emitter } from "./events";
 import { Declarative, checkActions } from "./declarative";
-import { fileIconEl } from "./fileIcons";
+import { fileIconEl, folderIconEl, registerIconTheme, drawIconThemeWith } from "./fileIcons";
 import { config, type SettingSchema, type Values, type Change } from "./config";
 import { openWindow, layouts, type WindowSpec } from "./windows";
 
@@ -254,6 +254,21 @@ export class ModHost {
         load: () => (t.path ? this.loadTheme(m.info.id, t.path) : Promise.resolve({ ...t, colors: t.colors ?? {}, tokenColors: t.tokenColors ?? [] } as VsTheme)),
       });
     }
+    // File icon themes (VS Code's JSON format); `workbench.iconTheme` picks one. See fileIcons.ts.
+    for (const t of Array.isArray(c.iconThemes) ? c.iconThemes : []) {
+      if (!t?.id || !t.path) continue;
+      const url = this.url(m.info.id, t.path);
+      m.subscriptions.push(registerIconTheme({ id: t.id, label: t.label ?? t.id, source: m.info.name, mod: m.info.id, url, load: async () => {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`${t.path}: ${res.status}`);
+        const text = await res.text();
+        try {
+          return JSON.parse(text);
+        } catch {
+          return parseJsonc(text); // a theme with comments
+        }
+      } }));
+    }
     for (const l of c.languages ?? []) this.contributeLanguage(m.info.id, l);
     for (const g of c.grammars ?? []) {
       if (!g.scopeName || !g.path) continue;
@@ -473,7 +488,7 @@ export class ModHost {
         showWarning: (message: string, ...actions: { label: string; run: () => void }[]) => notify("warning", message, actions),
         showError: (message: string, ...actions: { label: string; run: () => void }[]) => notify("error", message, actions),
         showQuickPick: <T extends QuickItem>(items: T[], opts?: { placeholder?: string; matchDescription?: boolean }) => pick(items, opts),
-        showInputBox: (opts: { prompt?: string; placeholder?: string; value?: string; validate?: (v: string) => string | null }) => inputBox(opts),
+        showInputBox: (opts: { prompt?: string; placeholder?: string; value?: string; password?: boolean; validate?: (v: string) => string | null }) => inputBox(opts),
         confirm: (message: string, detail?: string, primary?: string) => confirm(message, detail, primary),
         contextMenu: (x: number, y: number, items: MenuItem[]) => contextMenu(x, y, items),
         pickFolder: async () => {
@@ -517,11 +532,16 @@ export class ModHost {
         addTitleAction: (action: TitleAction) => track(editors.addTitleAction({ ...action, id: `${modId}:${action.id}` })),
         /** Re-checks every tab bar icon's `when` (after what it depends on changed). */
         refreshTitleActions: () => editors.renderTitleActions(),
+        /** The breadcrumbs after the file name for some languages: `{ languages, path(text, line, column) → [{ name, line, icon }] }`. */
+        registerBreadcrumbs: (provider: BreadcrumbProvider) => track(editors.registerBreadcrumbs(provider)),
         /** Another editor for some files, offered by "Reopen Editor With…" and the breadcrumbs. */
         registerEditorType: (type: EditorType) => track(editors.registerEditorType(type)),
         /** A pane beside the editor (one at a time), like a second editor group. */
         openSide: (spec: SidePaneSpec) => editors.openSide(spec),
         closeSide: () => editors.closeSide(),
+        /** That pane over the whole editor group, or back beside it (toggles with no argument). */
+        maximizeSide: (on?: boolean) => editors.maximizeSide(on),
+        isSideMaximized: () => editors.isSideMaximized(),
         /** A page over the workbench (VS Code's modal editor); a tab when the modal is turned off. */
         openPage: (spec: CustomTabSpec) => editors.openPage(spec),
       },
@@ -686,6 +706,15 @@ export class ModHost {
 
       /** The window's parts and layout. Parts carry data-part="<name>" (see docs/CONFIGURATION.md). */
       workbench: {
+        /**
+         * In this window, draw the file icon theme `themeId` with `targetId` (null: itself) — the
+         * choice stays `themeId`. The File Icon Themes mod's Auto pack follows the open folder this way.
+         */
+        drawIconThemeWith: async (themeId: string, targetId: string | null) => {
+          if (!(await drawIconThemeWith(themeId, targetId))) return;
+          editors.refreshTabs();
+          decorations.onDidChange.fire(); // lists that show files repaint
+        },
         root: () => wb.root,
         part: (name: string) => document.querySelector<HTMLElement>(`[data-part="${name}"]`),
         parts: (name: string) => Array.from(document.querySelectorAll<HTMLElement>(`[data-part="${name}"]`)),
@@ -720,9 +749,19 @@ export class ModHost {
         /** What another enabled mod exported from activate() — activating it if needed. */
         get: (id: string) => (host.mods.has(id) ? host.activate(id) : Promise.resolve(undefined)),
         isEnabled: (id: string) => host.mods.has(id),
+        /**
+         * What enabled mods declare under `contributes.<point>` — a mod's own extension point
+         * (the AI Chat's `chatAgents`). Each item comes with `mod`, the id of the mod declaring it;
+         * `ctx.mods.get(mod)` loads that mod. Reading the manifests runs no code.
+         */
+        contributions: (point: string) =>
+          [...host.mods.values()].flatMap((m) => {
+            const items = m.info.contributes?.[point];
+            return (Array.isArray(items) ? items : []).map((item: any) => ({ ...item, mod: m.info.id, modName: m.info.name }));
+          }),
       },
 
-      ui: { h, icon, iconButton, clear, basename, dirname, joinPath, fileIcon, fileIconColor, fileIconEl },
+      ui: { h, icon, iconButton, clear, basename, dirname, joinPath, fileIcon, fileIconColor, fileIconEl, folderIconEl },
     });
   }
 }

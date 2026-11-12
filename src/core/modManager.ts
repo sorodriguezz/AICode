@@ -19,14 +19,18 @@ interface Stats {
 
 let pendingReload = false;
 
-export function openModManager(host: ModHost, editors: EditorService) {
+/** "Enable development set": the full editor layout in one go (aicode.icons is on by default already). */
+const DEVELOPMENT_SET = ["aicode.explorer", "aicode.search", "aicode.git", "aicode.terminal", "aicode.agents", "aicode.agent-claude", "aicode.agent-codex", "aicode.agent-gemini", "aicode.syntax", "aicode.markdown", "aicode.mcp-server", "aicode.codeflow", "aicode.icons", "aicode.json-yaml"];
+
+/** The Mods page; `query` starts it filtered (the AI Chat opens it on "agent" to list its agents). */
+export function openModManager(host: ModHost, editors: EditorService, query = "") {
   editors.openPage({
     title: "Mods",
     icon: "extensions",
     key: "mods",
     restore: "mods",
     render: (root) => {
-      let filter = "";
+      let filter = query;
       let installed: ModInfo[] = [];
       let permissions = new Map<string, string>();
       let profile: { name: string; available: string[] } = { name: "default", available: ["default"] };
@@ -149,7 +153,7 @@ export function openModManager(host: ModHost, editors: EditorService) {
       };
 
       // Created once so re-renders (each keystroke, state changes) keep focus and caret.
-      const search = h("input", { class: "input", placeholder: "Filter mods", oninput: () => { filter = search.value; render(); } }) as HTMLInputElement;
+      const search = h("input", { class: "input", placeholder: "Filter mods", value: filter, oninput: () => { filter = search.value; render(); } }) as HTMLInputElement;
 
       const render = () => {
         const hadFocus = document.activeElement === search;
@@ -187,7 +191,8 @@ export function openModManager(host: ModHost, editors: EditorService) {
           pendingReload
             ? h("div", { class: "banner" }, icon("info"), h("span", { style: { flex: "1" } }, "Reload the window to apply your changes. Open files and unsaved text are kept."), h("button", { class: "btn", onclick: () => location.reload() }, "Reload Window"))
             : "",
-          !installed.some((m) => m.enabled)
+          // Fresh profiles already have the default mods (File Icon Themes) on: offer the rest.
+          !installed.some((m) => m.enabled && DEVELOPMENT_SET.includes(m.id))
             ? h(
                 "div",
                 { class: "banner" },
@@ -211,7 +216,7 @@ export function openModManager(host: ModHost, editors: EditorService) {
       };
 
       const enableDevelopmentSet = async () => {
-        const ids = ["aicode.explorer", "aicode.search", "aicode.git", "aicode.terminal", "aicode.agents", "aicode.syntax", "aicode.markdown", "aicode.mcp-server", "aicode.codeflow"].filter((id) => installed.some((m) => m.id === id));
+        const ids = DEVELOPMENT_SET.filter((id) => installed.some((m) => m.id === id));
         const asks = [...new Set(installed.filter((m) => ids.includes(m.id)).flatMap((m) => m.permissions))].map((p) => `• ${permissions.get(p) ?? p}`).join("\n");
         if (!(await confirm("Enable the development set?", `Together these mods will be able to:\n${asks}`, "Enable"))) return;
         for (const id of ids) await invoke("profile_set_enabled", { id, enabled: true }).catch((e) => notify("error", String(e)));
@@ -404,6 +409,6 @@ export function registerModManager(host: ModHost, editors: EditorService) {
     notify("info", "The guide and your request are on the clipboard: paste them into any AI (ChatGPT, Claude, Gemini…). Paste its answer into a new tab (⌘N) and run “Mods: Install This File as Mod”.", [{ label: "New Tab", run: () => editors.newUntitled("", "json") }]);
   });
 
-  commands.register("mods.manage", () => openModManager(host, editors), { title: "Manage Mods", category: "Mods", owner: "core" });
+  commands.register("mods.manage", (query?: unknown) => openModManager(host, editors, typeof query === "string" ? query : ""), { title: "Manage Mods", category: "Mods", owner: "core" });
   editors.restorers.set("mods", () => openModManager(host, editors));
 }

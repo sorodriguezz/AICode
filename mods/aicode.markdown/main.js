@@ -1,12 +1,13 @@
 // Markdown Preview: what VS Code's built-in Markdown extension puts in the tab bar of a .md file —
 // "Open Preview to the Side" (⌘K V) and "Open as Preview" (⇧⌘V) — plus "Reopen Editor With… →
 // Markdown Preview" and, on a preview, "Open Source". The preview follows the text as it is typed
-// and scrolls with the editor.
+// and scrolls with the editor; the breadcrumbs show the headings above the cursor. The preview to the side can be maximized over the editor ("Maximize
+// Preview", like VS Code's Maximize Editor Group) and uses the whole width of its pane.
 
 import { renderMarkdown } from "./render.js";
 
 const STYLE = `
-.md-preview { --md-sep: color-mix(in srgb, var(--aicode-foreground) 18%, transparent); --md-th: color-mix(in srgb, var(--aicode-foreground) 69%, transparent); box-sizing: border-box; padding: 0 26px 26px; max-width: 980px; font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif; font-size: 14px; line-height: 22px; color: var(--aicode-foreground); word-wrap: break-word; user-select: text; -webkit-user-select: text; cursor: auto; }
+.md-preview { --md-sep: color-mix(in srgb, var(--aicode-foreground) 18%, transparent); --md-th: color-mix(in srgb, var(--aicode-foreground) 69%, transparent); box-sizing: border-box; padding: 0 26px 26px; font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, sans-serif; font-size: 14px; line-height: 22px; color: var(--aicode-foreground); word-wrap: break-word; user-select: text; -webkit-user-select: text; cursor: auto; }
 .md-preview > :first-child { margin-top: 0; padding-top: 14px; }
 .md-preview h1, .md-preview h2, .md-preview h3, .md-preview h4, .md-preview h5, .md-preview h6 { font-weight: 600; margin-top: 24px; margin-bottom: 16px; line-height: 1.25; }
 .md-preview h1 { font-size: 2em; padding-bottom: .3em; border-bottom: 1px solid var(--md-sep); }
@@ -39,6 +40,29 @@ const STYLE = `
 `;
 
 const isMd = (info) => info?.language === "markdown";
+
+/** The headings above the cursor, outermost first (fenced code is skipped): the breadcrumbs. */
+function headingPath(text, line) {
+  if (text.length > 2e6) return [];
+  const lines = text.split(/\r?\n/);
+  const stack = [];
+  let fence = null;
+  for (let i = 0; i < Math.min(line, lines.length); i++) {
+    const t = lines[i];
+    const f = /^\s*(```|~~~)/.exec(t);
+    if (f) {
+      fence = fence === null ? f[1] : fence === f[1] ? null : fence;
+      continue;
+    }
+    if (fence) continue;
+    const m = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(t);
+    if (!m) continue;
+    const level = m[1].length;
+    while (stack.length && stack[stack.length - 1].level >= level) stack.pop();
+    stack.push({ level, crumb: { name: m[2], line: i + 1, icon: "symbol-string" } });
+  }
+  return stack.map((s) => s.crumb);
+}
 const base = (p) => p.split("/").pop();
 const dir = (p) => p.slice(0, p.lastIndexOf("/"));
 
@@ -47,6 +71,7 @@ export async function activate(ctx) {
   style.textContent = STYLE;
   document.head.append(style);
   ctx.subscriptions.push({ dispose: () => style.remove() });
+  ctx.editor.registerBreadcrumbs({ languages: ["markdown"], path: (text, line) => headingPath(text, line) });
 
   /** Renders the file into `el` and keeps it current; returns what stops it. */
   const mount = (el, source) => {
@@ -104,10 +129,23 @@ export async function activate(ctx) {
 
   const sourceOf = (info) => ({ id: info.id, path: info.path, text: ctx.editor.getText(info.id) });
 
+  /** Whether the pane to the side is this mod's preview (another mod may have replaced it). */
+  let sideShown = false;
   const toSide = (info = ctx.editor.active()) => {
     if (!isMd(info)) return ctx.window.showInfo("Open a Markdown file to preview it.");
     const source = sourceOf(info);
-    ctx.editor.openSide({ title: `Preview ${info.title}`, icon: "open-preview", render: (el) => mount(el, source) });
+    const maximize = { id: "maximize", icon: "screen-full", title: "Maximize Preview", run: () => ctx.editor.maximizeSide() };
+    ctx.editor.openSide({
+      title: `Preview ${info.title}`,
+      icon: "open-preview",
+      actions: [maximize],
+      onDidChangeMaximized: (on) => Object.assign(maximize, on ? { icon: "screen-normal", title: "Restore Preview" } : { icon: "screen-full", title: "Maximize Preview" }),
+      render: (el) => {
+        const view = mount(el, source);
+        sideShown = true;
+        return { dispose: () => { sideShown = false; view.dispose(); } };
+      },
+    });
   };
   const asTab = (info = ctx.editor.active()) => {
     if (!isMd(info)) return ctx.window.showInfo("Open a Markdown file to preview it.");
@@ -119,12 +157,23 @@ export async function activate(ctx) {
       key: `markdown-preview:${info.path}`,
       forPath: info.path,
       editorType: "markdown.preview",
-      render: (el) => mount(el, source),
+      render: (el) => {
+        const view = mount(el, source);
+        sideShown = true;
+        return { dispose: () => { sideShown = false; view.dispose(); } };
+      },
     });
   };
 
   ctx.commands.register("markdown.showPreviewToSide", () => toSide());
   ctx.commands.register("markdown.showPreview", () => asTab());
+  ctx.commands.register("markdown.togglePreviewMaximized", () => {
+    if (!sideShown) {
+      if (!isMd(ctx.editor.active())) return ctx.window.showInfo("Open a Markdown file to preview it.");
+      toSide();
+    }
+    ctx.editor.maximizeSide();
+  });
   ctx.commands.register("markdown.showSource", () => {
     const info = ctx.editor.active();
     if (info?.path) ctx.editor.open(info.path);

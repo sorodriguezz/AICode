@@ -1,0 +1,46 @@
+{
+  "id": "aicode.agent-gemini",
+  "name": "Gemini",
+  "version": "1.0.0",
+  "description": "Google's Gemini in the AI Chat: with the Gemini CLI (your Google account), or with the Gemini API and an API key kept in your Keychain — no CLI needed.",
+  "author": "AICode",
+  "icon": "star-full",
+  "main": "main.js",
+  "api": 1,
+  "activation": [
+    "onCommand:gemini.configure"
+  ],
+  "permissions": [
+    "process",
+    "open-external"
+  ],
+  "dependencies": [
+    "aicode.agents"
+  ],
+  "contributes": {
+    "chatAgents": [
+      {
+        "id": "gemini",
+        "name": "Gemini"
+      }
+    ],
+    "commands": [
+      {
+        "id": "gemini.configure",
+        "title": "Configure Gemini…",
+        "category": "Chat"
+      }
+    ],
+    "settings": {
+      "mode": {
+        "type": "string",
+        "enum": [
+          "cli",
+          "api"
+        ],
+        "default": "cli",
+        "description": "cli: the Gemini CLI, signed in with your Google account. api: the Gemini API with your API key (set the key with the Configure command, or the chat's agent picker)."
+      }
+    }
+  }
+}

@@ -239,6 +239,7 @@ export class ConfigService {
         description: { type: "string" },
         icon: { type: "string" },
         enabled: { type: "array", items: { type: "string", enum: modIds }, description: "Mods turned on in this profile." },
+        defaultsOffered: { type: "array", items: { type: "string" }, description: "Mods AICode turns on by default that this profile has already been given (turning one off keeps it off)." },
         settings: { type: "object", properties: settingsProps, additionalProperties: { type: "object" }, description: "Your values. They go over the defaults and over what mods set." },
         keybindings: {
           type: "array",
@@ -362,7 +363,7 @@ const isMac = navigator.platform.toLowerCase().includes("mac");
 
 /** Parts of the window, by name: what `workbench.hide`, `workbench.partOpacity` and custom CSS use. */
 export const PART_NAMES = [
-  "titleBar", "titleBar.nav", "titleBar.commandCenter", "titleBar.items", "titleBar.mods", "titleBar.layoutControls", "titleBar.pin",
+  "titleBar", "titleBar.nav", "titleBar.commandCenter", "titleBar.items", "titleBar.layoutControls", "titleBar.pin",
   "activityBar", "activityBar.badge", "sideBar", "sideBar.header", "secondarySideBar", "secondarySideBar.header", "panel", "panel.header",
   "editor", "tabs", "tab", "tab.icon", "tab.close", "tab.actions", "breadcrumbs", "editorSide", "watermark",
   "statusBar", "statusBar.item", "sash",
@@ -500,7 +501,7 @@ export const CORE_SCHEMA: Record<string, SettingSchema> = {
   theme: { section: "Workbench", type: "string", title: "Color Theme", default: "aicode-dark", enum: [] },
   "workbench.previewEditors": { section: "Workbench", type: "boolean", title: "Preview Editors", default: true, description: "A single click opens a file in a tab the next one replaces (shown in italics)." },
   "workbench.editor.useModal": { section: "Workbench", type: "string", title: "Open Pages in a Modal", default: "some", description: "Settings, Mods, Keyboard Shortcuts and Profiles open over the editor, like VS Code.", enum: e(["some", "Settings, Mods, Shortcuts and Profiles"], ["off", "Off (always in a tab)"]) },
-  "workbench.iconTheme": { section: "Workbench", type: "string", title: "File Icon Theme", default: "seti", enum: e(["seti", "Seti (Visual Studio Code)"], ["none", "None (plain icons)"]) },
+  "workbench.iconTheme": { section: "Workbench", type: "string", title: "File Icon Theme", default: "seti", description: "One of the icon themes mods contribute (File Icon Themes: seti, vscode-icons, vscode-icons-nestjs…, or vscode-icons-auto to follow each folder's stack), or \"none\" for plain icons." },
   "workbench.iconSize": { section: "Workbench", type: "string", title: "Icon Size", default: "normal", description: "Of the activity bar on the left and the lists in side bars.", enum: e(["normal", "Normal (VS Code size)"], "large", "larger") },
   "workbench.fontFamily": { section: "Workbench", type: "string", title: "UI Font Family", default: "", description: "The font of everything but the editor. Empty: the system font." },
   "workbench.fontSize": { section: "Workbench", type: "number", title: "UI Font Size", default: 13, min: 9, max: 24 },

@@ -1,0 +1,49 @@
+{
+  "id": "aicode.agent-claude",
+  "name": "Claude",
+  "version": "1.0.0",
+  "description": "Claude in the AI Chat. With Claude Code (your Claude plan) it reads the folder, keeps a session per chat and proposes edits you review as a diff (with the MCP Server mod). Or with the Claude API and an API key kept in your Keychain — no CLI needed.",
+  "author": "AICode",
+  "icon": "sparkle",
+  "main": "main.js",
+  "api": 1,
+  "activation": [
+    "onCommand:claude.configure"
+  ],
+  "permissions": [
+    "process",
+    "open-external"
+  ],
+  "dependencies": [
+    "aicode.agents"
+  ],
+  "optionalDependencies": [
+    "aicode.mcp-server"
+  ],
+  "contributes": {
+    "chatAgents": [
+      {
+        "id": "claude",
+        "name": "Claude"
+      }
+    ],
+    "commands": [
+      {
+        "id": "claude.configure",
+        "title": "Configure Claude…",
+        "category": "Chat"
+      }
+    ],
+    "settings": {
+      "mode": {
+        "type": "string",
+        "enum": [
+          "cli",
+          "api"
+        ],
+        "default": "cli",
+        "description": "cli: Claude Code, signed in with your Claude plan. api: the Claude API with your API key (set the key with the Configure command, or the chat's agent picker)."
+      }
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "id": "aicode.soft-look",
+  "name": "Soft Look",
+  "version": "1.0.0",
+  "description": "Softer shapes for the whole window: pill-shaped tabs, rounded corners, tooltips drawn in your theme's colors and a smooth, slightly wider cursor that keeps your theme's color. Only configuration defaults: your own settings still win, and turning it off puts everything back.",
+  "author": "AICode",
+  "icon": "circle-large",
+  "api": 1,
+  "contributes": {
+    "configurationDefaults": {
+      "core": {
+        "workbench.tabs.shape": "pill",
+        "workbench.cornerRadius": 12,
+        "workbench.tooltips.style": "custom",
+        "editor.cursorWidth": 2,
+        "editor.cursorBlinking": "expand"
+      }
+    }
+  }
+}

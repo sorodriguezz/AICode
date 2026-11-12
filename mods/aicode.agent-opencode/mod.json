@@ -1,0 +1,35 @@
+{
+  "id": "aicode.agent-opencode",
+  "name": "OpenCode",
+  "version": "1.0.0",
+  "description": "OpenCode in the AI Chat, through the opencode CLI and the providers and keys you set up in it.",
+  "author": "AICode",
+  "icon": "terminal",
+  "main": "main.js",
+  "api": 1,
+  "activation": [
+    "onCommand:opencode.configure"
+  ],
+  "permissions": [
+    "process",
+    "open-external"
+  ],
+  "dependencies": [
+    "aicode.agents"
+  ],
+  "contributes": {
+    "chatAgents": [
+      {
+        "id": "opencode",
+        "name": "OpenCode"
+      }
+    ],
+    "commands": [
+      {
+        "id": "opencode.configure",
+        "title": "Configure OpenCode…",
+        "category": "Chat"
+      }
+    ]
+  }
+}

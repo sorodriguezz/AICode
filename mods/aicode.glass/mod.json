@@ -2,7 +2,7 @@
   "id": "aicode.glass",
   "name": "Glass (Acrylic)",
   "version": "1.0.0",
-  "description": "Acrylic AICode: macOS's frosted glass behind the window, tinted with your theme's colors so nothing turns invisible — translucent side bars, editor and panel, a faint grain, pill tabs, a blue cursor and themed tooltips. Only configuration defaults and a little CSS: your own settings still win, and turning it off puts everything back.",
+  "description": "Acrylic AICode: macOS's frosted glass behind the window, tinted with your theme's colors so nothing turns invisible — translucent side bars, editor and panel, a faint grain, and blurred menus, pickers and tooltips. Only configuration defaults and a little CSS: your own settings still win, and turning it off puts everything back. Pairs well with Soft Look.",
   "author": "AICode",
   "icon": "color-mode",
   "api": 1,
@@ -21,13 +21,7 @@
           "panel": 0.62,
           "tabs": 0.5,
           "editor": 0.72
-        },
-        "workbench.tabs.shape": "pill",
-        "workbench.cornerRadius": 12,
-        "workbench.tooltips.style": "custom",
-        "editor.cursorColor": "#7aa2f7",
-        "editor.cursorWidth": 2,
-        "editor.cursorBlinking": "expand"
+        }
       }
     },
     "styles": [

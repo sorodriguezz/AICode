@@ -2,7 +2,7 @@
   "id": "aicode.agents",
   "name": "AI Chat",
   "version": "1.0.0",
-  "description": "A chat panel for the AI agents you already have installed — Claude Code, Codex, Gemini CLI, Grok, OpenCode, Cline — and local models through Ollama. Nothing is sent anywhere AICode itself chooses: each agent is your own CLI, with your own login.",
+  "description": "The AI chat panel: chats with history, the active file and attachments as context, slash commands, code blocks you can apply as a diff or run in the terminal. The agents themselves are mods of their own — Claude, Codex, Gemini, Grok, OpenCode, Cline, Ollama, custom commands — each through its CLI (your subscription) or an API key.",
   "author": "AICode",
   "icon": "comment-discussion",
   "main": "main.js",
@@ -12,10 +12,14 @@
     "onCommand:agents.ask",
     "onCommand:agents.attachFile",
     "onCommand:agents.attachSelection",
-    "onCommand:agents.showHistory"
+    "onCommand:agents.showHistory",
+    "onCommand:agents.pickAgent",
+    "onCommand:agents.configureAgent",
+    "onCommand:agents.openInTerminal",
+    "onCommand:agents.newChat",
+    "onCommand:agents.clearHistory"
   ],
   "permissions": [
-    "process",
     "fs:read",
     "open-external"
   ],
@@ -67,13 +71,13 @@
         "category": "Chat"
       },
       {
-        "id": "agents.openInTerminal",
-        "title": "Open Agent in Terminal",
+        "id": "agents.configureAgent",
+        "title": "Configure Agent…",
         "category": "Chat"
       },
       {
-        "id": "agents.addCustom",
-        "title": "Add a Custom Agent Command…",
+        "id": "agents.openInTerminal",
+        "title": "Open Agent in Terminal",
         "category": "Chat"
       },
       {

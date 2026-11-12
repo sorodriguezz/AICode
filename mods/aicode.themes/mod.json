@@ -1,13 +1,133 @@
 {
   "id": "aicode.themes",
-  "name": "Classic Themes",
+  "name": "Themes",
   "version": "1.0.0",
-  "description": "Light and dark themes plus Markdown snippets. A declarative mod: theme and snippet files only, no code to run.",
+  "description": "39 color themes for the whole window, editor and terminal: 20 dark and 19 light. Dracula, Monokai, One Dark/Light, Darcula, Nord, Tokyo Night, Gruvbox, GitHub, Night Owl, Catppuccin, Solarized, Rosé Pine Dawn, Ayu Light, Xcode Light, Kiro Dark and more, plus CodeFlow Dark/Light and AICode Dark Classic/Light. Theme files only, no code to run.",
   "author": "AICode",
   "icon": "symbol-color",
   "api": 1,
   "contributes": {
     "themes": [
+      {
+        "id": "dark-classic",
+        "label": "AICode Dark Classic",
+        "uiTheme": "vs-dark",
+        "path": "themes/dark-classic.json"
+      },
+      {
+        "id": "codeflow-dark",
+        "label": "CodeFlow Dark",
+        "uiTheme": "vs-dark",
+        "path": "themes/codeflow-dark.json"
+      },
+      {
+        "id": "black",
+        "label": "Black",
+        "uiTheme": "vs-dark",
+        "path": "themes/black.json"
+      },
+      {
+        "id": "catppuccin-mocha",
+        "label": "Catppuccin Mocha",
+        "uiTheme": "vs-dark",
+        "path": "themes/catppuccin-mocha.json"
+      },
+      {
+        "id": "darcula",
+        "label": "Darcula (JetBrains)",
+        "uiTheme": "vs-dark",
+        "path": "themes/darcula.json"
+      },
+      {
+        "id": "dracula",
+        "label": "Dracula",
+        "uiTheme": "vs-dark",
+        "path": "themes/dracula.json"
+      },
+      {
+        "id": "github-dark",
+        "label": "GitHub Dark",
+        "uiTheme": "vs-dark",
+        "path": "themes/github-dark.json"
+      },
+      {
+        "id": "gruvbox-dark",
+        "label": "Gruvbox Dark",
+        "uiTheme": "vs-dark",
+        "path": "themes/gruvbox-dark.json"
+      },
+      {
+        "id": "kiro-dark",
+        "label": "Kiro Dark",
+        "uiTheme": "vs-dark",
+        "path": "themes/kiro-dark.json"
+      },
+      {
+        "id": "midnight-synth",
+        "label": "Midnight Synth",
+        "uiTheme": "vs-dark",
+        "path": "themes/midnight-synth.json"
+      },
+      {
+        "id": "monokai",
+        "label": "Monokai",
+        "uiTheme": "vs-dark",
+        "path": "themes/monokai.json"
+      },
+      {
+        "id": "night-owl",
+        "label": "Night Owl",
+        "uiTheme": "vs-dark",
+        "path": "themes/night-owl.json"
+      },
+      {
+        "id": "nord",
+        "label": "Nord",
+        "uiTheme": "vs-dark",
+        "path": "themes/nord.json"
+      },
+      {
+        "id": "omni-owl",
+        "label": "Omni Owl",
+        "uiTheme": "vs-dark",
+        "path": "themes/omni-owl.json"
+      },
+      {
+        "id": "one-dark",
+        "label": "One Dark",
+        "uiTheme": "vs-dark",
+        "path": "themes/one-dark.json"
+      },
+      {
+        "id": "panda-syntax",
+        "label": "Panda Syntax",
+        "uiTheme": "vs-dark",
+        "path": "themes/panda-syntax.json"
+      },
+      {
+        "id": "pink-cat-boo",
+        "label": "Pink Cat Boo",
+        "uiTheme": "vs-dark",
+        "path": "themes/pink-cat-boo.json"
+      },
+      {
+        "id": "solarized-dark",
+        "label": "Solarized Dark",
+        "uiTheme": "vs-dark",
+        "path": "themes/solarized-dark.json"
+      },
+      {
+        "id": "tokyo-night",
+        "label": "Tokyo Night",
+        "uiTheme": "vs-dark",
+        "path": "themes/tokyo-night.json"
+      },
+      {
+        "id": "vercel",
+        "label": "Vercel",
+        "uiTheme": "vs-dark",
+        "path": "themes/vercel.json"
+      },
       {
         "id": "light",
         "label": "AICode Light",
@@ -15,16 +135,112 @@
         "path": "themes/light.json"
       },
       {
-        "id": "dark-classic",
-        "label": "AICode Dark Classic",
-        "uiTheme": "vs-dark",
-        "path": "themes/dark-classic.json"
-      }
-    ],
-    "snippets": [
+        "id": "codeflow-light",
+        "label": "CodeFlow Light",
+        "uiTheme": "vs",
+        "path": "themes/codeflow-light.json"
+      },
       {
-        "language": "markdown",
-        "path": "snippets/markdown.json"
+        "id": "ayu-light",
+        "label": "Ayu Light",
+        "uiTheme": "vs",
+        "path": "themes/ayu-light.json"
+      },
+      {
+        "id": "catppuccin-latte",
+        "label": "Catppuccin Latte",
+        "uiTheme": "vs",
+        "path": "themes/catppuccin-latte.json"
+      },
+      {
+        "id": "dark-magic-light",
+        "label": "Dark Magic Light",
+        "uiTheme": "vs",
+        "path": "themes/dark-magic-light.json"
+      },
+      {
+        "id": "escook-light-soft",
+        "label": "escook Light Soft",
+        "uiTheme": "vs",
+        "path": "themes/escook-light-soft.json"
+      },
+      {
+        "id": "github-light",
+        "label": "GitHub Light",
+        "uiTheme": "vs",
+        "path": "themes/github-light.json"
+      },
+      {
+        "id": "gruvbox-light",
+        "label": "Gruvbox Light",
+        "uiTheme": "vs",
+        "path": "themes/gruvbox-light.json"
+      },
+      {
+        "id": "i-light",
+        "label": "i Light",
+        "uiTheme": "vs",
+        "path": "themes/i-light.json"
+      },
+      {
+        "id": "light-pink",
+        "label": "Light Pink",
+        "uiTheme": "vs",
+        "path": "themes/light-pink.json"
+      },
+      {
+        "id": "night-owl-light",
+        "label": "Night Owl Light",
+        "uiTheme": "vs",
+        "path": "themes/night-owl-light.json"
+      },
+      {
+        "id": "noctis-hibernus",
+        "label": "Noctis Hibernus",
+        "uiTheme": "vs",
+        "path": "themes/noctis-hibernus.json"
+      },
+      {
+        "id": "one-light",
+        "label": "One Light",
+        "uiTheme": "vs",
+        "path": "themes/one-light.json"
+      },
+      {
+        "id": "pink-candy-light",
+        "label": "Pink Candy Light",
+        "uiTheme": "vs",
+        "path": "themes/pink-candy-light.json"
+      },
+      {
+        "id": "quiet-light",
+        "label": "Quiet Light",
+        "uiTheme": "vs",
+        "path": "themes/quiet-light.json"
+      },
+      {
+        "id": "rose-pine-dawn",
+        "label": "Rosé Pine Dawn",
+        "uiTheme": "vs",
+        "path": "themes/rose-pine-dawn.json"
+      },
+      {
+        "id": "solarized-light",
+        "label": "Solarized Light",
+        "uiTheme": "vs",
+        "path": "themes/solarized-light.json"
+      },
+      {
+        "id": "tokyo-night-light",
+        "label": "Tokyo Night Light",
+        "uiTheme": "vs",
+        "path": "themes/tokyo-night-light.json"
+      },
+      {
+        "id": "xcode-light",
+        "label": "Xcode Light",
+        "uiTheme": "vs",
+        "path": "themes/xcode-light.json"
       }
     ]
   }

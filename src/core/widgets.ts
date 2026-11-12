@@ -110,6 +110,8 @@ interface QuickOptions<T extends QuickItem> {
   onValue?: (value: string) => boolean;
   prompt?: string;
   allowFreeText?: boolean;
+  /** Typed text is masked (an API key). */
+  password?: boolean;
   noMatch?: string;
   /** The row that starts active (when the items first show, and while the query is empty). */
   activeIndex?: number;
@@ -180,7 +182,7 @@ export function quickInput<T extends QuickItem>(opts: QuickOptions<T>): Promise<
       resolve(value);
     };
 
-    const input = h("input", { class: "input", placeholder: opts.placeholder ?? "", spellcheck: false, autocomplete: "off" }) as HTMLInputElement;
+    const input = h("input", { class: "input", type: opts.password ? "password" : "text", placeholder: opts.placeholder ?? "", spellcheck: false, autocomplete: "off" }) as HTMLInputElement;
     input.value = opts.value ?? "";
     const list = h("div", { class: "quick-list", role: "listbox" });
     const promptEl = opts.prompt ? h("div", { class: "prompt muted" }, opts.prompt) : null;
@@ -297,9 +299,9 @@ export async function pick<T extends QuickItem>(items: T[], opts: { placeholder?
   return rest as T;
 }
 
-export async function inputBox(opts: { prompt?: string; placeholder?: string; value?: string; validate?: (v: string) => string | null }): Promise<string | undefined> {
+export async function inputBox(opts: { prompt?: string; placeholder?: string; value?: string; password?: boolean; validate?: (v: string) => string | null }): Promise<string | undefined> {
   for (;;) {
-    const result = await quickInput<QuickItem>({ placeholder: opts.placeholder, prompt: opts.prompt ?? "Press Enter to confirm or Escape to cancel", value: opts.value, items: () => [], allowFreeText: true });
+    const result = await quickInput<QuickItem>({ placeholder: opts.placeholder, prompt: opts.prompt ?? "Press Enter to confirm or Escape to cancel", value: opts.value, password: opts.password, items: () => [], allowFreeText: true });
     if (typeof result !== "string") return undefined;
     const problem = opts.validate?.(result);
     if (!problem) return result;

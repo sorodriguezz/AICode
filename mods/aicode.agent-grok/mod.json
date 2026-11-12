@@ -1,0 +1,46 @@
+{
+  "id": "aicode.agent-grok",
+  "name": "Grok (xAI)",
+  "version": "1.0.0",
+  "description": "xAI's Grok in the AI Chat: with a Grok CLI you installed, or with the xAI API and an API key kept in your Keychain — no CLI needed.",
+  "author": "AICode",
+  "icon": "rocket",
+  "main": "main.js",
+  "api": 1,
+  "activation": [
+    "onCommand:grok.configure"
+  ],
+  "permissions": [
+    "process",
+    "open-external"
+  ],
+  "dependencies": [
+    "aicode.agents"
+  ],
+  "contributes": {
+    "chatAgents": [
+      {
+        "id": "grok",
+        "name": "Grok"
+      }
+    ],
+    "commands": [
+      {
+        "id": "grok.configure",
+        "title": "Configure Grok…",
+        "category": "Chat"
+      }
+    ],
+    "settings": {
+      "mode": {
+        "type": "string",
+        "enum": [
+          "cli",
+          "api"
+        ],
+        "default": "cli",
+        "description": "cli: a Grok CLI you installed. api: the xAI API with your API key (set the key with the Configure command, or the chat's agent picker)."
+      }
+    }
+  }
+}

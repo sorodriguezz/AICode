@@ -2,7 +2,7 @@
   "id": "aicode.markdown",
   "name": "Markdown Preview",
   "version": "1.0.0",
-  "description": "Preview Markdown files the way VS Code does: \"Open Preview to the Side\" and \"Open as Preview\" in the tab bar of a .md file, \"Reopen Editor With… → Markdown Preview\", live updates while you type and scrolling with the editor. Raw HTML in the file is shown as text, never run.",
+  "description": "Preview Markdown files the way VS Code does: \"Open Preview to the Side\" and \"Open as Preview\" in the tab bar of a .md file, \"Reopen Editor With… → Markdown Preview\", live updates while you type and scrolling with the editor, and a Maximize button that lets the preview to the side fill the whole editor area, the headings above the cursor in the breadcrumbs, and Markdown snippets. Raw HTML in the file is shown as text, never run.",
   "author": "AICode",
   "icon": "open-preview",
   "main": "main.js",
@@ -10,7 +10,8 @@
   "activation": [
     "onLanguage:markdown",
     "onCommand:markdown.showPreview",
-    "onCommand:markdown.showPreviewToSide"
+    "onCommand:markdown.showPreviewToSide",
+    "onCommand:markdown.togglePreviewMaximized"
   ],
   "permissions": [
     "open-external"
@@ -19,7 +20,9 @@
     "commands": [
       { "id": "markdown.showPreviewToSide", "title": "Open Preview to the Side", "category": "Markdown", "icon": "open-preview", "keybinding": "mod+k v" },
       { "id": "markdown.showPreview", "title": "Open Preview", "category": "Markdown", "icon": "preview", "keybinding": "mod+shift+v" },
+      { "id": "markdown.togglePreviewMaximized", "title": "Toggle Maximized Preview", "category": "Markdown", "icon": "screen-full" },
       { "id": "markdown.showSource", "title": "Show Source", "category": "Markdown", "icon": "go-to-file" }
-    ]
+    ],
+    "snippets": [{ "language": "markdown", "path": "snippets/markdown.json" }]
   }
 }

@@ -1,0 +1,15 @@
+{
+  "id": "aicode.json-yaml",
+  "name": "JSON & YAML Paths",
+  "version": "1.0.0",
+  "description": "Where you are in a JSON or YAML file: the breadcrumbs show the keys down to the cursor (dependencies › react, services › web › ports › 0), like VS Code's. Click one to jump to it.",
+  "author": "AICode",
+  "icon": "symbol-object",
+  "main": "main.js",
+  "api": 1,
+  "activation": [
+    "onLanguage:json",
+    "onLanguage:jsonc",
+    "onLanguage:yaml"
+  ]
+}

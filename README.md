@@ -74,19 +74,30 @@ and the Mods page.
 | **Explorer** | file tree like VS Code's: new/rename in place, delete to the Trash, cut/copy/paste, drag to move (⌥ copies), keyboard navigation, git colors, follows changes on disk; open editors | fs:read, fs:write |
 | **Search** | find and replace across the folder (regex with `$1`, case, whole word, preserve case), files to include/exclude, only open editors, unsaved editors searched as they are, .gitignore on or off | fs:read, fs:write |
 | **Terminal** | integrated terminals (xterm.js + a real PTY): tabs, side-by-side splits, a shell picker, ⌘-click on paths and URLs, ⌘K clears | pty, fs:read, open-external |
-| **AI Chat** | chat with Claude Code, Codex, Gemini CLI, Grok, OpenCode, Cline, Ollama or a custom command: attach files and selections, slash commands, edit/retry, chat history, file links and *Run in Terminal* in answers | process, fs:read, open-external |
+| **AI Chat** | the chat panel only: attach files and selections, slash commands, edit/retry, chat history, file links and *Run in Terminal* in answers. The agents are the mods below | fs:read, open-external |
+| **Claude**, **Codex (OpenAI)**, **Gemini**, **Grok (xAI)** | one agent each for the AI Chat, through its CLI (your subscription — reads the folder; Claude and Codex also propose edits through the MCP server) or its API with an API key kept in the macOS Keychain (no CLI needed). *Configure …* in the agent picker switches | process, open-external |
+| **OpenCode**, **Cline** | an agent each, through its CLI (which keeps its own providers and keys) | process, open-external |
+| **Ollama** | local models: `ollama run`, or the local Ollama server with the conversation as messages | process, open-external |
+| **Custom Agent Commands** | any program that takes a message and prints an answer (aider, llm, a script) as an agent | process |
+| **Agents Window** | a window made for agents: the chat in the middle, files/changes/search on the right, the terminal below (⌥⇧⌘A; configuration only) | — |
 | **MCP Server** | AICode's open editors as MCP tools (read unsaved text, propose edits as diffs) on 127.0.0.1 with a token | mcp-server |
 | **CodeFlow** | run CodeFlow flows with the file/selection as input; connect CodeFlow's agents to AICode | open-external |
 | **Source Control** | git: changes, stage/unstage/discard, commit, diffs, branches, fetch/pull/push, gutter markers | process, fs:read |
-| **Classic Themes** | light and dark themes + Markdown snippets (declarative, no code) | — |
+| **Themes** | 39 color themes for the whole window (editor, side bars, tabs, terminal, widgets): CodeFlow Dark/Light, Dracula, Monokai, One Dark/Light, Tokyo Night (+Light), Catppuccin Mocha/Latte, Night Owl (+Light), Omni Owl, Nord, Gruvbox, GitHub, Solarized, Darcula, Kiro Dark, Rosé Pine Dawn, Ayu Light… (declarative) | — |
+| **File Icon Themes** | Seti (the default) and VS Code Icons, with packs for Angular, React, Next.js, Vue/Nuxt, NestJS, Bun, Spring Boot, .NET, FastAPI, Django and Laravel — or *Auto*, which picks the pack each folder calls for (*Preferences: File Icon Theme…*) | fs:read |
+| **JSON & YAML Paths** | the keys down to the cursor in the breadcrumbs (`dependencies › react`), click to jump | — |
+| **Glass (Acrylic)** | macOS frosted glass behind the window, tinted with the theme so nothing turns invisible (configuration only) | — |
+| **Soft Look** | pill tabs, rounded corners, themed tooltips, a smooth cursor (configuration only) | — |
 | **Syntax Highlighting** | VS Code's own TextMate grammars (TypeScript, JavaScript, Python, Rust, Go, C/C++, …), so code is colored exactly as in VS Code | — |
-| **Markdown Preview** | preview .md files to the side or in their own tab (⌘K V, ⇧⌘V), live while typing, scrolling with the editor; raw HTML is shown as text | open-external |
+| **Markdown Preview** | preview .md files to the side or in their own tab (⌘K V, ⇧⌘V), live while typing, scrolling with the editor, maximized over the editor; the headings above the cursor in the breadcrumbs; Markdown snippets; raw HTML is shown as text | open-external |
 
-The window uses VS Code's 2026 look: its Dark / Light 2026 color themes and the Seti file icons
-are built in (MIT, see `src/core/icons/LICENSE.md`); *Settings → File Icon Theme* turns the icons off.
+The window uses VS Code's 2026 look: its Dark / Light 2026 color themes are built in (MIT, see
+`src/core/themes/LICENSE.md`). File icons come from the File Icon Themes mod (Seti, VS Code Icons
+and framework packs, MIT — see `mods/aicode.icons/NOTICE.md`), on in every profile by default;
+*Preferences: File Icon Theme…* picks one or turns them off.
 
-The Mods page (⇧⌘X) and Settings (⌘,) open over the editor as a modal, like VS Code (the icons
-right of the search box); its header moves them into a tab, and *Settings → Open Pages in a
+The Mods page (⇧⌘X) and Settings (⌘,) open over the editor as a modal, like VS Code (both in the
+gear menu of the status bar); its header moves them into a tab, and *Settings → Open Pages in a
 Modal* turns this off. The Mods page shows what each mod may do, whether it is running, and what AICode is
 running right now with its memory use.
 

@@ -769,9 +769,10 @@ body.view-dragging .view-drop-zones { display: block; }
 .tab.active:first-child::after { border-left-color: transparent; }
 .tab .tab-close { width: 20px; height: 20px; border-radius: 4px; }
 
-/* File icons from the icon font (Seti): a 16px box like a codicon, the glyph drawn a bit larger. */
+/* File icons from an icon theme (src/core/fileIcons.ts). A font glyph (Seti): a 16px box like a
+   codicon, the glyph drawn a bit larger; its font family comes from the theme's own class. */
 .font-ficon {
-  font-family: "aicode-seti"; font-style: normal; font-weight: normal;
+  font-style: normal; font-weight: normal;
   display: inline-flex; align-items: center; justify-content: center;
   width: var(--list-icon); height: var(--list-icon); flex: 0 0 auto;
   font-size: calc(var(--list-icon) * 1.22); line-height: 1;
@@ -796,6 +797,13 @@ body .breadcrumbs .codicon.sep { font-size: 12px; opacity: .7; }
 .breadcrumbs .crumb.symbol .crumb-label { overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
 body .breadcrumbs .crumb.symbol .codicon.crumb-icon { font-size: 14px; color: var(--aicode-symbolIcon-objectForeground, var(--aicode-descriptionForeground)); }
 .breadcrumbs .font-ficon.crumb-icon { width: 14px; height: 14px; font-size: 18px; }
+/* A picture (vscode-icons): the theme's SVG, fitted into the same box. */
+.svg-ficon {
+  display: inline-block; width: var(--list-icon); height: var(--list-icon); flex: 0 0 auto;
+  background-repeat: no-repeat; background-position: center; background-size: contain;
+}
+.tab .svg-ficon.tab-icon, .quick-item .svg-ficon { width: 16px; height: 16px; opacity: 1; }
+.breadcrumbs .svg-ficon.crumb-icon { width: 14px; height: 14px; }
 .tab .tab-deco { font-size: 12px; margin-left: -2px; }
 
 /* ---------- the main area as a grid (sides swap, the panel can reach under the side bars) ---------- */
@@ -876,7 +884,7 @@ body .modal-editor-title .codicon { font-size: 14px; }
 .modal-editor-sash.w { left: 0; }
 .modal-editor.maximized .modal-editor-sash { display: none; }
 
-/* Icons right of the command center: Mods and Settings, opened as modal editors. */
+/* Right of the command center: the pin (always on top) and the layout controls. */
 .titlebar-right { justify-content: space-between; padding-left: 4px; }
 .titlebar-right > .group { display: flex; align-items: center; gap: 2px; }
 
@@ -886,6 +894,9 @@ body .modal-editor-title .codicon { font-size: 14px; }
 .editor-side { position: relative; flex: 0 0 auto; display: flex; flex-direction: column; min-width: 160px; border-left: 1px solid var(--aicode-editorGroup-border, var(--aicode-editorGroupHeader-tabsBorder)); background: var(--aicode-editor-background); }
 .editor-side-body { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; }
 .editor-group > .editor-side-sash { margin: 0 -2px 0 -2px; z-index: 6; }
+/* The pane maximized over the editor group (ctx.editor.maximizeSide): the editor waits, hidden. */
+.editor-group.side-maximized > .editor-main, .editor-group.side-maximized > .editor-side-sash { display: none !important; }
+.editor-group.side-maximized > .editor-side { flex: 1 1 auto; width: auto !important; border-left: 0; }
 .title-actions { display: contents; }
 .breadcrumbs .editor-type { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; padding: 0 2px 0 6px; font-size: 11px; cursor: pointer; border-radius: 3px; color: var(--aicode-descriptionForeground); }
 .breadcrumbs .editor-type:hover { color: var(--aicode-foreground); }

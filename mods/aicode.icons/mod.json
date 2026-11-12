@@ -1,0 +1,90 @@
+{
+  "id": "aicode.icons",
+  "name": "File Icon Themes",
+  "version": "1.0.0",
+  "description": "Icons for files and folders in the explorer, tabs, quick open, search, source control and chat. Seti (VS Code's default), VS Code Icons, and VS Code Icons packs for Angular, React, Next.js, Vue / Nuxt, NestJS, Bun, Spring Boot, .NET, FastAPI, Django and Laravel (from CodeFlow) — or Auto, which picks the pack each folder calls for by reading its root (package.json, pom.xml, manage.py…), as CodeFlow does. Pick one with Preferences: File Icon Theme.",
+  "author": "AICode",
+  "icon": "file-media",
+  "api": 1,
+  "contributes": {
+    "iconThemes": [
+      {
+        "id": "seti",
+        "label": "Seti (Visual Studio Code)",
+        "path": "seti/seti.json"
+      },
+      {
+        "id": "vscode-icons",
+        "label": "VS Code Icons",
+        "path": "vscode-icons/general.json"
+      },
+      {
+        "id": "vscode-icons-auto",
+        "label": "VS Code Icons — Auto (by project)",
+        "path": "vscode-icons/general.json"
+      },
+      {
+        "id": "vscode-icons-angular",
+        "label": "VS Code Icons — Angular",
+        "path": "vscode-icons/angular.json"
+      },
+      {
+        "id": "vscode-icons-react",
+        "label": "VS Code Icons — React",
+        "path": "vscode-icons/react.json"
+      },
+      {
+        "id": "vscode-icons-nextjs",
+        "label": "VS Code Icons — Next.js",
+        "path": "vscode-icons/nextjs.json"
+      },
+      {
+        "id": "vscode-icons-vue",
+        "label": "VS Code Icons — Vue / Nuxt",
+        "path": "vscode-icons/vue.json"
+      },
+      {
+        "id": "vscode-icons-nestjs",
+        "label": "VS Code Icons — NestJS",
+        "path": "vscode-icons/nestjs.json"
+      },
+      {
+        "id": "vscode-icons-bun",
+        "label": "VS Code Icons — Bun",
+        "path": "vscode-icons/bun.json"
+      },
+      {
+        "id": "vscode-icons-spring",
+        "label": "VS Code Icons — Spring Boot",
+        "path": "vscode-icons/spring.json"
+      },
+      {
+        "id": "vscode-icons-dotnet",
+        "label": "VS Code Icons — .NET",
+        "path": "vscode-icons/dotnet.json"
+      },
+      {
+        "id": "vscode-icons-fastapi",
+        "label": "VS Code Icons — FastAPI",
+        "path": "vscode-icons/fastapi.json"
+      },
+      {
+        "id": "vscode-icons-django",
+        "label": "VS Code Icons — Django",
+        "path": "vscode-icons/django.json"
+      },
+      {
+        "id": "vscode-icons-laravel",
+        "label": "VS Code Icons — Laravel",
+        "path": "vscode-icons/laravel.json"
+      }
+    ]
+  },
+  "main": "main.js",
+  "activation": [
+    "onFolder"
+  ],
+  "permissions": [
+    "fs:read"
+  ]
+}

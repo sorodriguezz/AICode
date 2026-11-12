@@ -1,0 +1,49 @@
+{
+  "id": "aicode.agent-codex",
+  "name": "Codex (OpenAI)",
+  "version": "1.0.0",
+  "description": "OpenAI's Codex in the AI Chat. With the Codex CLI (your ChatGPT plan) it reads the folder and proposes edits you review as a diff (with the MCP Server mod). Or with the OpenAI API and an API key kept in your Keychain — no CLI needed.",
+  "author": "AICode",
+  "icon": "hubot",
+  "main": "main.js",
+  "api": 1,
+  "activation": [
+    "onCommand:codex.configure"
+  ],
+  "permissions": [
+    "process",
+    "open-external"
+  ],
+  "dependencies": [
+    "aicode.agents"
+  ],
+  "optionalDependencies": [
+    "aicode.mcp-server"
+  ],
+  "contributes": {
+    "chatAgents": [
+      {
+        "id": "codex",
+        "name": "Codex"
+      }
+    ],
+    "commands": [
+      {
+        "id": "codex.configure",
+        "title": "Configure Codex…",
+        "category": "Chat"
+      }
+    ],
+    "settings": {
+      "mode": {
+        "type": "string",
+        "enum": [
+          "cli",
+          "api"
+        ],
+        "default": "cli",
+        "description": "cli: the Codex CLI, signed in with your ChatGPT plan. api: the OpenAI API with your API key (set the key with the Configure command, or the chat's agent picker)."
+      }
+    }
+  }
+}

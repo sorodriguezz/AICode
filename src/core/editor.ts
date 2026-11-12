@@ -16,7 +16,6 @@ import { fileIconEl, configureFileIcons } from "./fileIcons";
 import { Emitter } from "./events";
 import { Workbench, StatusHandle } from "./workbench";
 import { dialog, notify, pick, contextMenu, MenuItem } from "./widgets";
-import { symbolPath } from "./symbolPath";
 import * as commands from "./commands";
 import { leave, play } from "./motion";
 import { openModal, closeModal, ModalAction } from "./modal";
@@ -116,11 +115,36 @@ export interface EditorType {
   open: (info: EditorInfo) => void;
 }
 
+/** One step of the breadcrumbs after the file name: a key, a heading… `line` is where clicking goes. */
+export interface BreadcrumbCrumb {
+  name: string;
+  line: number;
+  /** A codicon (default: symbol-field). */
+  icon?: string;
+}
+
+/** Where the cursor is inside a file, for the breadcrumbs. Mods offer them per language. */
+export interface BreadcrumbProvider {
+  languages: string[];
+  path(text: string, line: number, column: number): BreadcrumbCrumb[];
+}
+
 /** A pane beside the editor (`openSide`). */
 export interface SidePaneSpec {
   title: string;
   icon?: string;
   render(container: HTMLElement): void | Disposable;
+  /** Icons in the pane's tab bar, before its close button (the mod's own, like "Maximize"). */
+  actions?: SidePaneAction[];
+  /** Called after the pane is maximized over the editor or restored (`maximizeSide`). */
+  onDidChangeMaximized?(maximized: boolean): void;
+}
+
+export interface SidePaneAction {
+  id: string;
+  icon: string;
+  title: string;
+  run(e: MouseEvent): void;
 }
 
 /** A tab moved to another window: its file, and its text when it has unsaved changes. */
@@ -509,8 +533,9 @@ export class EditorService {
 
   // ---------- the pane to the side ----------
 
-  private side: { spec: SidePaneSpec; el: HTMLElement; disposable?: Disposable | void } | null = null;
+  private side: { spec: SidePaneSpec; el: HTMLElement; actions: HTMLElement; disposable?: Disposable | void } | null = null;
   private sideWidth = 0;
+  private sideMaximized = false;
 
   /** Shows a pane beside the editor (VS Code opens a second group there): one at a time. */
   openSide(spec: SidePaneSpec) {
@@ -534,15 +559,17 @@ export class EditorService {
           h("div", { class: "tab-close", title: "Close", onclick: () => this.closeSide() }, icon("close")),
         ),
       ),
-      h("div", { class: "tabs-actions" }, h("button", { class: "icon-button", title: "Close Editor to the Side", onclick: () => this.closeSide() }, icon("close"))),
+      h("div", { class: "tabs-actions" }),
     );
+    const actions = header.lastElementChild as HTMLElement;
     side.replaceChildren(header, body);
     side.style.display = "";
     wb.editorSideSash.style.display = "";
     const group = side.parentElement!;
     if (!this.sideWidth) this.sideWidth = Math.round(group.clientWidth / 2);
     side.style.width = `${Math.max(160, Math.min(this.sideWidth, group.clientWidth - 160))}px`;
-    this.side = { spec, el: body };
+    this.side = { spec, el: body, actions };
+    this.renderSideActions();
     try {
       this.side.disposable = spec.render(body);
     } catch (e) {
@@ -573,8 +600,42 @@ export class EditorService {
     }
   }
 
+  /** The pane's tab bar icons: its own (`spec.actions`), then Close. */
+  renderSideActions() {
+    if (!this.side) return;
+    const { spec, actions } = this.side;
+    actions.replaceChildren(
+      ...(spec.actions ?? []).map((a) => h("button", { class: "icon-button", title: a.title, dataset: { action: a.id }, onclick: (e: MouseEvent) => a.run(e) }, icon(a.icon))),
+      h("button", { class: "icon-button", title: "Close Editor to the Side", onclick: () => this.closeSide() }, icon("close")),
+    );
+  }
+
+  /** The pane over the whole editor group (true), or back beside the editor (false); toggles with no argument. */
+  maximizeSide(on?: boolean) {
+    if (!this.side) return false;
+    const next = on ?? !this.sideMaximized;
+    if (next === this.sideMaximized) return next;
+    this.sideMaximized = next;
+    this.wb.editorSide.parentElement?.classList.toggle("side-maximized", next);
+    try {
+      this.side.spec.onDidChangeMaximized?.(next);
+    } catch (e) {
+      console.error(e);
+    }
+    this.renderSideActions();
+    return next;
+  }
+
+  isSideMaximized() {
+    return !!this.side && this.sideMaximized;
+  }
+
   closeSide() {
     if (!this.side) return;
+    if (this.sideMaximized) {
+      this.sideMaximized = false;
+      this.wb.editorSide.parentElement?.classList.remove("side-maximized");
+    }
     try {
       this.side.disposable?.dispose();
     } catch (e) {
@@ -766,16 +827,38 @@ export class EditorService {
 
   private symbolCrumbs: HTMLElement | null = null;
   private symbolsFrame = 0;
+  private breadcrumbProviders: BreadcrumbProvider[] = [];
 
-  /** After the file in the breadcrumbs: where the cursor is (keys in YAML/JSON, headings in Markdown). */
+  /** Breadcrumbs for some languages (the JSON & YAML mod's keys, the Markdown mod's headings). The last one registered for a language wins. */
+  registerBreadcrumbs(provider: BreadcrumbProvider): Disposable {
+    this.breadcrumbProviders.push(provider);
+    this.scheduleSymbols();
+    return {
+      dispose: () => {
+        const i = this.breadcrumbProviders.indexOf(provider);
+        if (i >= 0) this.breadcrumbProviders.splice(i, 1);
+        this.scheduleSymbols();
+      },
+    };
+  }
+
+  /** After the file in the breadcrumbs: where the cursor is, from the mod that knows the language. */
   private paintSymbols() {
     const host = this.symbolCrumbs;
     const doc = this.active;
     if (!host || doc?.kind !== "text" || this.editor.getModel() !== doc.model) return;
     const pos = this.editor.getPosition();
-    const crumbs = pos ? symbolPath(doc.model.getLanguageId(), doc.model.getValue(), pos.lineNumber, pos.column) : [];
+    const lang = doc.model.getLanguageId();
+    const provider = [...this.breadcrumbProviders].reverse().find((p) => p.languages.includes(lang));
+    let crumbs: BreadcrumbCrumb[] = [];
+    if (pos && provider) {
+      try {
+        crumbs = provider.path(doc.model.getValue(), pos.lineNumber, pos.column) ?? [];
+      } catch (e) {
+        console.error("breadcrumbs:", e);
+      }
+    }
     clear(host);
-    const icons = { object: "symbol-object", array: "symbol-array", value: "symbol-string", heading: "symbol-string" } as const;
     for (const c of crumbs)
       host.append(
         icon("chevron-right", "sep"),
@@ -790,7 +873,7 @@ export class EditorService {
               this.editor.focus();
             },
           },
-          icon(icons[c.kind], "crumb-icon"),
+          icon(c.icon ?? "symbol-field", "crumb-icon"),
           h("span", { class: "crumb-label" }, c.name),
         ),
       );
