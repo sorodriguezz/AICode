@@ -1,6 +1,6 @@
 [package]
 name = "aicode"
-version = "0.2.0"
+version = "0.3.0"
 description = "AICode — a notepad that grows into an editor, one mod at a time"
 edition = "2021"
 publish = false
