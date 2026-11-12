@@ -197,6 +197,9 @@ jobs:
         with:
           workspaces: src-tauri -> target
           key: ${{ matrix.target }}
+          # Keep the compiled dependencies even when a later step fails (a bad secret, the dmg
+          # script), so the next run does not compile everything again.
+          cache-on-failure: true
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
