@@ -19,6 +19,7 @@ import { quickInput, fuzzyScore, highlight, pick, notify, QuickItem, dialog } fr
 import { basename, h, icon } from "./core/ui";
 import { motionEnabled, setMotion } from "./core/motion";
 import { openProfiles, openSettings, switchProfile, createProfile, importProfile, exportProfile, ProfileView } from "./core/profiles";
+import { initUpdates, checkForUpdates, checkOnStartup } from "./core/updates";
 
 // Errors and warnings also go to the terminal that started AICode (see `core_log`).
 for (const level of ["error", "warn"] as const) {
@@ -34,6 +35,9 @@ window.addEventListener("error", (e) => {
   if (e.message?.includes("ResizeObserver loop")) return;
   console.error(`uncaught: ${e.message} at ${e.filename}:${e.lineno}`);
 });
+// Only the app's own context menus: the webview's native one (Reload, Inspect Element) never
+// shows. Our handlers run first and open theirs; a right click on nothing does nothing.
+window.addEventListener("contextmenu", (e) => e.preventDefault());
 window.addEventListener("unhandledrejection", (e) => console.error(`unhandled rejection: ${e.reason?.stack ?? e.reason}`));
 
 async function boot() {
@@ -101,8 +105,10 @@ async function boot() {
   editors.onDidChangeFontSize.event((size) => {
     invoke("settings_set", { modId: "core", key: "editor.fontSize", value: size }).catch(() => {});
   });
+  let currentThemeId = BUILTIN_DARK.id;
   const setTheme = async (entry: ThemeEntry, persist = true) => {
     try {
+      currentThemeId = entry.id;
       applyTheme(entry, await entry.load());
       configureFileIcons({ light: entry.uiTheme === "vs" });
       editors.refreshTabs();
@@ -127,7 +133,7 @@ async function boot() {
   };
   applyUserKeybindings(profile.keybindings);
 
-  registerWorkbenchCommands(wb, editors, workspace, host, allThemes, setTheme, applyCore, applyUserKeybindings);
+  registerWorkbenchCommands(wb, editors, workspace, host, allThemes, setTheme, () => currentThemeId, applyCore, applyUserKeybindings);
   commands.installKeyHandler();
 
   // Which profile this is, when there is more than one.
@@ -167,9 +173,13 @@ async function boot() {
   const queued: string[][] = [];
   await listen<string[]>("open-paths", (e) => (openLater ? openLater(e.payload) : queued.push(e.payload)));
   const pending = await invoke<string[]>("window_take_pending");
-  // Opened with nothing to show: a blank file, as a notepad does. Opened with a file: just that.
-  if (!editors.count && !pending.length) editors.newUntitled();
+  // Opened with nothing to show: the empty editor area (its watermark), as in VS Code. A new file
+  // is a double click there, or ⌘N, away.
   updateTitle();
+
+  // Updates: progress and "Update available" in the status bar; the check at startup if it is on.
+  await initUpdates((item) => wb.addStatus(item));
+  checkOnStartup(!!coreSettings["update.checkOnStartup"]);
 
   host.fire("onStartup");
   await wb.revealVisible();
@@ -205,7 +215,6 @@ async function boot() {
   if (pending.length) await openPaths(pending);
   for (const paths of queued.splice(0)) await openPaths(paths);
   openLater = (paths) => openPaths(paths);
-  if (!editors.count) editors.newUntitled();
 
   // Drag and drop of files and folders from Finder (or anywhere) onto the window.
   const dropHint = h("div", { class: "drop-overlay" }, h("div", { class: "drop-card" }, icon("files"), h("span", null, "Drop to open")));
@@ -333,7 +342,8 @@ function registerWorkbenchCommands(
   workspace: Workspace,
   host: ModHost,
   themes: () => ThemeEntry[],
-  setTheme: (t: ThemeEntry) => Promise<void>,
+  setTheme: (t: ThemeEntry, persist?: boolean) => Promise<void>,
+  currentThemeId: () => string,
   applyCore: (s: Record<string, any>, changed?: string) => Promise<void>,
   applyUserKeybindings: (list: ProfileView["keybindings"]) => void,
 ) {
@@ -475,9 +485,22 @@ function registerWorkbenchCommands(
   reg("window.close", "Close Window", () => getCurrentWindow().close(), "Window");
   reg("window.toggleMaximize", "Toggle Maximize", () => getCurrentWindow().toggleMaximize(), "Window");
   reg("preferences.theme", "Color Theme", async () => {
-    const choice = await pick(themes().map((t) => ({ label: t.label, description: t.source === "core" ? "built in" : `from ${t.source}`, id: t.id })), { placeholder: "Select Color Theme" });
-    const entry = themes().find((t) => t.id === choice?.id);
+    // Like VS Code: the theme under the keyboard applies right away; Escape puts the old one back.
+    const list = themes();
+    const before = list.find((t) => t.id === currentThemeId());
+    let previewing = Promise.resolve();
+    const choice = await pick(list.map((t) => ({ label: t.label, description: t.source === "core" ? "built in" : `from ${t.source}`, id: t.id })), {
+      placeholder: "Select Color Theme (Up/Down Keys to Preview)",
+      activeIndex: Math.max(0, list.findIndex((t) => t.id === currentThemeId())),
+      onActive: (item) => {
+        const entry = list.find((t) => t.id === item.id);
+        if (entry && entry.id !== currentThemeId()) previewing = previewing.then(() => setTheme(entry, false));
+      },
+    });
+    await previewing;
+    const entry = list.find((t) => t.id === choice?.id);
     if (entry) await setTheme(entry);
+    else if (before && before.id !== currentThemeId()) await setTheme(before, false);
   }, "Preferences");
   reg("profiles.switch", "Switch Profile…", async (target?: string) => {
     if (typeof target === "string" && target) return switchProfile(target);
@@ -511,6 +534,7 @@ function registerWorkbenchCommands(
   editors.restorers.set("profiles", () => openProfiles(editors));
   const settingsPage = () => openSettings({ host, editors, themes, applyCore });
   reg("preferences.settings", "Settings", settingsPage, "Preferences");
+  reg("update.check", "Check for Updates…", () => checkForUpdates(), "Update");
   editors.restorers.set("settings", settingsPage);
   reg("preferences.openProfileJson", "Open Profile Settings (JSON)", async () => {
     const prof = await invoke<ProfileView>("profile_get");

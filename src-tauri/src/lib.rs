@@ -9,6 +9,7 @@ mod mods;
 mod paths;
 mod procs;
 mod profiles;
+mod updater;
 mod windows;
 
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
@@ -54,6 +55,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> 
     };
     let app_menu = SubmenuBuilder::new(app, "AICode")
         .about(None)
+        .item(&item("update.check", "Check for Updates…", None)?)
         .separator()
         .item(&item("preferences.settings", "Settings…", Some("CmdOrCtrl+,"))?)
         .item(&item("profiles.manage", "Profiles…", None)?)
@@ -117,11 +119,13 @@ pub fn run() {
     paths::ensure();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(mods::ModsState::load())
         .manage(procs::ProcState::default())
         .manage(mcp::McpState::default())
         .manage(windows::WindowsState::default())
         .manage(fsops::WatchState::default())
+        .manage(updater::UpdateState::default())
         .on_window_event(windows::on_window_event)
         // Served off the main thread: a mod's files are read from disk while the window keeps
         // handling its own requests (IPC included) during startup.
@@ -227,6 +231,9 @@ pub fn run() {
             windows::window_new,
             windows::window_take_pending,
             windows::window_count,
+            updater::update_check,
+            updater::update_install,
+            updater::update_claim_startup_check,
         ])
         .build(tauri::generate_context!())
         .expect("error while building AICode")

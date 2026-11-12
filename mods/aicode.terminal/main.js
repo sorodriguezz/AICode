@@ -58,7 +58,9 @@ export async function activate(ctx) {
 
   const color = (key, fallback) => getComputedStyle(document.documentElement).getPropertyValue(`--aicode-${key.replace(/\./g, "-")}`).trim() || fallback;
   const theme = () => ({
-    background: color("terminal.background", color("panel.background", "#181818")),
+    // The panel's own color, in every theme: the terminal is part of the panel, not a box set into
+    // it (a theme's terminal.background often differs by a shade, and the inset shows it).
+    background: color("panel.background", color("terminal.background", "#181818")),
     foreground: color("terminal.foreground", "#cccccc"),
     cursor: color("terminalCursor.foreground", "#cccccc"),
     selectionBackground: color("terminal.selectionBackground", "#264f78"),

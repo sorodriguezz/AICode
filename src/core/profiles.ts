@@ -12,6 +12,7 @@ import { notify, inputBox, confirm, pick } from "./widgets";
 import { closeModal } from "./modal";
 import * as commands from "./commands";
 import type { ThemeEntry } from "./theme";
+import { appVersion, checkForUpdates, installUpdate, onDidChangeUpdateStatus, promptUpdate, updateStatus } from "./updates";
 
 export interface ProfileView {
   name: string;
@@ -132,13 +133,13 @@ export function openProfiles(editors: EditorService) {
         };
         return h(
           "div",
-          { class: `mod-card${first ? " card-enter" : ""}${p.active ? " active-profile" : ""}`, style: { animationDelay: first ? `${Math.min(i, 12) * 30}ms` : "0ms" } },
+          { class: `mod-card profile-card${first ? " card-enter" : ""}${p.active ? " active-profile" : ""}`, style: { animationDelay: first ? `${Math.min(i, 12) * 30}ms` : "0ms" } },
           h("div", { class: "mod-icon" }, icon(p.icon || (p.active ? "account" : "person"))),
           h(
             "div",
             null,
             h("div", { class: "title" }, h("b", null, p.name), p.active ? h("span", { class: "chip" }, icon("check"), "active") : null),
-            h("div", { class: "desc" }, p.description || h("span", { class: "muted" }, p.enabled ? "" : "A plain notepad.")),
+            p.description || !p.enabled ? h("div", { class: "desc" }, p.description || "A plain notepad.") : null,
             h(
               "div",
               { class: "meta" },
@@ -256,7 +257,46 @@ export const CORE_FIELDS: { section: string; fields: Field[] }[] = [
       { key: "animations", label: "Animations", type: "boolean", default: true, description: "Also off while macOS Reduce motion is on." },
     ],
   },
+  {
+    section: "Updates",
+    fields: [
+      { key: "update.checkOnStartup", label: "Check on Startup", type: "boolean", default: false, description: "Ask GitHub for a newer AICode a few seconds after it starts (once per launch). Off: AICode only looks when you click Check for Updates." },
+    ],
+  },
 ];
+
+/** Settings → Updates: the version, Check for Updates, and what the last check found. */
+function updatesRow(): { el: HTMLElement; paint: () => void } {
+  const version = h("b", null, "AICode");
+  appVersion().then((v) => (version.textContent = `AICode ${v}`)).catch(() => {});
+  const statusLine = h("div", { class: "muted update-status" });
+  const control = h("div", { class: "setting-control update-actions" });
+  const paint = () => {
+    const s = updateStatus();
+    const busy = s.kind === "checking" || s.kind === "downloading" || s.kind === "installing" || s.kind === "restarting";
+    statusLine.textContent =
+      s.kind === "checking" ? "Checking for updates…"
+      : s.kind === "latest" ? "AICode is up to date."
+      : s.kind === "available" ? `Version ${s.info.version} is available.`
+      : s.kind === "downloading" ? `Downloading ${s.info.version}${s.total ? ` — ${Math.round((s.downloaded / s.total) * 100)}%` : "…"}`
+      : s.kind === "installing" ? `Installing ${s.info.version}…`
+      : s.kind === "restarting" ? "Restarting AICode…"
+      : s.kind === "error" ? `The last check failed: ${s.message}`
+      : "Updates come from the AICode releases on GitHub.";
+    clear(control);
+    if (s.kind === "available") {
+      control.append(
+        h("button", { class: "btn secondary", onclick: () => promptUpdate(s.info) }, "Details…"),
+        h("button", { class: "btn", onclick: () => installUpdate() }, icon("cloud-download"), "Install and Restart"),
+      );
+    } else {
+      control.append(h("button", { class: "btn secondary", disabled: busy, onclick: () => checkForUpdates() }, icon(busy ? "sync codicon-modifier-spin" : "sync"), s.kind === "checking" ? "Checking…" : "Check for Updates"));
+    }
+  };
+  paint();
+  const el = h("div", { class: "setting-row" }, h("div", { class: "setting-label" }, version, h("span", { class: "muted key" }, "update.check"), statusLine), control);
+  return { el, paint };
+}
 
 export function openSettings(deps: SettingsDeps) {
   deps.editors.openPage({
@@ -269,6 +309,8 @@ export function openSettings(deps: SettingsDeps) {
       const page = h("div", { class: "mods-page settings-page" });
       root.append(page);
       let filter = "";
+      let updates: ReturnType<typeof updatesRow> | null = null;
+      const updatesWatch = onDidChangeUpdateStatus(() => updates?.paint());
 
       const control = (owner: string, f: Field, values: Record<string, any>) => {
         const current = f.key in values ? values[f.key] : f.default;
@@ -322,6 +364,11 @@ export function openSettings(deps: SettingsDeps) {
           const fields = s.fields
             .map((f) => (f.key === "theme" ? { ...f, enum: deps.themes().map((t) => ({ value: t.id, label: `${t.label}${t.source === "core" ? "" : ` — ${t.source}`}` })), default: deps.themes()[0]?.id } : f))
             .filter(matches);
+          if (s.section === "Updates") {
+            updates = matches({ key: "update.check", label: "Check for Updates Version", type: "string", default: "" }) ? updatesRow() : null;
+            if (updates || fields.length) sections.push(h("h2", null, s.section), ...(updates ? [updates.el] : []), ...fields.map((f) => row("core", f, core)));
+            continue;
+          }
           if (fields.length) sections.push(h("h2", null, s.section), ...fields.map((f) => row("core", f, core)));
         }
         for (const m of deps.host.list()) {
@@ -350,7 +397,7 @@ export function openSettings(deps: SettingsDeps) {
         );
       };
       render();
-      return toDisposable(() => {});
+      return toDisposable(() => updatesWatch.dispose());
     },
   });
 }

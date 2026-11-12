@@ -14,7 +14,8 @@
   ],
   "permissions": [
     "process",
-    "fs:read"
+    "fs:read",
+    "fs:write"
   ],
   "contributes": {
     "views": [
@@ -86,6 +87,26 @@
       {
         "id": "git.stageActive",
         "title": "Stage Changes of the Active File",
+        "category": "Git"
+      },
+      {
+        "id": "git.stash",
+        "title": "Stash (Include Untracked)",
+        "category": "Git"
+      },
+      {
+        "id": "git.stashPop",
+        "title": "Pop Latest Stash",
+        "category": "Git"
+      },
+      {
+        "id": "git.undoCommit",
+        "title": "Undo Last Commit",
+        "category": "Git"
+      },
+      {
+        "id": "git.acceptCommitMessage",
+        "title": "Accept Commit Message",
         "category": "Git"
       }
     ]

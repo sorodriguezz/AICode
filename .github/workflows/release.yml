@@ -1,0 +1,233 @@
+# Builds AICode and publishes it as a GitHub release: a .dmg to download and install, and the signed
+# update archives + latest.json that "Check for Updates…" in the app reads.
+#
+# Start it with `pnpm release patch --push` (or minor / major / 1.2.3), which sets the version,
+# tags vX.Y.Z and pushes. Or run it by hand from the Actions tab: it releases the version in
+# package.json.
+#
+# Secrets (Settings → Secrets and variables → Actions):
+#   TAURI_SIGNING_PRIVATE_KEY           required — contents of ~/.tauri/aicode.key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  required — its password (~/.tauri/aicode.key.password)
+#   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
+#   APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
+#                                       optional — sign with a Developer ID and notarize. Without
+#                                       them the app is ad-hoc signed (see the release notes).
+#
+# The release stays a draft until every build is uploaded, then latest.json is written and the
+# release is published, so the app never sees a release that is half there.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Check the version
+        id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            node scripts/release.mjs --check "$GITHUB_REF_NAME"
+          else
+            node scripts/release.mjs --check
+          fi
+          version=$(node scripts/release.mjs --print)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check the signing key is set
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::The TAURI_SIGNING_PRIVATE_KEY secret is not set. Updates must be signed; see the top of .github/workflows/release.yml."
+            exit 1
+          fi
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "$TAG" --json isDraft --jq .isDraft > is_draft 2>/dev/null; then
+            if [ "$(cat is_draft)" = "true" ]; then
+              echo "Re-using the draft release $TAG."
+              exit 0
+            fi
+            echo "::error::$TAG is already released. Set a new version with: pnpm release patch --push"
+            exit 1
+          fi
+
+          # What changed since the last release, from the commits and pull requests.
+          previous=$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" ${previous:+-f previous_tag_name="$previous"} \
+            --jq .body > changes.md
+
+          cat > body.md <<EOF
+          ## Install
+
+          1. Download **AICode_${VERSION}_aarch64.dmg** (Apple silicon: M1 and later) or **AICode_${VERSION}_x64.dmg** (Intel).
+          2. Open it and drag **AICode** to **Applications**.
+          3. The first time only, if macOS says AICode "is damaged" or "cannot be opened" (it is not signed with an Apple Developer ID), run in Terminal:
+             \`xattr -dr com.apple.quarantine /Applications/AICode.app\`
+
+          Already installed? *Settings → Updates → Check for Updates* (or the gear menu → *Check for Updates…*).
+
+          EOF
+          cat changes.md >> body.md
+
+          gh release create "$TAG" --draft --title "AICode $VERSION" --notes-file body.md --target "$GITHUB_SHA"
+
+      - name: Keep the release notes for the update feed
+        run: |
+          [ -f changes.md ] || gh release view "${{ steps.version.outputs.tag }}" --json body --jq .body > changes.md
+          # The update dialog shows plain text: drop HTML comments and the changelog link line.
+          sed -e '/<!--/,/-->/d' -e '/^\*\*Full Changelog\*\*/d' changes.md > notes.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notes
+          path: notes.md
+
+  build:
+    name: Build (${{ matrix.arch }})
+    needs: prepare
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: aarch64
+            target: aarch64-apple-darwin
+            runner: macos-latest
+          - arch: x64
+            target: x86_64-apple-darwin
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.target }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Only when the Apple secrets exist: an empty APPLE_CERTIFICATE would make the build try to
+      # import an empty certificate and fail. Without them, tauri.conf.json's ad-hoc signing applies.
+      - name: Use the Apple Developer ID (optional)
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$APPLE_CERTIFICATE" ]; then
+            for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY; do echo "$v=${!v}" >> "$GITHUB_ENV"; done
+            echo "Signing with a Developer ID."
+            if [ -n "$APPLE_ID" ]; then
+              for v in APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do echo "$v=${!v}" >> "$GITHUB_ENV"; done
+              echo "Notarizing."
+            fi
+          else
+            echo "No Apple certificate: the app is ad-hoc signed."
+          fi
+
+      - name: Build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
+
+      - name: Collect the files
+        run: |
+          bundle="src-tauri/target/${{ matrix.target }}/release/bundle"
+          mkdir out
+          cp "$bundle"/dmg/*.dmg "out/AICode_${VERSION}_${{ matrix.arch }}.dmg"
+          cp "$bundle/macos/AICode.app.tar.gz" "out/AICode_${VERSION}_${{ matrix.arch }}.app.tar.gz"
+          cp "$bundle/macos/AICode.app.tar.gz.sig" "out/AICode_${VERSION}_${{ matrix.arch }}.app.tar.gz.sig"
+          ls -la out
+
+      - name: Upload to the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" out/* --clobber
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signature-${{ matrix.arch }}
+          path: out/*.sig
+
+  publish:
+    name: Publish release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Write the update feed (latest.json)
+        run: node scripts/updater-manifest.mjs --version "$VERSION" --repo "$GITHUB_REPOSITORY" --dir artifacts --notes artifacts/notes.md --out latest.json
+
+      - name: Publish
+        run: |
+          gh release upload "$TAG" latest.json --clobber
+          gh release edit "$TAG" --draft=false --latest
+          echo "Released https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"

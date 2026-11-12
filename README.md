@@ -3,8 +3,8 @@
 A notepad that grows into an editor, one mod at a time.
 
 AICode opens as a single text editor — the same Monaco editor VS Code uses, in a window that looks
-like VS Code — with **no telemetry, no account, no network connection of its own, nothing running
-in the background**. Everything else is a mod you turn on: the file explorer, search, terminals, an
+like VS Code — with **no telemetry, no account, no network connection of its own (only *Check for
+Updates*, when you ask), nothing running in the background**. Everything else is a mod you turn on: the file explorer, search, terminals, an
 AI chat over the CLIs you already have, an MCP server, the CodeFlow integration. A mod's code only
 loads when you first use it.
 
@@ -111,6 +111,54 @@ Environment variables:
   `~/Library/Application Support/AICode`.
 - `AICODE_DIAG=1` writes a text report of the window layout to the terminal 5 s after start.
 
+## Releases and updates
+
+Every release is built by GitHub Actions ([.github/workflows/release.yml](.github/workflows/release.yml))
+and published on the [Releases page](https://github.com/sorodriguezz/AICode/releases): a `.dmg` per
+Mac (Apple silicon `aarch64`, Intel `x64`), the signed update archives and `latest.json`, the feed
+the app reads.
+
+**Installing**: open the `.dmg`, drag AICode to Applications. The app is not signed with an Apple
+Developer ID, so the first time macOS may say it "is damaged" or "cannot be opened": run
+`xattr -dr com.apple.quarantine /Applications/AICode.app` once. Updates installed from the app do
+not need this.
+
+**Updating**: *Settings → Updates → Check for Updates* (also the gear menu, the AICode menu and the
+command palette: *Update: Check for Updates…*). If there is a newer version it offers **Install and
+Restart** or **Later**; *Later* leaves an *Update x.y.z* item in the status bar to install it
+whenever you like. Installing downloads the update, checks its signature, replaces the app and
+restarts it — windows, tabs and unsaved text come back as they were (hot exit).
+*Settings → Updates → Check on Startup* (off by default) checks once per launch.
+
+**Making a release**:
+
+```sh
+pnpm release patch --push   # or minor / major / 1.2.3
+```
+
+sets the version in `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json` and
+`Cargo.lock`, commits, tags `vX.Y.Z` and pushes; the tag starts the workflow. The release stays a
+draft until both builds are uploaded, then `latest.json` is written and the release is published,
+so installed copies see it at once. (The workflow can also be run by hand from the Actions tab: it
+releases the version already in `package.json`.)
+
+**One-time setup** — the repository secrets the workflow needs (*Settings → Secrets and
+variables → Actions*):
+
+| Secret | Value |
+|---|---|
+| `TAURI_SIGNING_PRIVATE_KEY` | the contents of the update signing key (`~/.tauri/aicode.key`) |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | its password (`~/.tauri/aicode.key.password`) |
+| `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | optional: sign with a Developer ID and notarize, so the `xattr` step is not needed |
+
+The public half of the key is `plugins.updater.pubkey` in `tauri.conf.json`; the app installs only
+updates signed with the private half. **Keep the private key safe and backed up**: if it is lost,
+installed copies cannot verify new releases and must be reinstalled by hand from a `.dmg` after
+you put a new key in place.
+
+A local `pnpm tauri build` does not need the key: update archives are only made with
+`--config src-tauri/tauri.release.conf.json`, as the workflow does.
+
 ## Layout
 
 ```
@@ -121,6 +169,7 @@ src/                 the window (TypeScript, no framework)
   core/modManager.ts the Mods page, creating and installing mods
   core/declarative.ts what a JSON mod does: actions, variables, launcher views
   core/profiles.ts   the Profiles and Settings pages
+  core/updates.ts    the update dialog, its progress and status bar item
 src-tauri/src/       the core (Rust)
   mods.rs            discovery, permissions, the aimod:// protocol
   profiles.rs        profiles: create, rename, delete, switch, export/import
@@ -128,9 +177,12 @@ src-tauri/src/       the core (Rust)
   fsops.rs           files, listing, search
   procs.rs           programs, terminals, clipboard, resource stats
   mcp.rs             the MCP HTTP transport
+  updater.rs         Check for Updates: the release feed, download, install, restart
 mods/                bundled mods
 docs/MOD-GUIDE.md    JSON mods, for people and AIs (mod.schema.json validates them)
 docs/MODS.md         mods with code
+scripts/release.mjs  sets the version everywhere, tags a release
+.github/workflows/   release.yml: build, sign and publish a release
 ```
 
 ## Not there yet

@@ -148,13 +148,17 @@ export function openModManager(host: ModHost, editors: EditorService) {
         );
       };
 
+      // Created once so re-renders (each keystroke, state changes) keep focus and caret.
+      const search = h("input", { class: "input", placeholder: "Filter mods", oninput: () => { filter = search.value; render(); } }) as HTMLInputElement;
+
       const render = () => {
+        const hadFocus = document.activeElement === search;
+        const [selStart, selEnd] = [search.selectionStart, search.selectionEnd];
         clear(page);
         const q = filter.toLowerCase();
         const visible = installed.filter((m) => !q || `${m.name} ${m.id} ${m.description}`.toLowerCase().includes(q));
         const on = visible.filter((m) => m.enabled);
         const off = visible.filter((m) => !m.enabled);
-        const search = h("input", { class: "input", placeholder: "Filter mods", value: filter, oninput: (e: Event) => { filter = (e.target as HTMLInputElement).value; render(); (page.querySelector(".mods-toolbar input") as HTMLInputElement)?.focus(); } }) as HTMLInputElement;
         append(page, [
           h("h1", null, "Mods"),
           h("div", { class: "muted" }, "AICode starts as a notepad. Each mod adds one thing — and only loads when you use it."),
@@ -199,7 +203,10 @@ export function openModManager(host: ModHost, editors: EditorService) {
           h("h2", null, "Running now"),
           renderRunning(),
         ]);
-        if (filter) search.focus();
+        if (hadFocus) {
+          search.focus();
+          search.setSelectionRange(selStart, selEnd);
+        }
         if (installed.length) firstRender = false;
       };
 

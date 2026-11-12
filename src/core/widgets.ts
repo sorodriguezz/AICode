@@ -111,6 +111,10 @@ interface QuickOptions<T extends QuickItem> {
   prompt?: string;
   allowFreeText?: boolean;
   noMatch?: string;
+  /** The row that starts active (when the items first show, and while the query is empty). */
+  activeIndex?: number;
+  /** Called when the keyboard moves the active row, or a new query changes it (a live preview). */
+  onActive?: (item: T) => void;
 }
 
 let activeQuick: { close: () => void } | null = null;
@@ -155,6 +159,15 @@ export function quickInput<T extends QuickItem>(opts: QuickOptions<T>): Promise<
     let index = 0;
     let finished = false;
     let generation = 0;
+    let firstLoad = true;
+    let announced: T | undefined;
+    const announce = () => {
+      const item = items[index];
+      if (item && item !== announced && !item.separator) {
+        announced = item;
+        opts.onActive?.(item);
+      }
+    };
 
     const finish = (value: T | string | undefined, restoreFocus = true) => {
       if (finished) return;
@@ -213,8 +226,11 @@ export function quickInput<T extends QuickItem>(opts: QuickOptions<T>): Promise<
       const result = await opts.items(input.value);
       if (gen !== generation || finished) return;
       items = result;
-      index = 0;
+      const start = opts.activeIndex ?? 0;
+      index = (firstLoad || !input.value) && start < items.length ? start : 0;
+      firstLoad = false;
       render();
+      announce();
     };
 
     input.addEventListener("input", () => {
@@ -229,10 +245,12 @@ export function quickInput<T extends QuickItem>(opts: QuickOptions<T>): Promise<
         e.preventDefault();
         if (items.length) index = (index + 1) % items.length;
         render();
+        announce();
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         if (items.length) index = (index - 1 + items.length) % items.length;
         render();
+        announce();
       } else if (e.key === "Enter") {
         e.preventDefault();
         if (items[index]) finish(items[index]);
@@ -253,9 +271,13 @@ export function quickInput<T extends QuickItem>(opts: QuickOptions<T>): Promise<
 }
 
 /** A picker over a fixed list, filtered as the user types. */
-export async function pick<T extends QuickItem>(items: T[], opts: { placeholder?: string; matchDescription?: boolean } = {}): Promise<T | undefined> {
+export async function pick<T extends QuickItem>(items: T[], opts: { placeholder?: string; matchDescription?: boolean; activeIndex?: number; onActive?: (item: T) => void } = {}): Promise<T | undefined> {
+  // Rows carry a highlighted copy of the label: hand onActive the caller's own item.
+  const original = (row: T) => items.find((i) => i.label === row.label && i.description === row.description) ?? row;
   const result = await quickInput<T>({
     placeholder: opts.placeholder,
+    activeIndex: opts.activeIndex,
+    onActive: opts.onActive && ((row) => opts.onActive!(original(row))),
     noMatch: "No matching results",
     items: (q) => {
       if (!q) return items.map((i) => ({ ...i, _label: [i.label] }));
@@ -298,7 +320,8 @@ export interface MenuItem {
   icon?: string;
 }
 
-export function contextMenu(x: number, y: number, items: MenuItem[]) {
+/** `above`: y is where the menu's bottom goes (menus opened from the status bar grow upward). */
+export function contextMenu(x: number, y: number, items: MenuItem[], opts: { above?: boolean } = {}) {
   document.querySelector(".context-menu")?.remove();
   // No separator first, last or twice in a row (items that were left out leave gaps).
   const shown = items.filter((i, n, all) => !i.separator || (n > 0 && n < all.length - 1 && !all[n - 1].separator));
@@ -354,7 +377,9 @@ export function contextMenu(x: number, y: number, items: MenuItem[]) {
   document.body.append(menu);
   const rect = menu.getBoundingClientRect();
   menu.style.left = `${Math.min(x, window.innerWidth - rect.width - 4)}px`;
-  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - rect.height - 4))}px`;
+  const top = opts.above ? y - rect.height : y;
+  menu.style.top = `${Math.max(4, Math.min(top, window.innerHeight - rect.height - 4))}px`;
+  if (opts.above) menu.style.transformOrigin = "bottom left";
   menu.focus({ preventScroll: true });
   setTimeout(() => {
     window.addEventListener("mousedown", outside, true);

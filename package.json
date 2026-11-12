@@ -3,12 +3,14 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "packageManager": "pnpm@12.18.0",
   "scripts": {
     "vendor": "node scripts/vendor-mods.mjs",
     "dev": "vite",
     "build": "node scripts/vendor-mods.mjs && tsc && vite build",
     "tauri": "tauri",
-    "check:mods": "node scripts/check-mods.mjs"
+    "check:mods": "node scripts/check-mods.mjs",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

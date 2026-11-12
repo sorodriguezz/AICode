@@ -50,6 +50,18 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.png"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "-"
+    },
+    "createUpdaterArtifacts": false
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY0RDNEODMxOENBNUI2MzcKUldRM3RxV01NZGpUWkEyQjN2WTI2SmgvRWRaMVpRVzY1Z1F5SFBMYURyK2oxY3V3V3orUU1EK04K",
+      "endpoints": [
+        "https://github.com/sorodriguezz/AICode/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

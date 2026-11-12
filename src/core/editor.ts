@@ -16,6 +16,7 @@ import { fileIconEl, configureFileIcons } from "./fileIcons";
 import { Emitter } from "./events";
 import { Workbench, StatusHandle } from "./workbench";
 import { dialog, notify, pick, contextMenu, MenuItem } from "./widgets";
+import { symbolPath } from "./symbolPath";
 import * as commands from "./commands";
 import { leave, play } from "./motion";
 import { openModal, closeModal, ModalAction } from "./modal";
@@ -197,12 +198,20 @@ export class EditorService {
     this.customHost = h("div", { class: "custom-host" });
     this.watermark = this.buildWatermark();
     wb.editorBody.append(this.monacoHost, this.customHost, this.watermark);
+    // …and so does one on the tab bar's empty space, after the last tab.
+    wb.editorTabs.addEventListener("dblclick", (e) => {
+      if (e.target === wb.editorTabs) this.newUntitled();
+    });
     this.editor = monaco.editor.create(this.monacoHost, {
-      automaticLayout: true,
+      // Laid out by our own ResizeObserver below, not `automaticLayout`: Monaco's defers the
+      // layout a frame, so on a window resize the minimap canvas is cleared and painted a frame
+      // later, and it flickers.
+      automaticLayout: false,
       fontFamily: "Menlo, 'SF Mono', Monaco, 'Cascadia Code', Consolas, monospace",
       fontSize: this.fontSize,
       lineHeight: 0,
-      minimap: { enabled: true, renderCharacters: false, scale: 1, showSlider: "mouseover" },
+      // VS Code's defaults: real characters, proportional, 120 columns.
+      minimap: { enabled: true, renderCharacters: true, size: "proportional", scale: 1, maxColumn: 120, showSlider: "mouseover" },
       scrollBeyondLastLine: false,
       smoothScrolling: true,
       cursorBlinking: "smooth",
@@ -218,8 +227,22 @@ export class EditorService {
       "semanticHighlighting.enabled": true,
       wordWrap: "off",
     });
-    this.editor.onDidChangeCursorPosition(() => this.paintStatus());
+    // Resize and paint in the same frame, before the browser draws: no blank minimap frame.
+    let last = "";
+    new ResizeObserver(() => {
+      const width = this.monacoHost.clientWidth, height = this.monacoHost.clientHeight;
+      const key = `${width}x${height}`;
+      if (key === last || !width || !height) return;
+      last = key;
+      this.editor.layout({ width, height });
+      this.editor.render(true);
+    }).observe(this.monacoHost);
+    this.editor.onDidChangeCursorPosition(() => {
+      this.paintStatus();
+      this.scheduleSymbols();
+    });
     this.editor.onDidChangeCursorSelection(() => this.paintStatus());
+    this.editor.onDidChangeModelLanguage(() => this.scheduleSymbols());
     this.editor.onDidChangeModelContent(() => {
       const doc = this.active;
       if (doc?.kind === "text") {
@@ -598,6 +621,81 @@ export class EditorService {
     contextMenu(r.right - 220, r.bottom + 4, items);
   }
 
+  /** Right click on a tab, as in VS Code. */
+  private tabMenu(e: MouseEvent, doc: Doc) {
+    const idx = this.docs.indexOf(doc);
+    const path = doc.kind === "text" ? doc.path : undefined;
+    const root = this.breadcrumbRoot();
+    const rel = path && root && path.startsWith(root + "/") ? path.slice(root.length + 1) : path;
+    const isMac = navigator.platform.toLowerCase().includes("mac");
+    const copy = async (text: string) => {
+      await invoke("clipboard_write", { text });
+      notify("info", "Copied to the clipboard.", [], 2000);
+    };
+    const closeEach = async (list: Doc[]) => {
+      for (const d of list) if (!(await this.close(d))) break;
+    };
+    const items: MenuItem[] = [
+      { label: "Close", keybinding: "mod+w", run: () => this.close(doc) },
+      { label: "Close Others", disabled: this.docs.length < 2, run: () => closeEach(this.docs.filter((d) => d !== doc)) },
+      { label: "Close to the Right", disabled: idx === this.docs.length - 1, run: () => closeEach(this.docs.slice(idx + 1)) },
+      { label: "Close Saved", keybinding: "mod+k u", disabled: !this.docs.some((d) => d.kind !== "text" || !this.isDirty(d)), run: () => commands.execute("editor.closeSaved") },
+      { label: "Close All", keybinding: "mod+k w", run: () => commands.execute("editor.closeAll") },
+    ];
+    if (path) {
+      items.push(
+        { separator: true, label: "" },
+        { label: "Copy Path", run: () => copy(path) },
+        { label: "Copy Relative Path", run: () => copy(rel ?? path) },
+        { separator: true, label: "" },
+        { label: isMac ? "Reveal in Finder" : "Reveal in File Explorer", run: () => invoke("fs_reveal", { modId: "core", path }).catch((err) => notify("error", String(err))) },
+      );
+      if (commands.has("explorer.revealActive")) items.push({ label: "Reveal in Explorer View", run: async () => { await this.activate(doc); commands.execute("explorer.revealActive"); } });
+    }
+    const file = doc === this.active ? this.activeFile() : null;
+    if (file?.path && this.typesFor(file.info).length) items.push({ separator: true, label: "" }, { label: "Reopen Editor With…", run: () => this.reopenWith() });
+    if (doc.kind === "text" && doc.preview)
+      items.push({ separator: true, label: "" }, { label: "Keep Open", run: () => { doc.preview = false; this.renderTabs(); } });
+    contextMenu(e.clientX, e.clientY, items);
+  }
+
+  private symbolCrumbs: HTMLElement | null = null;
+  private symbolsFrame = 0;
+
+  /** After the file in the breadcrumbs: where the cursor is (keys in YAML/JSON, headings in Markdown). */
+  private paintSymbols() {
+    const host = this.symbolCrumbs;
+    const doc = this.active;
+    if (!host || doc?.kind !== "text" || this.editor.getModel() !== doc.model) return;
+    const pos = this.editor.getPosition();
+    const crumbs = pos ? symbolPath(doc.model.getLanguageId(), doc.model.getValue(), pos.lineNumber, pos.column) : [];
+    clear(host);
+    const icons = { object: "symbol-object", array: "symbol-array", value: "symbol-string", heading: "symbol-string" } as const;
+    for (const c of crumbs)
+      host.append(
+        icon("chevron-right", "sep"),
+        h(
+          "span",
+          {
+            class: "crumb symbol",
+            title: c.name,
+            onclick: () => {
+              this.editor.setPosition({ lineNumber: c.line, column: doc.model.getLineFirstNonWhitespaceColumn(c.line) || 1 });
+              this.editor.revealLineInCenterIfOutsideViewport(c.line);
+              this.editor.focus();
+            },
+          },
+          icon(icons[c.kind], "crumb-icon"),
+          h("span", { class: "crumb-label" }, c.name),
+        ),
+      );
+  }
+
+  private scheduleSymbols() {
+    cancelAnimationFrame(this.symbolsFrame);
+    this.symbolsFrame = requestAnimationFrame(() => this.paintSymbols());
+  }
+
   /** The open folder, so breadcrumbs start there (set by the workbench). */
   breadcrumbRoot: () => string | null = () => null;
 
@@ -620,6 +718,9 @@ export class EditorService {
       if (i > 0) bar.append(icon("chevron-right", "sep"));
       bar.append(h("span", { class: `crumb${last ? " file" : ""}`, title: doc.path ?? doc.title }, last && doc.path ? fileIconEl(part, "crumb-icon") : null, part));
     });
+    this.symbolCrumbs = h("span", { class: "crumb-symbols" });
+    bar.append(this.symbolCrumbs);
+    this.paintSymbols();
     // Like VS Code: when a mod offers another editor for this file, the breadcrumbs end with a picker.
     if (doc.path && this.typesFor(this.info(doc)).length)
       bar.append(h("span", { class: "editor-type", title: "Reopen Editor With…", onclick: () => this.reopenWith() }, "Text Editor", icon("chevron-down")));
@@ -645,6 +746,7 @@ export class EditorService {
         if (doc.viewState) this.editor.restoreViewState(doc.viewState);
       }
       this.updatePlaceholder();
+      this.scheduleSymbols();
     } else if (doc?.kind === "custom") {
       if (!doc.el) {
         doc.el = h("div", { style: { position: "absolute", inset: "0", overflow: "auto" } });
@@ -711,6 +813,10 @@ export class EditorService {
               this.close(doc);
             } else if (e.button === 0) this.activate(doc);
           },
+          oncontextmenu: (e: MouseEvent) => {
+            e.preventDefault();
+            this.tabMenu(e, doc);
+          },
           ondblclick: () => {
             if (doc.kind === "text") {
               doc.preview = false;
@@ -767,7 +873,8 @@ export class EditorService {
     };
     return h(
       "div",
-      { class: "watermark" },
+      // Like VS Code: a double click on the empty editor area opens an Untitled file.
+      { class: "watermark", ondblclick: () => this.newUntitled() },
       icon("code", "logo"),
       h("dl", null, row("Show All Commands", "workbench.commandPalette"), row("New File", "file.new"), row("Open File", "file.open"), row("Go to File", "workbench.quickOpen"), row("Manage Mods", "mods.manage")),
     );
@@ -1036,6 +1143,11 @@ export class EditorService {
           if (doc) doc.viewState = s.viewState ?? null;
           restored.push(doc);
         } else {
+          // An empty Untitled tab is not worth bringing back (VS Code drops them too).
+          if (!s.text) {
+            restored.push(null as unknown as Doc);
+            continue;
+          }
           const doc = this.newUntitled(s.text ?? "", s.language ?? "plaintext");
           if (!s.text) doc.savedVersion = doc.model.getAlternativeVersionId();
           doc.viewState = s.viewState ?? null;

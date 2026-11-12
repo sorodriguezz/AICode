@@ -8,7 +8,7 @@
   --titlebar-h: 35px;
   --statusbar-h: 28px;
   --activitybar-w: 44px;
-  --activity-icon: 24px;
+  --activity-icon: 22px;
   --list-icon: 16px;
   --list-row-h: 22px;
   --tabs-h: 32px;
@@ -20,8 +20,8 @@
 /* Icon sizes are prefixed with `body`: Monaco's stylesheet, loaded later, sets every codicon to
    16px with the same specificity. */
 /* Icon size, a setting of the profile (Settings → Workbench → Icon Size). */
-:root[data-icon-size="large"] { --activitybar-w: 48px; --activity-icon: 26px; --list-icon: 16px; --list-row-h: 22px; }
-:root[data-icon-size="larger"] { --activitybar-w: 54px; --activity-icon: 30px; --list-icon: 18px; --list-row-h: 24px; }
+:root[data-icon-size="large"] { --activitybar-w: 48px; --activity-icon: 24px; --list-icon: 16px; --list-row-h: 22px; }
+:root[data-icon-size="larger"] { --activitybar-w: 54px; --activity-icon: 28px; --list-icon: 18px; --list-row-h: 24px; }
 
 * { box-sizing: border-box; }
 
@@ -111,7 +111,11 @@ body .icon-button .codicon { font-size: 16px; }
   color: var(--aicode-activityBar-inactiveForeground);
   cursor: pointer;
 }
-body .activity-item .codicon { font-size: var(--activity-icon); }
+/* A box exactly the glyph's size, so flex centers the icon itself and not its line box. */
+body .activity-item .codicon {
+  font-size: var(--activity-icon); width: var(--activity-icon); height: var(--activity-icon);
+  line-height: var(--activity-icon); display: block; text-align: center;
+}
 .activity-item:hover, .activity-item.active { color: var(--aicode-activityBar-foreground); }
 .activity-item.active::before {
   content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
@@ -213,6 +217,9 @@ body .tab .tab-close .codicon { font-size: 14px; }
 
 .editor-body { flex: 1 1 auto; position: relative; min-height: 0; }
 .monaco-host, .custom-host { position: absolute; inset: 0; }
+/* Like VS Code: the minimap slider is a rounded box inset from the minimap's edges. Clipped, not
+   resized, so Monaco's own width/height/top for the slider stay as they are. */
+.monaco-editor .minimap-slider .minimap-slider-horizontal { clip-path: inset(0 4px 0 2px round 4px); }
 .custom-host { overflow: auto; background: var(--aicode-editor-background); }
 
 .watermark {
@@ -389,7 +396,12 @@ body .toast .codicon { font-size: 16px; margin-top: 1px; }
 .mods-page { max-width: 980px; margin: 0 auto; padding: 24px 28px 60px; }
 .mods-page h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
 .mods-page h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--aicode-descriptionForeground); margin: 26px 0 8px; font-weight: 600; }
-.mods-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+.mods-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 16px; margin-bottom: 16px; }
+.mods-page > .muted { line-height: 1.5; max-width: 72ch; }
+.profile-card { align-items: center; padding: 14px 16px; }
+.profile-card .desc { margin: 4px 0 0; }
+.profile-card .meta { margin-top: 8px; }
+.profile-card .side-actions { flex-direction: row; align-items: center; gap: 8px; }
 .mods-toolbar .input { width: 240px; }
 .mods-toolbar select.input { width: auto; }
 .mod-card {
@@ -476,8 +488,9 @@ body .drop-card .codicon { font-size: 22px; color: var(--aicode-focusBorder); }
 body.resizing .part.sized { transition: none; }
 
 /* Views fade in when they are switched to. */
-@keyframes view-in { from { opacity: 0; transform: translateY(4px); } }
-.view-host.view-enter { animation: view-in var(--motion) var(--ease-out); }
+/* Switching views only fades: no movement, so the side bar never looks like it resizes. */
+@keyframes view-in { from { opacity: .4; } }
+.view-host.view-enter { animation: view-in var(--motion-fast) var(--ease-out); }
 
 /* Activity bar: the active marker grows in; icons respond to the press. */
 @keyframes marker-in { from { transform: scaleY(0); } }
@@ -573,6 +586,8 @@ html.no-motion *, html.no-motion *::before, html.no-motion *::after {
 .setting-control .input { width: 100%; }
 .setting-control select.input { width: 100%; }
 .setting-control .check { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+.setting-control.update-actions { gap: 8px; }
+.update-status { overflow-wrap: anywhere; }
 
 .keys-table .key-cell { cursor: pointer; white-space: nowrap; }
 .keys-table .key-cell:hover { background: var(--aicode-list-hoverBackground); }
@@ -626,7 +641,9 @@ body.view-dragging .view-drop-zones { display: block; }
    The window background shows between the parts: each one is a rounded card, the activity bar and
    the primary side bar joined into one. Sashes sit in the gaps. */
 .titlebar { background: var(--aicode-editor-background); border-bottom: 0; }
-.statusbar { background: var(--aicode-editor-background); border-top: 0; padding: 2px 8px; }
+/* The cards above already leave a gap (.main's bottom padding): pad only the bottom so the items
+   sit centered between the cards and the window's edge. */
+.statusbar { background: var(--aicode-editor-background); border-top: 0; padding: 0 8px var(--gap); }
 .statusbar .side { align-items: center; gap: 0; }
 .status-item { height: 24px; border-radius: 4px; padding: 0 6px; color: var(--aicode-titleBar-activeForeground, var(--aicode-statusBar-foreground)); }
 .status-item.accent { border-radius: 4px; }
@@ -676,10 +693,11 @@ body.view-dragging .view-drop-zones { display: block; }
 
 /* Activity bar: a rounded square behind the active icon instead of a bar on the edge. */
 .activity-item { height: calc(var(--activitybar-w) - 8px); width: 100%; isolation: isolate; }
+/* A true square, centered both ways on the item (and so on the icon). */
 .activity-item.active::before, .activity-item:hover::before {
-  content: ""; position: absolute; left: 50%; top: 2px; bottom: 2px;
-  width: calc(var(--activitybar-w) - 12px); transform: translateX(-50%);
-  border-radius: 4px; z-index: -1;
+  content: ""; position: absolute; inset: 0; margin: auto;
+  width: calc(var(--activitybar-w) - 14px); height: calc(var(--activitybar-w) - 14px);
+  border-radius: 5px; z-index: -1;
 }
 .activity-item.active::before { background: var(--aicode-activityBar-activeBackground, var(--aicode-toolbar-activeBackground)); }
 .activity-item:hover:not(.active)::before { background: var(--aicode-toolbar-hoverBackground); }
@@ -759,6 +777,11 @@ body.view-dragging .view-drop-zones { display: block; }
 .breadcrumbs .crumb { display: inline-flex; align-items: center; gap: 4px; padding: 0 2px; border-radius: 3px; }
 .breadcrumbs .crumb.file { color: var(--aicode-breadcrumb-focusForeground, var(--aicode-foreground)); }
 body .breadcrumbs .codicon.sep { font-size: 12px; opacity: .7; }
+.breadcrumbs .crumb-symbols { display: inline-flex; align-items: center; min-width: 0; overflow: hidden; }
+.breadcrumbs .crumb.symbol { cursor: pointer; min-width: 0; }
+.breadcrumbs .crumb.symbol:hover { color: var(--aicode-breadcrumb-focusForeground, var(--aicode-foreground)); background: var(--aicode-toolbar-hoverBackground, rgba(128,128,128,.15)); }
+.breadcrumbs .crumb.symbol .crumb-label { overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+body .breadcrumbs .crumb.symbol .codicon.crumb-icon { font-size: 14px; color: var(--aicode-symbolIcon-objectForeground, var(--aicode-descriptionForeground)); }
 .breadcrumbs .font-ficon.crumb-icon { width: 14px; height: 14px; font-size: 18px; }
 .tab .tab-deco { font-size: 12px; margin-left: -2px; }
 

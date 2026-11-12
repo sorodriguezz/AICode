@@ -6,7 +6,7 @@ import { h, icon, iconButton, clear, Disposable, toDisposable } from "./ui";
 import { Emitter } from "./events";
 import * as commands from "./commands";
 import { keyCaps } from "./commands";
-import { contextMenu } from "./widgets";
+import { contextMenu, type MenuItem } from "./widgets";
 import { motionEnabled, play } from "./motion";
 
 export type ViewLocation = "sidebar" | "secondary" | "panel";
@@ -62,8 +62,10 @@ export interface LayoutOptions {
   panelAlign: "left" | "right" | "center" | "justify";
   quickInput: "top" | "center";
   density: "default" | "compact";
+  /** Side bar views whose icon the activity bar leaves out (unchecked in its context menu). */
+  hiddenActivity: string[];
 }
-export const DEFAULT_LAYOUT: LayoutOptions = { activityBar: true, statusBar: true, sidebarSide: "left", panelAlign: "center", quickInput: "top", density: "default" };
+export const DEFAULT_LAYOUT: LayoutOptions = { activityBar: true, statusBar: true, sidebarSide: "left", panelAlign: "center", quickInput: "top", density: "default", hiddenActivity: [] };
 
 export interface LayoutState {
   sidebar: PartState;
@@ -81,6 +83,8 @@ export interface StatusItem {
   align?: "left" | "right";
   priority?: number;
   accent?: boolean;
+  /** Runs on click instead of `command`, with the click (to place a menu by the item). */
+  run?: (e: MouseEvent) => void;
   /** Settle in when the text changes (a branch, a count) — not for things that change as you type. */
   animate?: boolean;
 }
@@ -163,14 +167,14 @@ export class Workbench {
         "div",
         { class: "titlebar-right", "data-tauri-drag-region": true },
         // Right of the search box: the pages VS Code opens as modal editors.
-        h("div", { class: "group" }, iconButton("extensions", `Mods (${commands.prettyKey("mod+shift+x").join(" ")})`, () => commands.execute("mods.manage")), iconButton("settings-gear", `Settings (${commands.prettyKey("mod+,").join(" ")})`, () => commands.execute("preferences.settings"))),
+        // Settings live in the status bar's gear (Manage), not up here.
+        h("div", { class: "group" }, iconButton("extensions", `Mods (${commands.prettyKey("mod+shift+x").join(" ")})`, () => commands.execute("mods.manage"))),
         h("div", { class: "group", "data-tauri-drag-region": true }, iconButton("layout", "Customize Layout…", () => this.customizeLayout()), this.toggles.sidebar, this.toggles.panel, this.toggles.secondary),
       ),
     );
 
     this.activityTop = h("div", { class: "group" });
-    const manage = h("div", { class: "activity-item", title: "Manage", onclick: (e: MouseEvent) => this.manageMenu(e) }, icon("settings-gear"));
-    this.activitybar = h("div", { class: "activitybar", dataset: { drop: "sidebar" } }, this.activityTop, h("div", { class: "group" }, manage));
+    this.activitybar = h("div", { class: "activitybar", dataset: { drop: "sidebar" }, oncontextmenu: (e: MouseEvent) => this.activityMenu(e) }, this.activityTop);
 
     const makePart = (loc: ViewLocation) => {
       const header = h("div", { class: "part-header" });
@@ -213,6 +217,8 @@ export class Workbench {
     this.statusRight = h("div", { class: "side" });
     const statusbar = h("div", { class: "statusbar" }, this.statusLeft, this.statusRight);
     this.statusbar = statusbar;
+    // Manage (settings, profiles, themes…): always first on the left, before the branch.
+    this.addStatus({ align: "left", priority: 10_000, icon: "settings-gear", tooltip: "Manage", run: (e) => this.manageMenu(e) });
 
     const main = h(
       "div",
@@ -356,7 +362,9 @@ export class Workbench {
     const activeNow = this.state.sidebar.visible ? activeSidebar : null;
     const activityChanged = activeNow !== this.lastActiveActivity;
     this.lastActiveActivity = activeNow;
+    const hidden = new Set(this.options.hiddenActivity ?? []);
     for (const d of sidebarViews) {
+      if (hidden.has(d.id) && activeNow !== d.id) continue;
       const entry = this.views.get(d.id)!;
       const kb = commands.keybindingFor(`workbench.view.${d.id}`);
       this.activityTop.append(
@@ -368,7 +376,7 @@ export class Workbench {
             dataset: { drop: "sidebar", before: d.id },
             onclick: () => (this.state.sidebar.visible && activeSidebar === d.id ? this.toggle("sidebar") : this.showView(d.id)),
             onmousedown: (e: MouseEvent) => this.dragView(e, d.id),
-            oncontextmenu: (e: MouseEvent) => this.viewMenu(e, d.id),
+            oncontextmenu: (e: MouseEvent) => this.activityMenu(e, d.id),
           },
           icon(d.icon),
           entry.badge ? h("span", { class: `badge${this.motionReady && (this.lastBadges.get(d.id) ?? 0) !== entry.badge ? " badge-new" : ""}` }, String(entry.badge)) : null,
@@ -498,6 +506,49 @@ export class Workbench {
       { separator: true, label: "" },
       { label: "Reset All View Locations", run: () => this.resetPlacement() },
     ]);
+  }
+
+  /** Right click on the activity bar, as in VS Code: which icons it shows, and where it goes. */
+  private activityMenu(e: MouseEvent, id?: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    const o = this.options;
+    const hidden = new Set(o.hiddenActivity ?? []);
+    const setHidden = (vid: string, hide: boolean) => {
+      const next = new Set(hidden);
+      if (hide) next.add(vid);
+      else next.delete(vid);
+      this.setOptions({ hiddenActivity: [...next] });
+    };
+    const views = this.viewsAt("sidebar");
+    const shownCount = views.filter((d) => !hidden.has(d.id)).length;
+    const entry = id ? this.views.get(id) : undefined;
+    const names: Record<ViewLocation, string> = { sidebar: "Primary Side Bar", secondary: "Secondary Side Bar", panel: "Panel" };
+    const items: MenuItem[] = [];
+    if (entry) {
+      items.push({ label: `Hide '${entry.desc.title}'`, disabled: shownCount <= 1, run: () => setHidden(entry.desc.id, true) });
+      for (const l of ["secondary", "panel"] as ViewLocation[]) items.push({ label: `Move to ${names[l]}`, run: () => this.moveView(entry.desc.id, l) });
+      items.push({ separator: true, label: "" });
+    }
+    for (const d of views) {
+      const on = !hidden.has(d.id);
+      items.push({
+        label: d.title,
+        checked: on,
+        keybinding: commands.keybindingFor(`workbench.view.${d.id}`),
+        // The last icon stays: an empty activity bar has nothing left to right click.
+        disabled: on && shownCount <= 1,
+        run: () => setHidden(d.id, on),
+      });
+    }
+    items.push(
+      { separator: true, label: "" },
+      { label: "Hide Activity Bar", run: () => this.setOptions({ activityBar: false }) },
+      { label: `Move Primary Side Bar ${o.sidebarSide === "left" ? "Right" : "Left"}`, run: () => this.setOptions({ sidebarSide: o.sidebarSide === "left" ? "right" : "left" }) },
+      { separator: true, label: "" },
+      { label: "Reset All View Locations", run: () => { this.resetPlacement(); this.setOptions({ hiddenActivity: [] }); } },
+    );
+    contextMenu(e.clientX, e.clientY, items);
   }
 
   /** Press on a view's icon, tab or title and drag it to the activity bar, a part, or an edge. */
@@ -752,7 +803,8 @@ export class Workbench {
 
   private manageMenu(e: MouseEvent) {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    contextMenu(r.right + 4, r.top - 120, [
+    // Opens upward from the status bar, its bottom just above the button.
+    contextMenu(r.left, r.top - 4, [
       { label: "Command Palette…", keybinding: "mod+shift+p", run: () => commands.execute("workbench.commandPalette") },
       { label: "Mods", keybinding: "mod+shift+x", run: () => commands.execute("mods.manage") },
       { separator: true, label: "" },
@@ -760,7 +812,9 @@ export class Workbench {
       { label: "Settings", keybinding: "mod+,", run: () => commands.execute("preferences.settings") },
       { label: "Keyboard Shortcuts", run: () => commands.execute("workbench.keybindings") },
       { label: "Color Theme…", run: () => commands.execute("preferences.theme") },
-    ]);
+      { separator: true, label: "" },
+      { label: "Check for Updates…", run: () => commands.execute("update.check") },
+    ], { above: true });
   }
 
   // ---------- status bar ----------
@@ -776,8 +830,8 @@ export class Workbench {
       if (it.icon) record.el.append(icon(it.icon));
       if (it.text) record.el.append(h("span", null, it.text));
       record.el.title = it.tooltip ?? "";
-      record.el.className = `status-item${it.command ? " clickable" : ""}${it.accent ? " accent" : ""}`;
-      record.el.onclick = it.command ? () => commands.execute(it.command!, ...(it.args ?? [])) : null;
+      record.el.className = `status-item${it.command || it.run ? " clickable" : ""}${it.accent ? " accent" : ""}`;
+      record.el.onclick = it.run ? (e) => it.run!(e) : it.command ? () => commands.execute(it.command!, ...(it.args ?? [])) : null;
       record.el.style.display = it.text || it.icon ? "" : "none";
       if (changed) play(record.el, "status-changed");
     };
