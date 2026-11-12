@@ -1,0 +1,6 @@
+{
+  "Code block": { "prefix": "code", "body": ["```${1:lang}", "$0", "```"], "description": "Fenced code block" },
+  "Link": { "prefix": "link", "body": "[${1:text}](${2:https://})", "description": "Link" },
+  "Table": { "prefix": "table", "body": ["| ${1:Column} | ${2:Column} |", "| --- | --- |", "| $3 | $4 |"], "description": "Two-column table" },
+  "Task": { "prefix": "task", "body": "- [ ] ${1:task}", "description": "Task list item" }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "aicode.codeflow",
+  "name": "CodeFlow",
+  "version": "1.0.0",
+  "description": "Works with the CodeFlow desktop app: run CodeFlow flows from the editor (with the file or selection as input), and give CodeFlow's agents AICode's MCP server so they can read and propose edits to what you have open.",
+  "author": "AICode",
+  "icon": "git-merge",
+  "main": "main.js",
+  "api": 1,
+  "activation": ["onView:codeflow", "onCommand:codeflow.runFlow", "onCommand:codeflow.open"],
+  "permissions": ["open-external"],
+  "dependencies": ["aicode.mcp-server"],
+  "contributes": {
+    "views": [{ "id": "codeflow", "title": "CodeFlow", "icon": "git-merge", "location": "sidebar", "order": 20 }],
+    "commands": [
+      { "id": "codeflow.open", "title": "Open CodeFlow", "category": "CodeFlow" },
+      { "id": "codeflow.runFlow", "title": "Run a Flow…", "category": "CodeFlow", "keybinding": "mod+alt+f" },
+      { "id": "codeflow.copyMcp", "title": "Copy AICode's MCP Server for CodeFlow", "category": "CodeFlow" }
+    ]
+  }
+}

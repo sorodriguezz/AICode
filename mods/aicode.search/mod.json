@@ -1,0 +1,51 @@
+{
+  "id": "aicode.search",
+  "name": "Search",
+  "version": "1.0.0",
+  "description": "Find and replace across the open folder — plain, whole word or regular expression, with files to include/exclude — respecting .gitignore.",
+  "author": "AICode",
+  "icon": "search",
+  "main": "main.js",
+  "api": 1,
+  "activation": [
+    "onView:search",
+    "onCommand:search.inFolder",
+    "onCommand:search.focus",
+    "onCommand:search.replace"
+  ],
+  "dependencies": [],
+  "permissions": [
+    "fs:read",
+    "fs:write"
+  ],
+  "contributes": {
+    "views": [
+      {
+        "id": "search",
+        "title": "Search",
+        "icon": "search",
+        "location": "sidebar",
+        "order": 2,
+        "keybinding": "mod+shift+f"
+      }
+    ],
+    "commands": [
+      {
+        "id": "search.inFolder",
+        "title": "Find in Folder…",
+        "category": "Search"
+      },
+      {
+        "id": "search.focus",
+        "title": "Find in Files",
+        "category": "Search"
+      },
+      {
+        "id": "search.replace",
+        "title": "Replace in Files",
+        "category": "Search",
+        "keybinding": "mod+shift+h"
+      }
+    ]
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "id": "aicode.themes",
+  "name": "Classic Themes",
+  "version": "1.0.0",
+  "description": "Light and dark themes plus Markdown snippets. A declarative mod: theme and snippet files only, no code to run.",
+  "author": "AICode",
+  "icon": "symbol-color",
+  "api": 1,
+  "contributes": {
+    "themes": [
+      {
+        "id": "light",
+        "label": "AICode Light",
+        "uiTheme": "vs",
+        "path": "themes/light.json"
+      },
+      {
+        "id": "dark-classic",
+        "label": "AICode Dark Classic",
+        "uiTheme": "vs-dark",
+        "path": "themes/dark-classic.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "markdown",
+        "path": "snippets/markdown.json"
+      }
+    ]
+  }
+}

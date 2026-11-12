@@ -1,0 +1,19 @@
+{
+  "name": "AICode Dark Classic",
+  "type": "dark",
+  "colors": {
+    "editor.background": "#1f1f1f",
+    "editorGutter.background": "#1f1f1f",
+    "tab.activeBackground": "#1f1f1f",
+    "tab.hoverBackground": "#1f1f1f",
+    "terminal.background": "#181818"
+  },
+  "tokenColors": [
+    { "scope": "comment", "settings": { "foreground": "#6a9955" } },
+    { "scope": "string", "settings": { "foreground": "#ce9178" } },
+    { "scope": "constant.numeric", "settings": { "foreground": "#b5cea8" } },
+    { "scope": "keyword", "settings": { "foreground": "#c586c0" } },
+    { "scope": "entity.name.type", "settings": { "foreground": "#4ec9b0" } },
+    { "scope": "support.type.property-name", "settings": { "foreground": "#9cdcfe" } }
+  ]
+}

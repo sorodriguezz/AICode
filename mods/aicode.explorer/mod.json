@@ -1,0 +1,121 @@
+{
+  "id": "aicode.explorer",
+  "name": "Explorer",
+  "version": "1.0.0",
+  "description": "Open a folder and work with its files: the file tree (new, rename, delete, cut/copy/paste, drag to move) and the list of open editors.",
+  "author": "AICode",
+  "icon": "files",
+  "main": "main.js",
+  "api": 1,
+  "activation": [
+    "onView:explorer",
+    "onCommand:explorer.openFolder"
+  ],
+  "permissions": [
+    "fs:read",
+    "fs:write"
+  ],
+  "contributes": {
+    "views": [
+      {
+        "id": "explorer",
+        "title": "Explorer",
+        "icon": "files",
+        "location": "sidebar",
+        "order": 1,
+        "keybinding": "mod+shift+e"
+      }
+    ],
+    "commands": [
+      {
+        "id": "explorer.openFolder",
+        "title": "Open Folder…",
+        "category": "File",
+        "keybinding": "mod+k mod+o"
+      },
+      {
+        "id": "explorer.closeFolder",
+        "title": "Close Folder",
+        "category": "File"
+      },
+      {
+        "id": "explorer.newFile",
+        "title": "New File…",
+        "category": "Explorer"
+      },
+      {
+        "id": "explorer.newFolder",
+        "title": "New Folder…",
+        "category": "Explorer"
+      },
+      {
+        "id": "explorer.refresh",
+        "title": "Refresh Explorer",
+        "category": "Explorer"
+      },
+      {
+        "id": "explorer.collapseAll",
+        "title": "Collapse Folders in Explorer",
+        "category": "Explorer"
+      },
+      {
+        "id": "explorer.revealActive",
+        "title": "Reveal Active File in Explorer",
+        "category": "Explorer"
+      },
+      {
+        "id": "explorer.focus",
+        "title": "Focus on Folders View",
+        "category": "Explorer"
+      },
+      {
+        "id": "explorer.revealInOS",
+        "title": "Reveal Active File in Finder",
+        "category": "File",
+        "keybinding": "alt+mod+r"
+      },
+      {
+        "id": "explorer.copyPath",
+        "title": "Copy Path of Active File",
+        "category": "File"
+      },
+      {
+        "id": "explorer.copyRelativePath",
+        "title": "Copy Relative Path of Active File",
+        "category": "File"
+      },
+      {
+        "id": "explorer.toggleOpenEditors",
+        "title": "Toggle Open Editors View",
+        "category": "Explorer"
+      }
+    ],
+    "settings": {
+      "autoReveal": {
+        "type": "boolean",
+        "default": true,
+        "description": "Select the active editor's file in the tree"
+      },
+      "confirmDelete": {
+        "type": "boolean",
+        "default": true,
+        "description": "Ask before moving files to the Trash"
+      },
+      "confirmDragAndDrop": {
+        "type": "boolean",
+        "default": true,
+        "description": "Ask before moving files by dragging them"
+      },
+      "exclude": {
+        "type": "string",
+        "default": ".git, .svn, .hg, CVS, .DS_Store, Thumbs.db",
+        "description": "Names hidden from the tree, separated by commas"
+      },
+      "showOpenEditors": {
+        "type": "boolean",
+        "default": false,
+        "description": "Show the Open Editors section above the folder"
+      }
+    }
+  }
+}

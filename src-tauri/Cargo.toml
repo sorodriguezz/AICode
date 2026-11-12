@@ -1,0 +1,33 @@
+[package]
+name = "aicode"
+version = "0.1.0"
+description = "AICode — a notepad that grows into an editor, one mod at a time"
+edition = "2021"
+publish = false
+
+[lib]
+name = "aicode_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "5"
+portable-pty = "0.8"
+tiny_http = "0.12"
+ignore = "0.4"
+regex = "1"
+rand = "0.9"
+base64 = "0.22"
+trash = "5"
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
+
+[profile.release]
+opt-level = 3
+strip = true
+codegen-units = 4

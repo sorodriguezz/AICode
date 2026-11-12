@@ -1,0 +1,93 @@
+{
+  "id": "aicode.git",
+  "name": "Source Control (Git)",
+  "version": "1.0.0",
+  "description": "Git for the open folder: changes, stage, commit, diffs, branches, fetch / pull / push, and change markers in the editor gutter. Uses the git installed on this machine; talks to no hosting service.",
+  "author": "AICode",
+  "icon": "source-control",
+  "main": "main.js",
+  "api": 1,
+  "activation": [
+    "onView:scm",
+    "onFolder",
+    "onCommand:git.commit"
+  ],
+  "permissions": [
+    "process",
+    "fs:read"
+  ],
+  "contributes": {
+    "views": [
+      {
+        "id": "scm",
+        "title": "Source Control",
+        "icon": "source-control",
+        "location": "sidebar",
+        "order": 3,
+        "keybinding": "ctrl+shift+g"
+      }
+    ],
+    "commands": [
+      {
+        "id": "git.refresh",
+        "title": "Refresh",
+        "category": "Git"
+      },
+      {
+        "id": "git.commit",
+        "title": "Commit",
+        "category": "Git"
+      },
+      {
+        "id": "git.stageAll",
+        "title": "Stage All Changes",
+        "category": "Git"
+      },
+      {
+        "id": "git.unstageAll",
+        "title": "Unstage All Changes",
+        "category": "Git"
+      },
+      {
+        "id": "git.checkout",
+        "title": "Checkout to…",
+        "category": "Git"
+      },
+      {
+        "id": "git.createBranch",
+        "title": "Create Branch…",
+        "category": "Git"
+      },
+      {
+        "id": "git.fetch",
+        "title": "Fetch",
+        "category": "Git"
+      },
+      {
+        "id": "git.pull",
+        "title": "Pull",
+        "category": "Git"
+      },
+      {
+        "id": "git.push",
+        "title": "Push",
+        "category": "Git"
+      },
+      {
+        "id": "git.openChange",
+        "title": "Open Changes of the Active File",
+        "category": "Git"
+      },
+      {
+        "id": "git.init",
+        "title": "Initialize Repository",
+        "category": "Git"
+      },
+      {
+        "id": "git.stageActive",
+        "title": "Stage Changes of the Active File",
+        "category": "Git"
+      }
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Every AICode window. What a mod can do goes through AICode's own commands, which check the mod's declared permissions.",
+  "windows": [
+    "*"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-set-title",
+    "dialog:default",
+    "core:webview:allow-set-webview-zoom",
+    "core:window:allow-set-focus",
+    "core:window:allow-destroy",
+    "core:window:allow-close",
+    "core:window:allow-set-fullscreen"
+  ]
+}

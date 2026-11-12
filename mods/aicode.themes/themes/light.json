@@ -1,0 +1,27 @@
+// An AICode color theme file: comments and trailing commas are allowed.
+{
+  "name": "AICode Light",
+  "type": "light",
+  "colors": {
+    "focusBorder": "#005fb8",
+    "button.background": "#005fb8",
+    "button.hoverBackground": "#0258a8",
+    "activityBar.activeBorder": "#005fb8",
+    "activityBarBadge.background": "#005fb8",
+    "tab.activeBorderTop": "#005fb8",
+    "panelTitle.activeBorder": "#005fb8",
+    "statusBarItem.remoteBackground": "#005fb8",
+    "textLink.foreground": "#005fb8",
+    "testing.iconPassed": "#2da042",
+  },
+  "tokenColors": [
+    { "scope": "comment", "settings": { "foreground": "#008000" } },
+    { "scope": "string", "settings": { "foreground": "#a31515" } },
+    { "scope": "constant.numeric", "settings": { "foreground": "#098658" } },
+    { "scope": "keyword", "settings": { "foreground": "#0000ff" } },
+    { "scope": "entity.name.type", "settings": { "foreground": "#267f99" } },
+    { "scope": "support.type.property-name", "settings": { "foreground": "#0451a5" } },
+    { "scope": "entity.name.tag", "settings": { "foreground": "#800000" } },
+    { "scope": "entity.other.attribute-name", "settings": { "foreground": "#e50000" } },
+  ],
+}

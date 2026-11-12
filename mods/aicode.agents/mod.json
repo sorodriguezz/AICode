@@ -1,0 +1,86 @@
+{
+  "id": "aicode.agents",
+  "name": "AI Chat",
+  "version": "1.0.0",
+  "description": "A chat panel for the AI agents you already have installed — Claude Code, Codex, Gemini CLI, Grok, OpenCode, Cline — and local models through Ollama. Nothing is sent anywhere AICode itself chooses: each agent is your own CLI, with your own login.",
+  "author": "AICode",
+  "icon": "comment-discussion",
+  "main": "main.js",
+  "api": 1,
+  "activation": [
+    "onView:agents.chat",
+    "onCommand:agents.ask",
+    "onCommand:agents.attachFile",
+    "onCommand:agents.attachSelection",
+    "onCommand:agents.showHistory"
+  ],
+  "permissions": [
+    "process",
+    "fs:read",
+    "open-external"
+  ],
+  "optionalDependencies": [
+    "aicode.mcp-server",
+    "aicode.terminal"
+  ],
+  "contributes": {
+    "views": [
+      {
+        "id": "agents.chat",
+        "title": "Chat",
+        "icon": "comment-discussion",
+        "location": "secondary",
+        "order": 1,
+        "keybinding": "mod+alt+i"
+      }
+    ],
+    "commands": [
+      {
+        "id": "agents.ask",
+        "title": "Ask About Selection",
+        "category": "Chat",
+        "keybinding": "mod+i"
+      },
+      {
+        "id": "agents.newChat",
+        "title": "New Chat",
+        "category": "Chat"
+      },
+      {
+        "id": "agents.showHistory",
+        "title": "Show Chats…",
+        "category": "Chat"
+      },
+      {
+        "id": "agents.attachFile",
+        "title": "Add File to Chat",
+        "category": "Chat"
+      },
+      {
+        "id": "agents.attachSelection",
+        "title": "Add Selection to Chat",
+        "category": "Chat"
+      },
+      {
+        "id": "agents.pickAgent",
+        "title": "Select Agent…",
+        "category": "Chat"
+      },
+      {
+        "id": "agents.openInTerminal",
+        "title": "Open Agent in Terminal",
+        "category": "Chat"
+      },
+      {
+        "id": "agents.addCustom",
+        "title": "Add a Custom Agent Command…",
+        "category": "Chat"
+      },
+      {
+        "id": "agents.clearHistory",
+        "title": "Delete All Past Chats…",
+        "category": "Chat"
+      }
+    ]
+  }
+}

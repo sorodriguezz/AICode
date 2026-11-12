@@ -1,0 +1,107 @@
+{
+  "id": "aicode.terminal",
+  "name": "Terminal",
+  "version": "1.0.0",
+  "description": "Integrated terminals in the panel, using your login shell or another one installed: tabs, splits, ⌘-click on paths and links. A shell only starts when you open one.",
+  "author": "AICode",
+  "icon": "terminal",
+  "main": "main.js",
+  "api": 1,
+  "activation": [
+    "onView:terminal",
+    "onCommand:terminal.new",
+    "onCommand:terminal.toggle",
+    "onCommand:terminal.newWithProfile",
+    "onCommand:terminal.split",
+    "onCommand:terminal.focus",
+    "onCommand:terminal.runSelection",
+    "onCommand:terminal.sendText"
+  ],
+  "permissions": [
+    "pty",
+    "fs:read",
+    "open-external"
+  ],
+  "contributes": {
+    "views": [
+      {
+        "id": "terminal",
+        "title": "Terminal",
+        "icon": "terminal",
+        "location": "panel",
+        "order": 1
+      }
+    ],
+    "commands": [
+      {
+        "id": "terminal.toggle",
+        "title": "Toggle Terminal",
+        "category": "Terminal",
+        "keybinding": "ctrl+`"
+      },
+      {
+        "id": "terminal.new",
+        "title": "Create New Terminal",
+        "category": "Terminal",
+        "keybinding": "ctrl+shift+`"
+      },
+      {
+        "id": "terminal.newWithProfile",
+        "title": "Create New Terminal (With Profile)…",
+        "category": "Terminal"
+      },
+      {
+        "id": "terminal.split",
+        "title": "Split Terminal",
+        "category": "Terminal"
+      },
+      {
+        "id": "terminal.focus",
+        "title": "Focus Terminal",
+        "category": "Terminal"
+      },
+      {
+        "id": "terminal.focusNext",
+        "title": "Focus Next Terminal",
+        "category": "Terminal"
+      },
+      {
+        "id": "terminal.focusPrevious",
+        "title": "Focus Previous Terminal",
+        "category": "Terminal"
+      },
+      {
+        "id": "terminal.rename",
+        "title": "Rename…",
+        "category": "Terminal"
+      },
+      {
+        "id": "terminal.kill",
+        "title": "Kill the Active Terminal",
+        "category": "Terminal"
+      },
+      {
+        "id": "terminal.killAll",
+        "title": "Kill All Terminals",
+        "category": "Terminal"
+      },
+      {
+        "id": "terminal.clear",
+        "title": "Clear",
+        "category": "Terminal"
+      },
+      {
+        "id": "terminal.runSelection",
+        "title": "Run Selected Text in Active Terminal",
+        "category": "Terminal"
+      }
+    ],
+    "settings": {
+      "fontSize": {
+        "type": "number",
+        "default": 12,
+        "description": "Font size of terminals"
+      }
+    }
+  }
+}

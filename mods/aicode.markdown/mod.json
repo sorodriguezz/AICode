@@ -1,0 +1,25 @@
+{
+  "id": "aicode.markdown",
+  "name": "Markdown Preview",
+  "version": "1.0.0",
+  "description": "Preview Markdown files the way VS Code does: \"Open Preview to the Side\" and \"Open as Preview\" in the tab bar of a .md file, \"Reopen Editor With… → Markdown Preview\", live updates while you type and scrolling with the editor. Raw HTML in the file is shown as text, never run.",
+  "author": "AICode",
+  "icon": "open-preview",
+  "main": "main.js",
+  "api": 1,
+  "activation": [
+    "onLanguage:markdown",
+    "onCommand:markdown.showPreview",
+    "onCommand:markdown.showPreviewToSide"
+  ],
+  "permissions": [
+    "open-external"
+  ],
+  "contributes": {
+    "commands": [
+      { "id": "markdown.showPreviewToSide", "title": "Open Preview to the Side", "category": "Markdown", "icon": "open-preview", "keybinding": "mod+k v" },
+      { "id": "markdown.showPreview", "title": "Open Preview", "category": "Markdown", "icon": "preview", "keybinding": "mod+shift+v" },
+      { "id": "markdown.showSource", "title": "Show Source", "category": "Markdown", "icon": "go-to-file" }
+    ]
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "id": "aicode.mcp-server",
+  "name": "MCP Server",
+  "version": "1.0.0",
+  "description": "Lets agents outside the editor (CodeFlow, Claude Code, Codex\u2026) see what is open in AICode \u2014 unsaved text included \u2014 and propose edits you accept or reject. Listens on 127.0.0.1 only, behind a token. Reads a file from disk only when an agent asks for one that is not open.",
+  "author": "AICode",
+  "icon": "mcp",
+  "main": "main.js",
+  "api": 1,
+  "activation": [
+    "onStartup"
+  ],
+  "permissions": [
+    "mcp-server",
+    "fs:read"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "mcp.showConnection",
+        "title": "Show Connection Details",
+        "category": "MCP"
+      },
+      {
+        "id": "mcp.copyConfig",
+        "title": "Copy Client Configuration (JSON)",
+        "category": "MCP"
+      },
+      {
+        "id": "mcp.restart",
+        "title": "Restart Server",
+        "category": "MCP"
+      },
+      {
+        "id": "mcp.stop",
+        "title": "Stop Server",
+        "category": "MCP"
+      }
+    ]
+  }
+}

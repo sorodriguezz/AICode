@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AICode",
+  "version": "0.1.0",
+  "identifier": "dev.aicode.editor",
+  "build": {
+    "beforeDevCommand": "pnpm vendor && pnpm dev",
+    "devUrl": "http://localhost:1430",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "AICode",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 480,
+        "minHeight": 320,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 13,
+          "y": 17
+        },
+        "backgroundColor": "#181818",
+        "dragDropEnabled": true,
+        "create": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost aimod: http://aimod.localhost; script-src 'self' aimod: http://aimod.localhost; style-src 'self' 'unsafe-inline' aimod: http://aimod.localhost; img-src 'self' data: blob: aimod: http://aimod.localhost; font-src 'self' data: aimod: http://aimod.localhost; worker-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost aimod: http://aimod.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app",
+      "dmg"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "A notepad that grows into an editor, one mod at a time",
+    "resources": {
+      "../mods/": "mods/"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.png"
+    ]
+  }
+}
