@@ -30,7 +30,7 @@ html, body, #app {
   height: 100%;
   overflow: hidden;
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: var(--ui-font-size, 13px);
   color: var(--aicode-foreground);
   background: var(--aicode-editor-background);
   -webkit-font-smoothing: antialiased;
@@ -46,7 +46,7 @@ a:hover { text-decoration: underline; }
 :focus { outline: none; }
 :focus-visible { outline: 1px solid var(--aicode-focusBorder); outline-offset: -1px; }
 
-::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar { width: var(--scrollbar-size, 10px); height: var(--scrollbar-size, 10px); }
 /* Like VS Code: the slider shows while the pointer is over what scrolls. */
 ::-webkit-scrollbar-thumb { background: transparent; }
 :hover::-webkit-scrollbar-thumb { background: var(--aicode-scrollbarSlider-background); }
@@ -67,6 +67,19 @@ a:hover { text-decoration: underline; }
   border-bottom: 1px solid var(--aicode-titleBar-border);
 }
 .titlebar-left { display: flex; align-items: center; justify-content: flex-end; padding-left: 78px; gap: 2px; padding-right: 8px; }
+.titlebar-left > .group { display: flex; align-items: center; gap: 2px; }
+.titlebar-center { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.titlebar-center .command-center { flex: 1 1 auto; min-width: 0; }
+.title-items { display: flex; align-items: center; gap: 2px; }
+.title-items:empty { display: none; }
+.title-item.with-text {
+  height: 24px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border: 0; border-radius: 5px;
+  background: var(--aicode-commandCenter-background); color: var(--aicode-commandCenter-foreground);
+  border: 1px solid var(--aicode-commandCenter-border); font-size: 12px; white-space: nowrap; cursor: pointer;
+}
+.title-item.with-text:hover { background: var(--aicode-commandCenter-activeBackground); }
+body .title-item .codicon { font-size: 14px; }
+body .title-item.icon-button .codicon { font-size: 16px; }
 .titlebar-right { display: flex; align-items: center; justify-content: flex-end; gap: 2px; padding-right: 8px; }
 .command-center {
   height: 24px;
@@ -877,3 +890,108 @@ body .modal-editor-title .codicon { font-size: 14px; }
 .breadcrumbs .editor-type { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; padding: 0 2px 0 6px; font-size: 11px; cursor: pointer; border-radius: 3px; color: var(--aicode-descriptionForeground); }
 .breadcrumbs .editor-type:hover { color: var(--aicode-foreground); }
 body .breadcrumbs .editor-type .codicon { font-size: 12px; }
+
+
+/* ---------- configurable appearance (core/appearance.ts) ---------- */
+
+/* Behind everything: window.background (image, video or color), shown when parts are see-through. */
+.app-background { position: fixed; inset: 0; z-index: 0; display: none; pointer-events: none; overflow: hidden; }
+#app { position: relative; z-index: 1; }
+
+/* A view in place of the editor (window layouts' `center`). */
+.center-view {
+  position: relative; flex: 1 1 auto; min-height: 0;
+  background: var(--aicode-editor-background);
+  border: 1px solid var(--aicode-sideBar-border); border-radius: var(--card-radius); overflow: hidden;
+}
+.center-view > .view-host { position: absolute; inset: 0; overflow: auto; }
+
+/* Tab bar height and widths. */
+.tabs { height: var(--editor-tabs-h, var(--tabs-h)); }
+.tabs-scroll .tab { min-width: var(--tab-min-w, 80px); max-width: var(--tab-max-w, 220px); }
+.tabs-scroll { gap: var(--tab-gap, 0px); }
+.tab.drop-before { box-shadow: inset 2px 0 0 var(--aicode-focusBorder); }
+.tab.drop-after { box-shadow: inset -2px 0 0 var(--aicode-focusBorder); }
+.tab-drag-ghost.detaching { border-style: dashed; }
+.tab-drag-ghost.detaching::after { content: "→ new window"; opacity: .7; margin-left: 6px; }
+
+/* Close button: left, or hidden (a dirty tab still shows its dot). */
+:root[data-tab-close="left"] .tab .tab-close { order: -1; margin-right: -2px; }
+:root[data-tab-close="hidden"] .tab .tab-close { display: none; }
+:root[data-tab-close="hidden"] .tab.dirty .tab-close { display: flex; pointer-events: none; }
+
+/* Shapes other than "connected" (VS Code's, the default) drop its outline and flared corners. */
+:root:not([data-tab-shape="connected"]) .tab .tab-flare,
+:root:not([data-tab-shape="connected"]) .tab.active::after { display: none !important; }
+:root[data-tab-shape="square"] .tab { border-right: 1px solid var(--aicode-tab-border); }
+:root[data-tab-shape="square"] .tab.active::before { inset: 0; top: 0; border-radius: 0; }
+:root[data-tab-shape="square"] .tab.active { box-shadow: inset 0 1px 0 var(--aicode-tab-activeBorderTop, var(--aicode-focusBorder)); }
+:root[data-tab-shape="rounded"] .tabs-scroll { padding: 4px 4px 0; gap: max(var(--tab-gap, 0px), 2px); }
+:root[data-tab-shape="rounded"] .tab.active::before { inset: 0; top: 0; border-radius: 8px 8px 0 0; }
+:root[data-tab-shape="rounded"] .tab:hover:not(.active)::before { inset: 0; border-radius: 8px 8px 0 0; }
+:root[data-tab-shape="pill"] .tabs-scroll { align-items: center; padding: 0 4px; gap: max(var(--tab-gap, 0px), 4px); }
+:root[data-tab-shape="pill"] .tab { height: calc(100% - 8px); border-radius: 999px; padding: 0 8px 0 10px; }
+:root[data-tab-shape="pill"] .tab.active::before { inset: 0; top: 0; border-radius: 999px; background: var(--aicode-tab-activeBackground, var(--aicode-toolbar-activeBackground)); }
+:root[data-tab-shape="pill"] .tab:hover:not(.active)::before { inset: 0; border-radius: 999px; }
+:root[data-tab-shape="underline"] .tab.active::before { inset: auto 8px 0 8px; top: auto; height: 2px; border-radius: 2px; background: var(--aicode-tab-activeBorderTop, var(--aicode-focusBorder)); }
+/* Active indicator: a line at the top or the bottom of the active tab (shapes that have none of their own). */
+:root[data-tab-indicator="top"]:is([data-tab-shape="square"], [data-tab-shape="rounded"]) .tab.active { box-shadow: inset 0 2px 0 var(--aicode-tab-activeBorderTop, var(--aicode-focusBorder)); }
+:root[data-tab-indicator="bottom"]:not([data-tab-shape="underline"]) .tab.active { box-shadow: inset 0 -2px 0 var(--aicode-tab-activeBorderTop, var(--aicode-focusBorder)); }
+:root[data-tab-indicator="none"] .tab.active { box-shadow: none !important; }
+:root[data-tab-indicator="none"][data-tab-shape="underline"] .tab.active::before { display: none; }
+/* Several rows of tabs. */
+:root[data-tab-wrap="on"] .tabs { height: auto; min-height: var(--editor-tabs-h, var(--tabs-h)); }
+:root[data-tab-wrap="on"] .tabs-scroll { flex-wrap: wrap; overflow: visible; }
+:root[data-tab-wrap="on"] .tabs-scroll .tab { height: var(--editor-tabs-h, var(--tabs-h)); }
+
+/* Activity bar: a filled square (the default here), a bar at the edge, or nothing. */
+:root[data-activity-indicator="bar"] .activity-item.active::before {
+  inset: 0 auto 0 0; margin: 0; width: 2px; height: auto; border-radius: 0; z-index: 0;
+  background: var(--aicode-activityBar-activeBorder, var(--aicode-focusBorder));
+}
+:root[data-activity-indicator="none"] .activity-item.active::before { display: none; }
+
+/* Scroll bars of lists and pages (the editor's have their own settings). */
+:root[data-scrollbars="always"] ::-webkit-scrollbar-thumb { background: var(--aicode-scrollbarSlider-background); }
+:root[data-scrollbars="hidden"] ::-webkit-scrollbar { width: 0; height: 0; }
+:root[data-focus-outline="off"] :focus-visible { outline: none; }
+
+/* Themed tooltips (workbench.tooltips.style = custom). Colors: tooltip.background, tooltip.foreground, tooltip.border. */
+.aicode-tooltip {
+  position: fixed; z-index: 10000; pointer-events: none; max-width: var(--tooltip-max-w, 360px);
+  padding: 4px 8px; border-radius: 4px; font-size: 12px; line-height: 1.4; white-space: pre-wrap; word-break: break-word;
+  background: var(--aicode-tooltip-background, var(--aicode-editorHoverWidget-background, var(--aicode-editorWidget-background, #252526)));
+  color: var(--aicode-tooltip-foreground, var(--aicode-editorHoverWidget-foreground, var(--aicode-foreground)));
+  border: 1px solid var(--aicode-tooltip-border, var(--aicode-editorHoverWidget-border, var(--aicode-widget-border)));
+  box-shadow: 0 2px 8px var(--aicode-widget-shadow);
+  opacity: 0; transform: translateY(-2px); transition: opacity var(--motion-fast, .1s) ease, transform var(--motion-fast, .1s) ease;
+}
+.aicode-tooltip[data-side="above"] { transform: translateY(2px); }
+.aicode-tooltip.visible { opacity: 1; transform: none; }
+
+/* Settings page: where a value comes from, JSON-only settings, colors. */
+.setting-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.setting-origin { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; }
+.setting-origin .chip { font-size: 10.5px; padding: 0 6px; }
+.setting-origin .chip.user { color: var(--aicode-textLink-foreground); }
+.setting-origin .chip.mod { color: var(--aicode-gitDecoration-modifiedResourceForeground, var(--aicode-descriptionForeground)); }
+.setting-origin .reset { font-size: 11px; }
+.setting-label .applies { display: flex; align-items: center; gap: 2px; font-size: 11.5px; }
+body .setting-label .applies .codicon { font-size: 12px; }
+.setting-json { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; min-width: 0; width: 100%; }
+.setting-json code { font-family: var(--font-mono); font-size: 11px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.setting-color { display: flex; gap: 6px; width: 100%; align-items: center; }
+.setting-color .color-swatch { width: 28px; height: 26px; padding: 0; border: 1px solid var(--aicode-input-border, var(--aicode-widget-border)); border-radius: 4px; background: none; flex: 0 0 auto; cursor: pointer; }
+
+/* Default / Effective Settings (read-only JSON). */
+.settings-json-page { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.settings-json-bar { display: flex; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--aicode-widget-border); }
+.settings-json-view { flex: 1; margin: 0; padding: 12px 16px; overflow: auto; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; user-select: text; white-space: pre; }
+
+/* Developer: Inspect Window Parts. */
+.parts-inspector-label {
+  position: fixed; left: 0; top: 0; z-index: 10001; pointer-events: none; padding: 3px 8px; border-radius: 4px;
+  font-family: var(--font-mono); font-size: 11px; white-space: nowrap;
+  background: #d63384; color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.35);
+}
+.inspecting-parts .part-inspected { outline: 2px dashed #d63384 !important; outline-offset: -2px; }

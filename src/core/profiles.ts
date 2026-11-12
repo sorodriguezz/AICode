@@ -12,6 +12,7 @@ import { notify, inputBox, confirm, pick } from "./widgets";
 import { closeModal } from "./modal";
 import * as commands from "./commands";
 import type { ThemeEntry } from "./theme";
+import { config, type SettingSchema } from "./config";
 import { appVersion, checkForUpdates, installUpdate, onDidChangeUpdateStatus, promptUpdate, updateStatus } from "./updates";
 
 export interface ProfileView {
@@ -224,46 +225,7 @@ export interface SettingsDeps {
   host: ModHost;
   editors: EditorService;
   themes: () => ThemeEntry[];
-  /** Applies the editor's own settings after one changed. */
-  applyCore: (settings: Record<string, any>, changed: string) => void | Promise<void>;
 }
-
-type Field = { key: string; label: string; description?: string; type: "number" | "string" | "boolean"; enum?: { value: any; label: string }[]; default: any; min?: number; max?: number };
-
-export const CORE_FIELDS: { section: string; fields: Field[] }[] = [
-  {
-    section: "Editor",
-    fields: [
-      { key: "editor.fontSize", label: "Font Size", type: "number", default: navigator.platform.toLowerCase().includes("mac") ? 12 : 14, min: 8, max: 40 },
-      { key: "editor.fontFamily", label: "Font Family", type: "string", default: "", description: "Leave empty for Menlo / SF Mono." },
-      { key: "editor.lineHeight", label: "Line Height", type: "number", default: 0, min: 0, max: 60, description: "0 picks one from the font size." },
-      { key: "editor.wordWrap", label: "Word Wrap", type: "string", default: "off", enum: [{ value: "off", label: "Off" }, { value: "on", label: "On" }, { value: "bounded", label: "At the window edge or 80 columns" }] },
-      { key: "editor.minimap", label: "Minimap", type: "boolean", default: true },
-      { key: "editor.lineNumbers", label: "Line Numbers", type: "string", default: "on", enum: [{ value: "on", label: "On" }, { value: "relative", label: "Relative" }, { value: "off", label: "Off" }] },
-      { key: "editor.renderWhitespace", label: "Show Whitespace", type: "string", default: "selection", enum: [{ value: "none", label: "Never" }, { value: "selection", label: "In the selection" }, { value: "boundary", label: "Except single spaces" }, { value: "all", label: "Always" }] },
-      { key: "editor.cursorStyle", label: "Cursor Style", type: "string", default: "line", enum: [{ value: "line", label: "Line" }, { value: "block", label: "Block" }, { value: "underline", label: "Underline" }] },
-      { key: "editor.stickyScroll", label: "Sticky Scroll", type: "boolean", default: true, description: "Keeps the enclosing function or block visible at the top." },
-      { key: "editor.bracketPairColorization", label: "Colored Bracket Pairs", type: "boolean", default: true },
-    ],
-  },
-  {
-    section: "Workbench",
-    fields: [
-      { key: "theme", label: "Color Theme", type: "string", default: "aicode-dark", enum: [] },
-      { key: "workbench.previewEditors", label: "Preview Editors", type: "boolean", default: true, description: "A single click opens a file in a tab the next one replaces (shown in italics)." },
-      { key: "workbench.editor.useModal", label: "Open Pages in a Modal", type: "string", default: "some", description: "Settings, Mods, Keyboard Shortcuts and Profiles open over the editor, like VS Code. The modal's header can still move one into a tab.", enum: [{ value: "some", label: "Settings, Mods, Shortcuts and Profiles" }, { value: "off", label: "Off (always in a tab)" }] },
-      { key: "workbench.iconTheme", label: "File Icon Theme", type: "string", default: "seti", enum: [{ value: "seti", label: "Seti (Visual Studio Code)" }, { value: "none", label: "None (plain icons)" }] },
-      { key: "workbench.iconSize", label: "Icon Size", type: "string", default: "normal", description: "Of the activity bar on the left and the lists in side bars.", enum: [{ value: "normal", label: "Normal (VS Code size)" }, { value: "large", label: "Large" }, { value: "larger", label: "Larger" }] },
-      { key: "animations", label: "Animations", type: "boolean", default: true, description: "Also off while macOS Reduce motion is on." },
-    ],
-  },
-  {
-    section: "Updates",
-    fields: [
-      { key: "update.checkOnStartup", label: "Check on Startup", type: "boolean", default: false, description: "Ask GitHub for a newer AICode a few seconds after it starts (once per launch). Off: AICode only looks when you click Check for Updates." },
-    ],
-  },
-];
 
 /** Settings → Updates: the version, Check for Updates, and what the last check found. */
 function updatesRow(): { el: HTMLElement; paint: () => void } {
@@ -302,102 +264,164 @@ export function openSettings(deps: SettingsDeps) {
   deps.editors.openPage({
     title: "Settings",
     icon: "settings-gear",
-    actions: [{ icon: "go-to-file", title: "Open Settings (JSON)", run: () => { closeModal(); commands.execute("preferences.openProfileJson"); } }],
+    actions: [
+      { icon: "go-to-file", title: "Open Settings (JSON)", run: () => { closeModal(); commands.execute("preferences.openProfileJson"); } },
+      { icon: "json", title: "Default Settings (JSON)", run: () => { closeModal(); commands.execute("preferences.openDefaultSettings"); } },
+    ],
     key: "settings",
     restore: "settings",
     render: (root) => {
       const page = h("div", { class: "mods-page settings-page" });
       root.append(page);
       let filter = "";
+      let onlyModified = false;
       let updates: ReturnType<typeof updatesRow> | null = null;
       const updatesWatch = onDidChangeUpdateStatus(() => updates?.paint());
 
-      const control = (owner: string, f: Field, values: Record<string, any>) => {
-        const current = f.key in values ? values[f.key] : f.default;
-        const save = async (value: any) => {
-          try {
-            await invoke("settings_set", { modId: owner, key: f.key, value: value === f.default && owner === "core" && f.key !== "theme" ? null : value });
-            if (owner === "core") await deps.applyCore(await invoke<Record<string, any>>("settings_get", { modId: "core" }), f.key);
-          } catch (e) {
-            notify("error", String(e));
-          }
-        };
-        if (f.type === "boolean") {
-          return h("label", { class: "check" }, h("input", { type: "checkbox", checked: !!current, onchange: (e: Event) => save((e.target as HTMLInputElement).checked) }), h("span", null, current ? "On" : "Off"));
+      const save = async (owner: string, key: string, value: unknown) => {
+        try {
+          await config.update(owner, key, value);
+        } catch (e) {
+          notify("error", String(e));
         }
-        if (f.enum?.length) {
-          return h(
-            "select",
-            { class: "input", onchange: (e: Event) => { const v = (e.target as HTMLSelectElement).value; save(f.type === "number" ? Number(v) : v); } },
-            f.enum.map((o) => h("option", { value: String(o.value), selected: String(o.value) === String(current) }, o.label)),
-          );
-        }
-        return h("input", {
-          class: "input",
-          type: f.type === "number" ? "number" : "text",
-          value: current ?? "",
-          min: f.min,
-          max: f.max,
-          spellcheck: false,
-          onchange: (e: Event) => {
-            const raw = (e.target as HTMLInputElement).value;
-            save(f.type === "number" ? (raw === "" ? f.default : Math.max(f.min ?? -Infinity, Math.min(f.max ?? Infinity, Number(raw)))) : raw);
-          },
-        });
       };
 
-      const row = (owner: string, f: Field, values: Record<string, any>) =>
+      const control = (owner: string, key: string, s: SettingSchema) => {
+        const current = config.get<any>(owner, key);
+        const set = (v: unknown) => save(owner, key, JSON.stringify(v) === JSON.stringify(s.default) && key !== "theme" && !config.inspect(owner, key).mods.length ? null : v);
+        if (s.type === "boolean") {
+          return h("label", { class: "check" }, h("input", { type: "checkbox", checked: !!current, onchange: (e: Event) => set((e.target as HTMLInputElement).checked) }), h("span", null, current ? "On" : "Off"));
+        }
+        if (s.enum?.length) {
+          const known = s.enum.some((o) => String(o.value) === String(current));
+          return h(
+            "select",
+            { class: "input", onchange: (e: Event) => { const v = (e.target as HTMLSelectElement).value; set(s.type === "number" ? Number(v) : v); } },
+            known ? null : h("option", { value: String(current ?? ""), selected: true }, String(current ?? "")),
+            s.enum.map((o) => h("option", { value: String(o.value), selected: String(o.value) === String(current) }, o.label)),
+          );
+        }
+        if (s.type === "array" || s.type === "object") {
+          const empty = s.type === "array" ? !(current as unknown[])?.length : !Object.keys(current ?? {}).length;
+          const summary = empty ? (s.type === "array" ? "none" : "nothing set") : JSON.stringify(current).slice(0, 60) + (JSON.stringify(current).length > 60 ? "…" : "");
+          return h(
+            "div",
+            { class: "setting-json" },
+            h("code", { class: "muted", title: JSON.stringify(current, null, 2) }, summary),
+            h("button", { class: "btn secondary", onclick: () => { closeModal(); commands.execute("preferences.editSettingJson", owner, key); } }, icon("json"), "Edit in JSON"),
+          );
+        }
+        const input = h("input", {
+          class: "input",
+          type: s.type === "number" ? "number" : "text",
+          value: current ?? "",
+          min: s.min,
+          max: s.max,
+          step: s.type === "number" && (s.max ?? 10) <= 1 ? 0.05 : undefined,
+          spellcheck: false,
+          placeholder: s.format === "color" ? "#rrggbb, rgb(…), or empty" : "",
+          onchange: (e: Event) => {
+            const raw = (e.target as HTMLInputElement).value;
+            set(s.type === "number" ? (raw === "" ? s.default : Math.max(s.min ?? -Infinity, Math.min(s.max ?? Infinity, Number(raw)))) : raw);
+          },
+        });
+        if (s.format !== "color") return input;
+        const swatch = h("input", { type: "color", class: "color-swatch", value: /^#[0-9a-f]{6}$/i.test(String(current)) ? current : "#000000", oninput: (e: Event) => { input.value = (e.target as HTMLInputElement).value; }, onchange: (e: Event) => set((e.target as HTMLInputElement).value) });
+        return h("div", { class: "setting-color" }, swatch, input);
+      };
+
+      /** Where the value comes from, and a way back to the default. */
+      const origin = (owner: string, key: string) => {
+        const ins = config.inspect(owner, key);
+        const bits: (HTMLElement | string)[] = [];
+        if (ins.window !== undefined) bits.push(h("span", { class: "chip" }, "this window"));
+        if (ins.user !== undefined) bits.push(h("span", { class: "chip user" }, "set by you"));
+        else if (ins.mods.length) bits.push(h("span", { class: "chip mod", title: ins.mods.map((m) => `${m.mod}: ${JSON.stringify(m.value)}`).join("\n") }, `set by ${ins.mods.map((m) => deps.host.get(m.mod)?.info.name ?? m.mod).join(", ")}`));
+        if (ins.user !== undefined) bits.push(h("a", { href: "#", class: "reset", title: ins.mods.length ? "Back to what the mods set" : "Back to the default", onclick: (e: Event) => { e.preventDefault(); save(owner, key, null); } }, "reset"));
+        return bits.length ? h("span", { class: "setting-origin" }, ...bits) : null;
+      };
+
+      const row = (owner: string, key: string, s: SettingSchema) =>
         h(
           "div",
           { class: "setting-row" },
-          h("div", { class: "setting-label" }, h("b", null, f.label), h("span", { class: "muted key" }, owner === "core" ? f.key : `${owner} › ${f.key}`), f.description ? h("div", { class: "muted" }, f.description) : null),
-          h("div", { class: "setting-control" }, control(owner, f, values)),
+          h(
+            "div",
+            { class: "setting-label" },
+            h("div", { class: "setting-title" }, h("b", null, s.title ?? key), origin(owner, key)),
+            h("span", { class: "muted key" }, owner === "core" ? key : `${owner} › ${key}`),
+            s.description ? h("div", { class: "muted" }, s.description) : null,
+            s.applies && s.applies !== "live" ? h("div", { class: "muted applies" }, icon("info"), s.applies === "reload" ? " Applies after Reload Window." : " Applies when the window is reopened.") : null,
+          ),
+          h("div", { class: "setting-control" }, control(owner, key, s)),
         );
 
-      const matches = (f: Field) => !filter || `${f.label} ${f.key} ${f.description ?? ""}`.toLowerCase().includes(filter);
+      const matches = (owner: string, key: string, s: SettingSchema) =>
+        (!filter || `${s.title ?? ""} ${key} ${s.description ?? ""} ${s.section ?? ""}`.toLowerCase().includes(filter)) &&
+        (!onlyModified || (() => { const i = config.inspect(owner, key); return i.user !== undefined || i.mods.length > 0 || i.window !== undefined; })());
 
       const render = async () => {
         const profile = await invoke<ProfileView>("profile_get");
-        const core = await invoke<Record<string, any>>("settings_get", { modId: "core" });
         const sections: HTMLElement[] = [];
-        for (const s of CORE_FIELDS) {
-          const fields = s.fields
-            .map((f) => (f.key === "theme" ? { ...f, enum: deps.themes().map((t) => ({ value: t.id, label: `${t.label}${t.source === "core" ? "" : ` — ${t.source}`}` })), default: deps.themes()[0]?.id } : f))
-            .filter(matches);
-          if (s.section === "Updates") {
-            updates = matches({ key: "update.check", label: "Check for Updates Version", type: "string", default: "" }) ? updatesRow() : null;
-            if (updates || fields.length) sections.push(h("h2", null, s.section), ...(updates ? [updates.el] : []), ...fields.map((f) => row("core", f, core)));
+        // The editor's own settings, by section.
+        const bySection = new Map<string, [string, SettingSchema][]>();
+        for (const [key, raw] of Object.entries(config.schema("core"))) {
+          if (raw.hidden) continue;
+          const sch = key === "theme" ? { ...raw, enum: deps.themes().map((t) => ({ value: t.id, label: `${t.label}${t.source === "core" ? "" : ` — ${t.source}`}` })), default: deps.themes()[0]?.id } : raw;
+          if (!matches("core", key, sch)) continue;
+          const section = sch.section ?? "Other";
+          if (!bySection.has(section)) bySection.set(section, []);
+          bySection.get(section)!.push([key, sch]);
+        }
+        const updatesShown = !onlyModified && (!filter || "check for updates version".includes(filter));
+        if (updatesShown && !bySection.has("Updates")) bySection.set("Updates", []);
+        for (const [section, list] of bySection) {
+          const head = h("h2", null, section);
+          if (section === "Updates") {
+            updates = updatesShown ? updatesRow() : null;
+            if (updates || list.length) sections.push(head, ...(updates ? [updates.el] : []), ...list.map(([k, sc]) => row("core", k, sc)));
             continue;
           }
-          if (fields.length) sections.push(h("h2", null, s.section), ...fields.map((f) => row("core", f, core)));
+          sections.push(head, ...list.map(([k, sc]) => row("core", k, sc)));
         }
+        // Each enabled mod's.
         for (const m of deps.host.list()) {
-          const declared = m.contributes?.settings;
-          if (!declared || typeof declared !== "object") continue;
-          const values = await invoke<Record<string, any>>("settings_get", { modId: m.id });
-          const fields: Field[] = Object.entries(declared)
-            .map(([key, d]: [string, any]) => ({ key, label: d.title ?? key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase()), description: d.description, type: d.type === "number" || d.type === "boolean" ? d.type : "string", default: d.default ?? (d.type === "boolean" ? false : d.type === "number" ? 0 : ""), enum: Array.isArray(d.enum) ? d.enum.map((v: any) => ({ value: v, label: String(v) })) : undefined }) as Field)
-            .filter(matches);
-          if (fields.length) sections.push(h("h2", null, m.name), ...fields.map((f) => row(m.id, f, values)));
+          const schema = config.schema(m.id);
+          const fields = Object.entries(schema).filter(([k, sc]) => !sc.hidden && matches(m.id, k, sc));
+          if (fields.length) sections.push(h("h2", null, m.name), ...fields.map(([k, sc]) => row(m.id, k, sc)));
         }
         const search = h("input", { class: "input", placeholder: "Search settings", value: filter, oninput: (e: Event) => { filter = (e.target as HTMLInputElement).value.toLowerCase(); render().then(() => (page.querySelector(".mods-toolbar input") as HTMLInputElement | null)?.focus()); } });
+        const scroll = page.parentElement?.scrollTop ?? 0;
         clear(page);
         page.append(
           h("h1", null, "Settings"),
-          h("div", { class: "muted" }, `For the profile "${profile.name}". Other profiles keep their own.`),
+          h("div", { class: "muted" }, `For the profile "${profile.name}". Other profiles keep their own. Mods can change defaults; your values always win.`),
           h(
             "div",
             { class: "mods-toolbar" },
             search,
+            h("label", { class: "check", title: "Only settings you or a mod changed" }, h("input", { type: "checkbox", checked: onlyModified, onchange: (e: Event) => { onlyModified = (e.target as HTMLInputElement).checked; render(); } }), h("span", null, "Modified")),
             h("button", { class: "btn secondary", onclick: () => commands.execute("profiles.manage") }, icon("account"), "Profiles"),
             h("button", { class: "btn secondary", onclick: () => commands.execute("workbench.keybindings") }, icon("record-keys"), "Keyboard Shortcuts"),
             h("button", { class: "btn secondary", onclick: () => commands.execute("preferences.openProfileJson") }, icon("json"), "Edit as JSON"),
           ),
           ...(sections.length ? sections : [h("div", { class: "muted" }, "No setting matches.")]),
         );
+        if (page.parentElement) page.parentElement.scrollTop = scroll;
       };
       render();
-      return toDisposable(() => updatesWatch.dispose());
+      // Changes from anywhere (profile.json saved, a command, a mod) show up here.
+      let pending = 0;
+      const watch = config.onDidChange.event(() => {
+        cancelAnimationFrame(pending);
+        pending = requestAnimationFrame(() => {
+          if (!page.contains(document.activeElement) || (document.activeElement as HTMLElement)?.tagName !== "INPUT" || (document.activeElement as HTMLInputElement).type !== "text") render();
+        });
+      });
+      return toDisposable(() => {
+        updatesWatch.dispose();
+        watch.dispose();
+      });
     },
   });
 }

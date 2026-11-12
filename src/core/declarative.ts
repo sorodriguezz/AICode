@@ -14,8 +14,10 @@ import type { Workspace } from "./workspace";
 import { notify, inputBox, pick, confirm } from "./widgets";
 import { h, icon, basename, dirname, Disposable } from "./ui";
 import { onStream } from "./ipc";
+import { config } from "./config";
+import { openWindow } from "./windows";
 
-export const ACTION_TYPES = ["notify", "insert", "transform", "replace", "newFile", "openFile", "writeFile", "openUrl", "copy", "shell", "ask", "command", "confirm"] as const;
+export const ACTION_TYPES = ["notify", "insert", "transform", "replace", "newFile", "openFile", "writeFile", "openUrl", "copy", "shell", "ask", "command", "confirm", "window", "setting"] as const;
 
 const NEEDS: Record<string, string[]> = { shell: ["process"], openFile: ["fs:read"], writeFile: ["fs:write", "fs:read"], openUrl: ["open-external"] };
 
@@ -235,6 +237,45 @@ export class Declarative {
         if (!ok) throw new Cancelled();
         return;
       }
+      case "window": {
+        // A new window with a layout (workbench.windowLayouts) or one view, as a JSON mod declares it.
+        await openWindow({
+          layout: a.layout,
+          view: a.view,
+          title: a.title ? await text(a.title) : undefined,
+          width: a.width,
+          height: a.height,
+          alwaysOnTop: a.alwaysOnTop,
+          settings: a.settings,
+        });
+        return;
+      }
+      case "setting": {
+        // Changes a setting in the user's profile: a value, a toggle, or the next of a list of values.
+        if (typeof a.key !== "string" || !a.key) throw new Error("a setting action needs a key");
+        const owner = typeof a.owner === "string" ? a.owner : "core";
+        // `path` changes one key inside an object setting ("editor" in workbench.partOpacity).
+        const path: string[] = typeof a.path === "string" && a.path ? a.path.split(".") : [];
+        const dig = (v: any) => path.reduce((o, k) => (o && typeof o === "object" ? o[k] : undefined), v);
+        const now = dig(config.get(owner, a.key));
+        let value: unknown;
+        if (a.toggle) value = !now;
+        else if (Array.isArray(a.cycle) && a.cycle.length) {
+          const i = a.cycle.findIndex((v: unknown) => JSON.stringify(v) === JSON.stringify(now));
+          value = a.cycle[(i + 1) % a.cycle.length];
+        } else if ("value" in a) value = typeof a.value === "string" ? await text(a.value) : a.value;
+        else throw new Error(`the setting action for ${a.key} needs "value", "toggle" or "cycle"`);
+        if (path.length) {
+          const user = config.userValue(owner, a.key);
+          const next: any = user && typeof user === "object" && !Array.isArray(user) ? user : {};
+          let at = next;
+          for (const k of path.slice(0, -1)) at = at[k] && typeof at[k] === "object" ? at[k] : (at[k] = {});
+          at[path[path.length - 1]] = value;
+          value = next;
+        }
+        await config.update(owner, a.key, value);
+        return;
+      }
       default:
         throw new Error(`unknown action type ${JSON.stringify(a.type)}`);
     }
@@ -296,7 +337,6 @@ const snippetEscape = (s: string) => s.replace(/[\\$}]/g, "\\$&");
 
 class Vars {
   private asked = new Map<string, string>();
-  private settings: Record<string, unknown> | null = null;
   home = "";
 
   constructor(private d: DeclarativeDeps, private info: ModInfo) {}
@@ -365,11 +405,12 @@ class Vars {
       case "datetime": return `${date} ${time}`;
     }
     if (name.startsWith("config:")) {
+      // ${config:key} is this mod's setting; ${config:core.<key>} or ${config:<mod id>/<key>} reads others.
       const key = name.slice(7);
-      this.settings ??= await invoke<Record<string, unknown>>("settings_get", { modId: this.info.id });
-      const declared = this.info.contributes?.settings?.[key];
-      const v = key in this.settings ? this.settings[key] : declared?.default;
-      return v === undefined || v === null ? "" : String(v);
+      const [owner, k] = key.startsWith("core.") ? ["core", key.slice(5)] : key.includes("/") ? [key.slice(0, key.indexOf("/")), key.slice(key.indexOf("/") + 1)] : [this.info.id, key];
+      const declared = owner === this.info.id ? this.info.contributes?.settings?.[k] : undefined;
+      const v = config.get(owner, k, declared?.default);
+      return v === undefined || v === null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
     }
     if (name.startsWith("input:") || name.startsWith("pick:")) {
       if (this.asked.has(name)) return this.asked.get(name)!;

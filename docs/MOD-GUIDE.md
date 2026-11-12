@@ -261,7 +261,74 @@ actions with `${config:<key>}`.
 }
 ```
 
-`type` is `"string"`, `"number"` or `"boolean"`. `enum` lists allowed values (shown as a menu).
+`type` is `"string"`, `"number"` or `"boolean"` (`"array"` and `"object"` are edited in JSON).
+`enum` lists allowed values (shown as a menu). `${config:core.<key>}` reads one of AICode's own
+settings and `${config:<mod id>/<key>}` another mod's.
+
+### 4.10 `configurationDefaults` — change how AICode looks and behaves
+
+Defaults for **any** setting: AICode's own (see [CONFIGURATION.md](CONFIGURATION.md), or **Open
+Default Settings (JSON)**) or another mod's. It is written like `settings` in profile.json. The
+user's own values still win, and turning the mod off removes it all.
+
+```json
+"configurationDefaults": {
+  "core": {
+    "editor.cursorColor": "#ff79c6",
+    "editor.cursorStyle": "block",
+    "workbench.tabs.shape": "pill",
+    "workbench.hide": ["breadcrumbs", "activityBar.badge"],
+    "workbench.colorCustomizations": { "tab.activeBackground": "#282a36" },
+    "window.transparent": true,
+    "window.vibrancy": "sidebar",
+    "workbench.partOpacity": { "window": 0.4, "sideBar": 0.5, "editor": 0.75 }
+  },
+  "aicode.explorer": { "showOpenEditors": true }
+}
+```
+
+### 4.11 `styles` — any CSS
+
+```json
+"styles": [
+  { "path": "theme.css" },
+  { "css": "[data-part=\"tab\"].active { font-weight: 600; }" }
+]
+```
+
+Every part of the window has `data-part="<name>"` (`titleBar`, `tab`, `tab.close`, `statusBar.item`,
+`sideBar`, `editor`…). **Developer: Inspect Window Parts** shows them.
+
+### 4.12 `titleBar` — buttons in the title bar
+
+```json
+"titleBar": [
+  { "id": "deploy", "icon": "rocket", "text": "Deploy", "title": "Deploy (⌥⌘D)", "command": "deploy.run", "align": "center" }
+]
+```
+
+`align` can be `left` (after back/forward), `center` (beside the search box) or `right`.
+
+### 4.13 `windowLayouts` — windows arranged your way
+
+A named window layout: which view goes where, which parts show, size, always on top, and settings
+for that window only. Open it with a `window` action (§5).
+
+```json
+"windowLayouts": {
+  "agents": {
+    "title": "Agents", "width": 1320, "height": 860,
+    "center": "agents.chat",
+    "views": { "explorer": "secondary", "scm": "secondary", "terminal": "panel" },
+    "options": { "activityBar": false },
+    "parts": { "sidebar": false, "secondary": true, "panel": false },
+    "hide": ["titleBar.item:agents.open"]
+  }
+}
+```
+
+`views` places: `sidebar`, `secondary`, `panel`, `center` (in place of the editor), `hidden`.
+View ids of AICode's mods: `explorer`, `search`, `scm`, `terminal`, `agents.chat`, `codeflow`.
 
 ---
 
@@ -284,6 +351,8 @@ An action is an object with a `type`. `run` takes one action or an array of them
 | `ask` | `prompt` | Sends a prompt to the AI Chat (the AI Chat mod must be enabled). |
 | `command` | `command`, `args` (array) | Runs any command — AICode's (§6), another mod's, or one of this mod's. |
 | `confirm` | `message`, `detail`, `button` | Asks the user; choosing Cancel stops the remaining actions. |
+| `window` | `layout` (a `windowLayouts` name) or `view` (a view id), and optionally `title`, `width`, `height`, `alwaysOnTop`, `settings` | Opens a new window with that layout, or with one view filling it. |
+| `setting` | `key`, and `value`, `toggle: true` or `cycle: [values…]`; optional `path` (a key inside an object setting) and `owner` (a mod id; default AICode's own) | Changes a setting in the user's profile, applied right away. `{ "type": "setting", "key": "workbench.partOpacity", "path": "editor", "cycle": [1, 0.7] }` |
 
 **In `shell` commands, variables are inserted already quoted for the shell** (`${file}` becomes
 `'/path/with spaces/a.txt'`), so do not put quotes around them. In `openUrl`, variables are
@@ -295,7 +364,11 @@ URL-encoded. Everywhere else they are inserted as plain text.
 
 `workbench.commandPalette`, `workbench.quickOpen`, `workbench.toggleSidebar`,
 `workbench.togglePanel`, `workbench.toggleSecondary`, `workbench.reload`, `workbench.newWindow`,
-`workbench.openFolderNewWindow`, `window.close`, `preferences.theme`, `preferences.settings`,
+`workbench.openFolderNewWindow`, `window.close`, `window.toggleAlwaysOnTop`, `window.reopen`,
+`workbench.openWindowWithLayout` (args: `["name"]`), `workbench.moveViewToNewWindow` (args: `["view id"]`),
+`editor.moveIntoNewWindow`, `preferences.toggleSetting` (args: `["key"]`),
+`preferences.setSetting` (args: `["key", value]`), `preferences.openDefaultSettings`,
+`developer.inspectParts`, `preferences.theme`, `preferences.settings`,
 `preferences.toggleAnimations`, `profiles.manage`, `profiles.switch`, `workbench.keybindings`,
 `mods.manage`, `file.new`, `file.open`, `file.save`, `file.saveAs`, `file.saveAll`, `file.revert`,
 `editor.close`, `editor.closeAll`, `editor.closeOthers`, `editor.closeSaved`, `editor.showOpened`, `editor.togglePreview`, `editor.nextTab`, `editor.previousTab`,
@@ -494,6 +567,7 @@ so a setting can hold a whole command line. Only file, text and input variables 
 7. Variables are written `${name}` from §7; inside `shell`, file/text/input variables are not wrapped in quotes.
 8. Keybindings use `mod` and do not clash with the ones listed in §7.
 9. Icons are codicon names.
+10. Look changes go in `configurationDefaults` with real setting keys (see CONFIGURATION.md); `titleBar` items and `window` actions point at commands and layouts that exist.
 
 ## 12. Installing and sharing (for people)
 

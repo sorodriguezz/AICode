@@ -47,6 +47,46 @@ pub struct TextFile {
     eol: &'static str,
 }
 
+/// A file as a `data:` URL (images for backgrounds, fonts for custom CSS), up to 40 MB. `~` works.
+#[tauri::command]
+pub fn fs_read_data_url(state: State<'_, ModsState>, mod_id: String, path: String) -> Result<String, String> {
+    use base64::Engine;
+    require(&state, &mod_id, "fs:read")?;
+    let path = match path.strip_prefix("~/") {
+        Some(rest) => dirs::home_dir().map(|h| h.join(rest).to_string_lossy().into_owned()).unwrap_or(path),
+        None => path,
+    };
+    let meta = std::fs::metadata(&path).map_err(|e| format!("{path}: {e}"))?;
+    if meta.is_dir() {
+        return Err(format!("{path} is a folder"));
+    }
+    if meta.len() > 40 * 1024 * 1024 {
+        return Err(format!("{path} is larger than 40 MB"));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
+    let ext = Path::new(&path).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "avif" => "image/avif",
+        "bmp" => "image/bmp",
+        "heic" => "image/heic",
+        "mp4" | "m4v" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "woff2" => "font/woff2",
+        "woff" => "font/woff",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "css" => "text/css",
+        _ => "application/octet-stream",
+    };
+    Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+}
+
 #[tauri::command]
 pub fn fs_read_text(state: State<'_, ModsState>, mod_id: String, path: String) -> Result<TextFile, String> {
     require(&state, &mod_id, "fs:read")?;

@@ -35,6 +35,17 @@ for (const dir of ids) {
   }
   for (const t of c.themes ?? []) if (!existsSync(join(base, t.path))) fail(dir, `theme file ${t.path} missing`);
   for (const s of c.snippets ?? []) if (!existsSync(join(base, s.path))) fail(dir, `snippet file ${s.path} missing`);
+  for (const st of c.styles ?? []) {
+    const path = typeof st === "string" ? st : st?.path;
+    if (path && !existsSync(join(base, path))) fail(dir, `style file ${path} missing`);
+    if (!path && typeof st?.css !== "string" && !Array.isArray(st?.css)) fail(dir, `a style needs "path" or "css"`);
+  }
+  for (const t of c.titleBar ?? []) if (!t?.command) fail(dir, `title bar item ${t?.id ?? "?"} has no command`);
+  if (c.configurationDefaults !== undefined && (typeof c.configurationDefaults !== "object" || Array.isArray(c.configurationDefaults))) fail(dir, `configurationDefaults must be an object`);
+  for (const [name, l] of Object.entries(c.windowLayouts ?? {})) {
+    if (!l || typeof l !== "object") fail(dir, `window layout ${name} must be an object`);
+    for (const [view, place] of Object.entries(l?.views ?? {})) if (!["sidebar", "secondary", "panel", "center", "hidden"].includes(place)) fail(dir, `window layout ${name}: view ${view} has a bad place ${place}`);
+  }
   if (m.main) {
     const entry = join(base, m.main);
     if (!existsSync(entry)) fail(dir, `main ${m.main} missing`);

@@ -52,10 +52,17 @@ it. Changes apply on reload (open files and unsaved text survive a reload).
     "commands": [{ "id": "todo.refresh", "title": "Refresh TODOs", "category": "TODO", "keybinding": "mod+k t" }],
     "keybindings": [{ "key": "ctrl+alt+t", "command": "todo.refresh" }],
     "themes": [{ "id": "night", "label": "Night", "uiTheme": "vs-dark", "path": "themes/night.json" }],
-    "snippets": [{ "language": "markdown", "path": "snippets/md.json" }]
+    "snippets": [{ "language": "markdown", "path": "snippets/md.json" }],
+    "configurationDefaults": { "core": { "workbench.tabs.shape": "pill" } },
+    "styles": [{ "path": "todo.css" }],
+    "titleBar": [{ "id": "todo.refresh", "icon": "refresh", "command": "todo.refresh", "align": "right" }],
+    "windowLayouts": { "todos": { "center": "todo", "options": { "activityBar": false } } }
   }
 }
 ```
+
+`configurationDefaults`, `styles`, `titleBar` and `windowLayouts` change the window itself. What
+they can reach is described in [CONFIGURATION.md](CONFIGURATION.md).
 
 - **Locations**: `sidebar` (primary side bar, with an activity bar icon), `secondary` (right side
   bar, tabs in its header), `panel` (bottom, tabs in its header). A part with no views is not shown.
@@ -128,7 +135,7 @@ export async function activate(ctx) {
 
 | Area | Calls |
 |---|---|
-| `ctx.commands` | `register(id, fn)`, `execute(id, ...args)`, `bind(key, id)`, `exists(id)` |
+| `ctx.commands` | `register(id, fn)`, `execute(id, ...args)`, `bind(key, id)`, `exists(id)`, `list()` |
 | `ctx.views` | `provide(id, provider)`, `reveal(id)`, `isVisible(id)`, `setBadge(id, n)`, `refreshActions()` |
 | `ctx.statusBar` | `add({ text, icon, tooltip, command, align, priority })` → `{ update, dispose }` |
 | `ctx.window` | `showInfo/showWarning/showError(msg, ...actions)`, `showQuickPick(items)`, `showInputBox(opts)`, `confirm(msg, detail?, primary?)`, `contextMenu(x, y, [{ label, run, keybinding, disabled, checked, icon, separator }])`, `pickFolder()`, `pickFiles()`, `copy(text)` |
@@ -140,7 +147,11 @@ export async function activate(ctx) {
 | `ctx.pty` | `spawn({ cwd, command, args, cols, rows, onData, onExit })` → `{ write, resize, kill }`, `shells()` → `{ default, shells }` |
 | `ctx.mcp` | `start()`, `stop()`, `status()`, `setTools(tools)`, `onCall(handler)` |
 | `ctx.external` | `open(target, app?)`, `appInstalled(name)` |
-| `ctx.settings` | `get(key, fallback)`, `set(key, value)`, `all()` — per mod, per profile |
+| `ctx.settings` | `get(key, fallback)`, `getNow(key, fallback)`, `set(key, value)`, `all()`, `inspect(key)`, `onDidChange(fn)`: this mod's settings, by layers (the user's value, else a mod's default, else the declared default) |
+| `ctx.config` | `get(key)` (a core setting), `getFor(owner, key)`, `all(owner)`, `inspect(key, owner)`, `update(key, value, owner)`, `watch(keys, fn)`, `onDidChange(fn)`, `schema(owner)`: the whole configuration |
+| `ctx.styles` | `add(css)`, `addFile(path)`: CSS that stays while the mod runs |
+| `ctx.workbench` | `root()`, `part(name)`, `parts(name)`, `addTitleItem({ icon, text, title, command, run, align, order })`, `options()`, `setOptions(o)`, `toggle(loc)`, `isPartVisible(loc)`, `views()`, `moveView(id, loc)`, `setCenterView(id)`, `centerView()` |
+| `ctx.windows` | `open({ layout, view, title, width, height, alwaysOnTop, settings })`, `openView(id, opts)`, `layouts()`, `current()`, `setAlwaysOnTop(on)`, `isAlwaysOnTop()`, `reopen()`, `moveViewToNewWindow(id)` |
 | `ctx.mods` | `get(id)` (activates it, returns its exports), `isEnabled(id)` |
 | `ctx.ui` | `h(tag, attrs, ...children)`, `icon(name)`, `iconButton(name, title, fn)`, `clear(el)`, `basename`, `dirname`, `joinPath`, `fileIcon`, `fileIconColor` |
 | `ctx.monaco` | the Monaco API (languages, providers, decorations) |

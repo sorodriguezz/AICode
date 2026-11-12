@@ -15,6 +15,12 @@ loads when you first use it.
   can read it and write a mod for you (*Mods: Create Mod with AI…*, or *Copy Mod Guide for AI* and
   paste into the AI you use). Mods with code: [docs/MODS.md](docs/MODS.md). Share one as a single
   `.aicode-mod` file (*Export…* on its card, *Install from File…*).
+- **Configure everything**: settings in layers like VS Code (defaults ← mods ← you ← this window),
+  live. Colors over any theme, the cursor, tab shapes, themed tooltips, hidden parts, your own CSS,
+  acrylic transparency and background images, title bar buttons, windows with their own layout (a
+  view in place of the editor, tabs dragged out into a window, always on top). Mods change all of
+  it with `configurationDefaults`; an AI can too through the MCP server.
+  [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 - **Profiles**: separate spaces, each with its own mods (on/off, and mods installed only in it),
   settings, keyboard shortcuts, windows and open files. Create empty or as a copy, rename, delete,
   and export/import as one `.aicode-profile` file that carries its mods (*Profiles* in the gear
@@ -33,8 +39,11 @@ loads when you first use it.
 - **Motion**: panels slide open, tabs unfold and fold, pickers and dialogs ease in — short, and only
   when you do something (no animation runs at idle). Off with *Preferences: Toggle Animations*, and
   automatically when macOS *Reduce motion* is on.
-- **Hot exit**: open tabs and unsaved text are kept across quits, crashes and reloads. Closing one
-  window of several asks about its unsaved files first.
+- **Clean start, nothing lost**: AICode opens with one empty window, with no files and no folder. The last
+  session (tabs, folder, unsaved text) is kept aside: *File › Reopen Last Session* brings it back,
+  and AICode offers it when it had unsaved text. `window.restoreOnStartup: "all"` reopens everything
+  as you left it instead. Reloads and profile switches keep everything. Closing one window of
+  several asks about its unsaved files first.
 
 ## Size and memory (measured, v0.1.0, macOS, release build, notepad mode)
 
@@ -127,7 +136,7 @@ not need this.
 command palette: *Update: Check for Updates…*). If there is a newer version it offers **Install and
 Restart** or **Later**; *Later* leaves an *Update x.y.z* item in the status bar to install it
 whenever you like. Installing downloads the update, checks its signature, replaces the app and
-restarts it — windows, tabs and unsaved text come back as they were (hot exit).
+restarts it — windows, tabs and unsaved text come back as they were, even with a clean start.
 *Settings → Updates → Check on Startup* (off by default) checks once per launch.
 
 **Making a release**: change `"version"` in `package.json` (say `0.2.0`) and push to `main`. The
@@ -179,6 +188,7 @@ src-tauri/src/       the core (Rust)
 mods/                bundled mods
 docs/MOD-GUIDE.md    JSON mods, for people and AIs (mod.schema.json validates them)
 docs/MODS.md         mods with code
+docs/CONFIGURATION.md  settings in layers, window parts, transparency, window layouts
 scripts/release.mjs  sets the version everywhere, tags a release
 .github/workflows/   release.yml: on push to main, build, sign and publish the version in package.json
 ```

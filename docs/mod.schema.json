@@ -297,6 +297,72 @@
             "message"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "Opens a new window with a layout (contributes.windowLayouts or workbench.windowLayouts) or one view.",
+          "properties": {
+            "type": {
+              "const": "window"
+            },
+            "layout": {
+              "type": "string"
+            },
+            "view": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "width": {
+              "type": "number"
+            },
+            "height": {
+              "type": "number"
+            },
+            "alwaysOnTop": {
+              "type": "boolean"
+            },
+            "settings": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "Changes a setting in the user's profile: value, toggle or the next of cycle.",
+          "properties": {
+            "type": {
+              "const": "setting"
+            },
+            "key": {
+              "type": "string"
+            },
+            "owner": {
+              "type": "string",
+              "description": "A mod id; default AICode's own (core)."
+            },
+            "path": {
+              "type": "string",
+              "description": "A key inside an object setting, dotted."
+            },
+            "value": {},
+            "toggle": {
+              "type": "boolean"
+            },
+            "cycle": {
+              "type": "array"
+            }
+          },
+          "required": [
+            "type",
+            "key"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -723,6 +789,197 @@
                 "type": "array"
               }
             }
+          }
+        },
+        "configurationDefaults": {
+          "type": "object",
+          "description": "Defaults for any setting, written like profile.json's settings: { \"core\": { \"editor.cursorColor\": \"#f0f\" }, \"<mod id>\": { … } }. Keys that are not an owner are core settings. The user's own values still win. See docs/CONFIGURATION.md.",
+          "additionalProperties": true
+        },
+        "styles": {
+          "type": "array",
+          "description": "CSS added while the mod is on: a file of the mod or inline CSS. Parts carry data-part=\"<name>\".",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "css": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "titleBar": {
+          "type": "array",
+          "description": "Buttons in the title bar.",
+          "items": {
+            "type": "object",
+            "required": [
+              "command"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "icon": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "command": {
+                "type": "string"
+              },
+              "args": {
+                "type": "array"
+              },
+              "align": {
+                "enum": [
+                  "left",
+                  "center",
+                  "right"
+                ]
+              },
+              "order": {
+                "type": "number"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "windowLayouts": {
+          "type": "object",
+          "description": "Named window layouts (joined to workbench.windowLayouts). Open one with a { \"type\": \"window\", \"layout\": \"name\" } action.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "width": {
+                "type": "number"
+              },
+              "height": {
+                "type": "number"
+              },
+              "alwaysOnTop": {
+                "type": "boolean"
+              },
+              "center": {
+                "type": "string",
+                "description": "A view in place of the editor."
+              },
+              "views": {
+                "type": "object",
+                "additionalProperties": {
+                  "enum": [
+                    "sidebar",
+                    "secondary",
+                    "panel",
+                    "center",
+                    "hidden"
+                  ]
+                }
+              },
+              "options": {
+                "type": "object",
+                "properties": {
+                  "activityBar": {
+                    "type": "boolean"
+                  },
+                  "statusBar": {
+                    "type": "boolean"
+                  },
+                  "sidebarSide": {
+                    "enum": [
+                      "left",
+                      "right"
+                    ]
+                  },
+                  "panelAlign": {
+                    "enum": [
+                      "left",
+                      "right",
+                      "center",
+                      "justify"
+                    ]
+                  },
+                  "quickInput": {
+                    "enum": [
+                      "top",
+                      "center"
+                    ]
+                  },
+                  "density": {
+                    "enum": [
+                      "default",
+                      "compact"
+                    ]
+                  }
+                }
+              },
+              "parts": {
+                "type": "object",
+                "properties": {
+                  "sidebar": {
+                    "type": "boolean"
+                  },
+                  "secondary": {
+                    "type": "boolean"
+                  },
+                  "panel": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              "sizes": {
+                "type": "object",
+                "properties": {
+                  "sidebar": {
+                    "type": "number"
+                  },
+                  "secondary": {
+                    "type": "number"
+                  },
+                  "panel": {
+                    "type": "number"
+                  }
+                }
+              },
+              "hide": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "settings": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": false
           }
         }
       }

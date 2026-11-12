@@ -59,6 +59,55 @@ const TOOLS = [
     inputSchema: { type: "object", properties: {} },
     annotations: { readOnlyHint: true },
   },
+  // ----- the interface itself: commands, settings, views and windows -----
+  {
+    name: "list_commands",
+    title: "List AICode commands",
+    description: "Every command AICode can run (the command palette's list): id, title, category, the mod that owns it and its keybinding. Filter with `query` (matches id, title or category).",
+    inputSchema: { type: "object", properties: { query: { type: "string" } } },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "run_command",
+    title: "Run an AICode command",
+    description: "Runs a command by id with optional arguments, as if the user picked it in the command palette. Examples: workbench.toggleSidebar, workbench.toggleZenMode, window.toggleAlwaysOnTop, workbench.openWindowWithLayout [\"agents\"], workbench.moveViewToNewWindow [\"agents.chat\"], preferences.theme.",
+    inputSchema: { type: "object", properties: { id: { type: "string" }, args: { type: "array" } }, required: ["id"] },
+  },
+  {
+    name: "get_settings",
+    title: "Read AICode settings",
+    description: "AICode's configuration. With `key`: that setting's value and where it comes from (default, mods, the user). Without: every setting of `owner` (\"core\" for the editor's own — editor.*, workbench.*, window.* — or a mod id). `schema: true` also returns what each setting accepts.",
+    inputSchema: { type: "object", properties: { owner: { type: "string", default: "core" }, key: { type: "string" }, schema: { type: "boolean" } } },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "set_setting",
+    title: "Change an AICode setting",
+    description: "Sets a setting in the user's profile and applies it right away (null removes the user's value). Anything in the window can be changed this way: colors (workbench.colorCustomizations), transparency (workbench.partOpacity, window.vibrancy), tabs (workbench.tabs.*), the cursor (editor.cursor*), hidden parts (workbench.hide), custom CSS (workbench.customCSS), window layouts (workbench.windowLayouts)…",
+    inputSchema: { type: "object", properties: { owner: { type: "string", default: "core" }, key: { type: "string" }, value: {} }, required: ["key", "value"] },
+  },
+  {
+    name: "list_views",
+    title: "List views and the layout",
+    description: "Every view (explorer, search, chat, terminal…) with where it is and whether it is visible, the layout options, and what this window was opened as.",
+    inputSchema: { type: "object", properties: {} },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "show_view",
+    title: "Show or move a view",
+    description: "Shows a view; with `to` moves it first: \"sidebar\", \"secondary\", \"panel\", \"center\" (in place of the editor) or \"window\" (a new window of its own).",
+    inputSchema: { type: "object", properties: { id: { type: "string" }, to: { enum: ["sidebar", "secondary", "panel", "center", "window"] } }, required: ["id"] },
+  },
+  {
+    name: "open_window",
+    title: "Open an AICode window",
+    description: "Opens a new window: with `layout` (a name in workbench.windowLayouts), or `view` (one view filling it). `alwaysOnTop`, `width`, `height`, `title` and `settings` (core settings for that window only) are optional.",
+    inputSchema: {
+      type: "object",
+      properties: { layout: { type: "string" }, view: { type: "string" }, alwaysOnTop: { type: "boolean" }, width: { type: "number" }, height: { type: "number" }, title: { type: "string" }, settings: { type: "object" } },
+    },
+  },
 ];
 
 const text = (value) => ({ content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] });
@@ -122,6 +171,57 @@ export async function activate(ctx) {
       }
       case "get_workspace":
         return text({ folder: ctx.workspace.folder(), openEditors: ctx.editor.all().length });
+      case "list_commands": {
+        const q = String(args.query ?? "").toLowerCase();
+        return text(ctx.commands.list().filter((c) => !q || `${c.id} ${c.title} ${c.category ?? ""}`.toLowerCase().includes(q)));
+      }
+      case "run_command": {
+        if (!args.id) return error("id is required");
+        if (!ctx.commands.exists(args.id)) return error(`No command ${args.id}. Use list_commands.`);
+        try {
+          const result = await ctx.commands.execute(args.id, ...(Array.isArray(args.args) ? args.args : []));
+          return text(result === undefined ? `Ran ${args.id}.` : { ran: args.id, result });
+        } catch (e) {
+          return error(String(e));
+        }
+      }
+      case "get_settings": {
+        const owner = args.owner ?? "core";
+        if (args.key) return text({ owner, key: args.key, ...ctx.config.inspect(args.key, owner), ...(args.schema ? { schema: ctx.config.schema(owner)[args.key] ?? null } : {}) });
+        return text(args.schema ? { values: ctx.config.all(owner), schema: ctx.config.schema(owner) } : ctx.config.all(owner));
+      }
+      case "set_setting": {
+        if (!args.key) return error("key is required");
+        try {
+          await ctx.config.update(args.key, args.value ?? null, args.owner ?? "core");
+          return text({ key: args.key, now: ctx.config.getFor(args.owner ?? "core", args.key) });
+        } catch (e) {
+          return error(String(e));
+        }
+      }
+      case "list_views": {
+        const views = ctx.workbench.views().map((v) => ({ id: v.id, title: v.title, location: v.location, owner: v.owner, visible: ctx.views.isVisible(v.id) }));
+        return text({ views, center: ctx.workbench.centerView(), options: ctx.workbench.options(), window: ctx.windows.current(), layouts: Object.keys(ctx.windows.layouts()) });
+      }
+      case "show_view": {
+        if (!args.id) return error("id is required");
+        if (!ctx.workbench.views().some((v) => v.id === args.id)) return error(`No view ${args.id}. Use list_views.`);
+        if (args.to === "window") await ctx.windows.moveViewToNewWindow(args.id);
+        else if (args.to === "center") await ctx.workbench.setCenterView(args.id);
+        else {
+          if (args.to) ctx.workbench.moveView(args.id, args.to);
+          await ctx.views.reveal(args.id);
+        }
+        return text(`Done: ${args.id}${args.to ? ` → ${args.to}` : ""}.`);
+      }
+      case "open_window": {
+        try {
+          const label = await ctx.windows.open({ layout: args.layout, view: args.view, alwaysOnTop: args.alwaysOnTop, width: args.width, height: args.height, title: args.title, settings: args.settings });
+          return text({ opened: label });
+        } catch (e) {
+          return error(String(e));
+        }
+      }
       default:
         return error(`Unknown tool ${name}`);
     }

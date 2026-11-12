@@ -8,11 +8,11 @@
 //!   line, "Open Folder in New Window") wait in [`WindowsState::pending`] until the window that should
 //!   open them asks, so nothing is lost while a window is still loading.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-use serde_json::json;
+use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindowBuilder};
 
 use crate::mods::ModsState;
@@ -31,6 +31,14 @@ pub struct WindowsState {
     /// the Dock icon that launched AICode) wait in `launch_paths`.
     pub started: AtomicBool,
     pub launch_paths: Mutex<Vec<String>>,
+    /// What a window was opened as (a layout, a view, a size, always on top…), until its page asks.
+    pub specs: Mutex<HashMap<String, Value>>,
+    /// Windows being closed only to be created again (transparency changed): keep their session.
+    pub reopening: Mutex<HashSet<String>>,
+    /// Windows created transparent (`window.transparent` when they were made).
+    pub transparent: Mutex<HashSet<String>>,
+    /// "Reopen Last Session" was already offered in this run (once per launch, not per reload).
+    pub previous_offered: AtomicBool,
 }
 
 fn profile_name(app: &AppHandle) -> String {
@@ -138,27 +146,181 @@ fn open_labels(app: &AppHandle) -> Vec<String> {
 }
 
 /// Creates a window from the template in tauri.conf.json, a little down and right of the one in
-/// front so it does not hide it exactly.
+/// front so it does not hide it exactly. `spec` (from `window_new`) can give it a size, a position,
+/// a title, always-on-top and settings of its own; `window.transparent` is read here because a
+/// window is made transparent when it is created, not later.
 pub fn create(app: &AppHandle, label: &str) -> tauri::Result<()> {
+    let spec = app.state::<WindowsState>().specs.lock().unwrap().get(label).cloned();
+    create_with(app, label, spec.as_ref())
+}
+
+fn create_with(app: &AppHandle, label: &str, spec: Option<&Value>) -> tauri::Result<()> {
     let template = app.config().app.windows.iter().find(|w| w.label == "main").cloned().unwrap_or_default();
     let mut config = template;
     config.label = label.to_string();
     config.create = true;
+    let num = |k: &str| spec.and_then(|s| s.get(k)).and_then(|v| v.as_f64());
+    if let (Some(w), Some(h)) = (num("width"), num("height")) {
+        config.width = w.max(config.min_width.unwrap_or(200.0));
+        config.height = h.max(config.min_height.unwrap_or(150.0));
+    }
+    if let Some(title) = spec.and_then(|s| s.get("title")).and_then(|v| v.as_str()) {
+        config.title = title.to_string();
+    }
+    let window_setting = |key: &str| spec.and_then(|s| s.get("settings")).and_then(|s| s.get(key)).cloned();
+    let on_top = spec.and_then(|s| s.get("alwaysOnTop")).and_then(|v| v.as_bool());
+    let mods = app.state::<ModsState>();
+    let transparent = window_setting("window.transparent")
+        .or_else(|| crate::mods::effective_core_setting(&mods, "window.transparent"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if transparent {
+        config.transparent = true;
+        config.background_color = None;
+        app.state::<WindowsState>().transparent.lock().unwrap().insert(label.to_string());
+    } else {
+        app.state::<WindowsState>().transparent.lock().unwrap().remove(label);
+    }
+    if on_top == Some(true) || crate::mods::effective_core_setting(&mods, "window.alwaysOnTop").and_then(|v| v.as_bool()) == Some(true) {
+        config.always_on_top = true;
+    }
     let mut builder = WebviewWindowBuilder::from_config(app, &config)?;
-    let anchor = app
-        .state::<WindowsState>()
-        .last_focused
-        .lock()
-        .unwrap()
-        .clone()
-        .and_then(|l| app.get_webview_window(&l));
-    if let Some(anchor) = anchor {
-        if let (Ok(pos), Ok(scale)) = (anchor.outer_position(), anchor.scale_factor()) {
-            builder = builder.position(pos.x as f64 / scale + 28.0, pos.y as f64 / scale + 28.0);
+    if let (Some(x), Some(y)) = (num("x"), num("y")) {
+        builder = builder.position(x, y);
+    } else {
+        let anchor = app
+            .state::<WindowsState>()
+            .last_focused
+            .lock()
+            .unwrap()
+            .clone()
+            .and_then(|l| app.get_webview_window(&l));
+        if let Some(anchor) = anchor {
+            if let (Ok(pos), Ok(scale)) = (anchor.outer_position(), anchor.scale_factor()) {
+                builder = builder.position(pos.x as f64 / scale + 28.0, pos.y as f64 / scale + 28.0);
+            }
         }
     }
     builder.build()?;
     Ok(())
+}
+
+// ---------- a clean start ----------
+//
+// With `window.restoreOnStartup` = "none" (the default), AICode opens with one empty window: no
+// files, no folder. The last session is not thrown away: its files move to `state/previous/<profile>/`,
+// where "Reopen Last Session" finds them (and the window offers it when there was unsaved text).
+
+fn previous_dir(profile: &str) -> std::path::PathBuf {
+    paths::state().join("previous").join(profile)
+}
+
+/// Whether a saved session has anything in it (open editors or a folder).
+fn session_has_content(text: &str) -> bool {
+    serde_json::from_str::<Value>(text)
+        .map(|v| v.get("folder").is_some_and(|f| !f.is_null()) || v.pointer("/editors/docs").and_then(|d| d.as_array()).is_some_and(|d| !d.is_empty()))
+        .unwrap_or(false)
+}
+
+/// At launch, for a clean start: moves the last session aside and leaves one window to open.
+/// A previous session is only replaced by one that has something in it, so launching twice
+/// without restoring never loses the first one's unsaved text.
+pub fn stash_sessions(app: &AppHandle) {
+    let profile = profile_name(app);
+    let mut labels = read_registry(app);
+    if !labels.contains(&"main".to_string()) {
+        labels.insert(0, "main".into());
+    }
+    let found: Vec<(String, String)> = labels
+        .iter()
+        .filter_map(|l| std::fs::read_to_string(session_path_for(&profile, l)).ok().map(|t| (l.clone(), t)))
+        .collect();
+    if found.iter().any(|(_, t)| session_has_content(t)) {
+        let dir = previous_dir(&profile);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let mut kept = Vec::new();
+        for (label, text) in &found {
+            if session_has_content(text) && crate::fsops::write_atomic(&dir.join(format!("{label}.json")), text.as_bytes()).is_ok() {
+                kept.push(label.clone());
+            }
+        }
+        let _ = crate::fsops::write_atomic(&dir.join("windows.json"), serde_json::to_string(&kept).unwrap_or_default().as_bytes());
+    }
+    for label in &labels {
+        let _ = std::fs::remove_file(session_path_for(&profile, label));
+    }
+    write_registry(app, &[]);
+}
+
+fn previous_labels(profile: &str) -> Vec<String> {
+    std::fs::read_to_string(previous_dir(profile).join("windows.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Vec<String>>(&t).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|l| paths::safe_name(l).is_some() && previous_dir(profile).join(format!("{l}.json")).is_file())
+        .collect()
+}
+
+/// What the last session had, for the window to offer it back: windows, files, unsaved files,
+/// folders. `offer` is true only the first time it is asked in this run of AICode.
+#[tauri::command]
+pub fn session_previous_info(app: AppHandle) -> Value {
+    let profile = profile_name(&app);
+    let (mut files, mut unsaved, mut folders) = (0, 0, Vec::<String>::new());
+    let labels = previous_labels(&profile);
+    for l in &labels {
+        let Ok(text) = std::fs::read_to_string(previous_dir(&profile).join(format!("{l}.json"))) else { continue };
+        let Ok(v) = serde_json::from_str::<Value>(&text) else { continue };
+        if let Some(f) = v.get("folder").and_then(|f| f.as_str()) {
+            folders.push(f.to_string());
+        }
+        for d in v.pointer("/editors/docs").and_then(|d| d.as_array()).cloned().unwrap_or_default() {
+            if d.get("restore").is_some() {
+                continue;
+            }
+            files += 1;
+            let untitled_text = d.get("path").is_none_or(|p| p.is_null()) && d.get("text").and_then(|t| t.as_str()).is_some_and(|t| !t.is_empty());
+            if d.get("dirty").and_then(|x| x.as_bool()) == Some(true) || untitled_text {
+                unsaved += 1;
+            }
+        }
+    }
+    let offer = !labels.is_empty() && !app.state::<WindowsState>().previous_offered.swap(true, Ordering::SeqCst);
+    json!({ "windows": labels.len(), "files": files, "unsaved": unsaved, "folders": folders, "offer": offer })
+}
+
+/// Brings the last session back: the first window's session is returned for the asking window to
+/// load; every other window of it opens again on its own.
+#[tauri::command]
+pub fn session_restore_previous(app: AppHandle) -> Result<Option<String>, String> {
+    let profile = profile_name(&app);
+    let dir = previous_dir(&profile);
+    let mut labels = previous_labels(&profile);
+    if labels.is_empty() {
+        return Ok(None);
+    }
+    if let Some(i) = labels.iter().position(|l| l == "main") {
+        let main = labels.remove(i);
+        labels.insert(0, main);
+    }
+    let first = std::fs::read_to_string(dir.join(format!("{}.json", labels[0]))).ok();
+    for label in labels.iter().skip(1) {
+        let new_label = next_label(&app);
+        let from = dir.join(format!("{label}.json"));
+        if std::fs::rename(&from, session_path(&app, &new_label)).is_err() && std::fs::copy(&from, session_path(&app, &new_label)).is_err() {
+            continue;
+        }
+        create(&app, &new_label).map_err(|e| e.to_string())?;
+        let mut open = open_labels(&app);
+        if !open.contains(&new_label) {
+            open.push(new_label);
+        }
+        write_registry(&app, &open);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(first)
 }
 
 /// At launch: every window of the last session, or one fresh window.
@@ -186,9 +348,17 @@ fn next_label(app: &AppHandle) -> String {
 
 /// Opens paths in a new window ("New Window" has none).
 pub fn open_new(app: &AppHandle, paths_to_open: Vec<String>) -> Result<String, String> {
+    open_new_with(app, paths_to_open, None)
+}
+
+/// A new window, optionally opened as something (`spec`: layout, view, size, always on top…).
+pub fn open_new_with(app: &AppHandle, paths_to_open: Vec<String>, spec: Option<Value>) -> Result<String, String> {
     let label = next_label(app);
     if !paths_to_open.is_empty() {
         app.state::<WindowsState>().pending.lock().unwrap().insert(label.clone(), paths_to_open);
+    }
+    if let Some(spec) = spec.filter(|s| s.is_object()) {
+        app.state::<WindowsState>().specs.lock().unwrap().insert(label.clone(), spec);
     }
     create(app, &label).map_err(|e| e.to_string())?;
     let mut labels = open_labels(app);
@@ -239,8 +409,15 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         }
         tauri::WindowEvent::Destroyed => {
             let label = window.label().to_string();
+            if state.reopening.lock().unwrap().contains(&label) {
+                // Closed only to be created again: its programs end, its session stays.
+                crate::procs::kill_owned_by(app, &label);
+                state.ready.lock().unwrap().retain(|l| l != &label);
+                return;
+            }
             crate::procs::kill_owned_by(app, &label);
             state.ready.lock().unwrap().retain(|l| l != &label);
+            state.specs.lock().unwrap().remove(&label);
             let remaining: Vec<String> = open_labels(app).into_iter().filter(|l| l != &label).collect();
             // Closing one of several windows forgets it; quitting, or closing the last, keeps all.
             if !state.quitting.load(Ordering::SeqCst) && !state.switching.load(Ordering::SeqCst) && !remaining.is_empty() {
@@ -291,8 +468,55 @@ fn percent_decode(s: &str) -> String {
 // ---------- commands ----------
 
 #[tauri::command]
-pub fn window_new(app: AppHandle, paths: Option<Vec<String>>) -> Result<String, String> {
-    open_new(&app, paths.unwrap_or_default())
+pub fn window_new(app: AppHandle, paths: Option<Vec<String>>, spec: Option<Value>) -> Result<String, String> {
+    open_new_with(&app, paths.unwrap_or_default(), spec)
+}
+
+/// Whether this window was created transparent (it can only change by reopening it).
+#[tauri::command]
+pub fn window_is_transparent(window: tauri::Window, state: State<'_, WindowsState>) -> bool {
+    state.transparent.lock().unwrap().contains(window.label())
+}
+
+/// What this window was opened as (see `window_new`'s `spec`), or null.
+#[tauri::command]
+pub fn window_take_spec(window: tauri::Window, state: State<'_, WindowsState>) -> Option<Value> {
+    state.specs.lock().unwrap().get(window.label()).cloned()
+}
+
+/// Closes this window and creates it again with the same label (its session is kept): for what a
+/// window can only be given when it is created, like transparency. The page saves its session first.
+#[tauri::command]
+pub fn window_reopen(app: AppHandle, window: tauri::Window, spec: Option<Value>) -> Result<(), String> {
+    let label = window.label().to_string();
+    let state = app.state::<WindowsState>();
+    if let Some(spec) = spec.filter(|s| s.is_object()) {
+        state.specs.lock().unwrap().insert(label.clone(), spec);
+    }
+    state.reopening.lock().unwrap().insert(label.clone());
+    std::thread::spawn(move || {
+        if let Some(w) = app.get_webview_window(&label) {
+            let _ = w.destroy();
+        }
+        for _ in 0..100 {
+            if app.get_webview_window(&label).is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+        let state = app.state::<WindowsState>();
+        let spec = state.specs.lock().unwrap().get(&label).cloned();
+        let app2 = app.clone();
+        let label2 = label.clone();
+        // Windows are created on the main thread.
+        let _ = app.run_on_main_thread(move || {
+            if let Err(e) = create_with(&app2, &label2, spec.as_ref()) {
+                eprintln!("[aicode] could not reopen window {label2}: {e}");
+            }
+            app2.state::<WindowsState>().reopening.lock().unwrap().remove(&label2);
+        });
+    });
+    Ok(())
 }
 
 /// What this window should open now that it is loaded; later paths arrive as `open-paths`.

@@ -94,6 +94,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> 
         .separator()
         .item(&item("file.open", "Open File…", Some("CmdOrCtrl+O"))?)
         .item(&item("workbench.openFolderNewWindow", "Open Folder in New Window…", None)?)
+        .item(&item("workbench.reopenLastSession", "Reopen Last Session", None)?)
         .separator()
         .item(&item("file.save", "Save", Some("CmdOrCtrl+S"))?)
         .item(&item("file.saveAs", "Save As…", Some("CmdOrCtrl+Shift+S"))?)
@@ -188,6 +189,13 @@ pub fn run() {
             // waited in `launch_paths` and opens in the first window, like the command line.
             let wins = app.state::<windows::WindowsState>();
             initial.extend(wins.launch_paths.lock().unwrap().drain(..));
+            // A clean start (the default): one empty window; the last session waits for "Reopen Last Session".
+            // After installing an update the restart restores everything once, whatever the setting.
+            let restore_once = std::fs::remove_file(paths::state().join("restore-once")).is_ok();
+            let restore_all = restore_once || mods::effective_core_setting(&state, "window.restoreOnStartup").and_then(|v| v.as_str().map(String::from)).as_deref() == Some("all");
+            if !restore_all {
+                windows::stash_sessions(app.handle());
+            }
             windows::restore(app.handle(), initial)?;
             wins.started.store(true, std::sync::atomic::Ordering::SeqCst);
             #[cfg(target_os = "macos")]
@@ -223,9 +231,11 @@ pub fn run() {
             bundle::mod_schema,
             mods::settings_get,
             mods::settings_set,
+            mods::settings_all,
             mods::mod_install_folder,
             mods::mod_uninstall,
             fsops::fs_read_text,
+            fsops::fs_read_data_url,
             fsops::fs_write_text,
             fsops::fs_read_dir,
             fsops::fs_stat,
@@ -259,6 +269,11 @@ pub fn run() {
             windows::window_new,
             windows::window_take_pending,
             windows::window_count,
+            windows::window_take_spec,
+            windows::window_is_transparent,
+            windows::window_reopen,
+            windows::session_previous_info,
+            windows::session_restore_previous,
             updater::update_check,
             updater::update_install,
             updater::update_claim_startup_check,

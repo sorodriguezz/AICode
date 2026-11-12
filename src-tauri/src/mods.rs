@@ -340,8 +340,40 @@ pub fn settings_get(state: State<'_, ModsState>, mod_id: String) -> Value {
     state.profile.lock().unwrap().settings.get(&mod_id).cloned().unwrap_or(Value::Object(Map::new()))
 }
 
+/// Every owner's settings at once (the editor's under `core`): the user layer of the configuration.
 #[tauri::command]
-pub fn settings_set(state: State<'_, ModsState>, mod_id: String, key: String, value: Value) -> Result<(), String> {
+pub fn settings_all(state: State<'_, ModsState>) -> Value {
+    Value::Object(state.profile.lock().unwrap().settings.clone())
+}
+
+/// A core setting as the window should start with it: the user's value, else the last enabled
+/// mod's `contributes.configurationDefaults` (as in the frontend's layers), else `None`.
+pub fn effective_core_setting(state: &ModsState, key: &str) -> Option<Value> {
+    if let Some(v) = state.profile.lock().unwrap().settings.get("core").and_then(|c| c.get(key)).filter(|v| !v.is_null()) {
+        return Some(v.clone());
+    }
+    let mods = state.mods.lock().unwrap();
+    let mut found = None;
+    for m in mods.iter().filter(|m| m.enabled && m.problems.is_empty()) {
+        let defaults = m.manifest.contributes.get("configurationDefaults");
+        let v = defaults.and_then(|d| d.get("core")).and_then(|c| c.get(key)).or_else(|| defaults.and_then(|d| d.get(key)));
+        if let Some(v) = v.filter(|v| !v.is_null()) {
+            found = Some(v.clone());
+        }
+    }
+    found
+}
+
+#[tauri::command]
+pub fn settings_set(app: AppHandle, window: tauri::Window, state: State<'_, ModsState>, mod_id: String, key: String, value: Value) -> Result<(), String> {
+    settings_write(&state, mod_id, key, value)?;
+    // Every other window rereads the settings, so a change shows everywhere at once.
+    use tauri::Emitter;
+    let _ = app.emit("settings://changed", window.label());
+    Ok(())
+}
+
+fn settings_write(state: &ModsState, mod_id: String, key: String, value: Value) -> Result<(), String> {
     let mut profile = state.profile.lock().unwrap();
     let entry = profile.settings.entry(mod_id).or_insert_with(|| Value::Object(Map::new()));
     if let Value::Object(map) = entry {

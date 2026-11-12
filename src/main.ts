@@ -2,11 +2,11 @@ import "@vscode/codicons/dist/codicon.css";
 import "./styles.css";
 
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import * as monaco from "monaco-editor";
-import { invoke, prepareStreams, streamCounts } from "./core/ipc";
+import { invoke, prepareStreams, streamCounts, type ModInfo } from "./core/ipc";
 import * as commands from "./core/commands";
 import { Workbench } from "./core/workbench";
 import { EditorService, DEFAULT_FONT_SIZE } from "./core/editor";
@@ -19,7 +19,12 @@ import { quickInput, fuzzyScore, highlight, pick, notify, QuickItem, dialog } fr
 import { basename, h, icon } from "./core/ui";
 import { motionEnabled, setMotion } from "./core/motion";
 import { openProfiles, openSettings, switchProfile, createProfile, importProfile, exportProfile, ProfileView } from "./core/profiles";
+import { ModHost as ModHostClass } from "./core/mods";
 import { initUpdates, checkForUpdates, checkOnStartup } from "./core/updates";
+import { config } from "./core/config";
+import { Appearance, editorOptions } from "./core/appearance";
+import { openWindow, resolveLayout, layouts, type WindowSpec, type WindowLayout } from "./core/windows";
+import type { ViewLocation, LayoutState, TitleHandle, StatusHandle } from "./core/workbench";
 
 // Errors and warnings also go to the terminal that started AICode (see `core_log`).
 for (const level of ["error", "warn"] as const) {
@@ -53,57 +58,109 @@ async function boot() {
   registerModManager(host, editors);
 
   const session = await invoke<string | null>("session_load").then((s) => (s ? JSON.parse(s) : null)).catch(() => null);
-  const coreSettings = await invoke<Record<string, any>>("settings_get", { modId: "core" });
+  // The configuration's layers: the profile's values, and the defaults the enabled mods set.
+  await config.loadUser();
+  const modList = await invoke<ModInfo[]>("mods_list");
+  config.setModLayers(ModHostClass.configurationLayers(modList));
 
   const profile = await invoke<ProfileView>("profile_get");
+  // What this window was opened as (a layout, a view, a tab dragged out): from its session after a
+  // restart, else from whoever opened it.
+  const takenSpec = await invoke<WindowSpec | null>("window_take_spec").catch(() => null);
+  const spec: WindowSpec | null = session?.window ?? takenSpec ?? null;
+  const freshSpec = !session?.window && !!takenSpec;
+  const layout: WindowLayout | null = spec ? resolveLayout(spec) : null;
+  if (layout?.settings) config.setWindowLayer({ core: layout.settings });
+  // A window with a layout keeps its arrangement to itself: the profile's stays as it was.
+  const persistArrangement = !layout;
+  const layoutViews = layout?.views ?? {};
+  const layoutHidden = Object.entries(layoutViews).filter(([, p]) => p === "hidden").map(([id]) => id);
+  const centerId = layout?.center ?? Object.entries(layoutViews).find(([, p]) => p === "center")?.[0] ?? null;
+  const placementFor = () => {
+    const base = { ...(config.core<Record<string, any>>("workbench.viewPlacement", {}) ?? {}) };
+    let order = 1;
+    for (const [id, place] of Object.entries(layoutViews)) if (place === "sidebar" || place === "secondary" || place === "panel") base[id] = { location: place, order: order++ * 10 };
+    return base;
+  };
+  const hiddenViews = () => [...(config.core<string[]>("workbench.hiddenViews", []) ?? []), ...layoutHidden];
   // Where the user dragged views to (before mods put their views on screen).
-  wb.setPlacement(coreSettings["workbench.viewPlacement"]);
+  wb.setPlacement(placementFor());
   wb.onDidChangePlacement.event((placement) => {
-    invoke("settings_set", { modId: "core", key: "workbench.viewPlacement", value: Object.keys(placement).length ? placement : null }).catch(() => {});
+    if (persistArrangement) config.update("core", "workbench.viewPlacement", Object.keys(placement).length ? placement : null).catch(() => {});
   });
   // Customize Layout's choices (side bar position, panel alignment, density…), kept by the profile.
-  wb.setOptions(coreSettings["workbench.layout"] ?? {}, false);
+  wb.setOptions({ ...(config.core<Record<string, any>>("workbench.layout", {}) ?? {}), ...(layout?.options ?? {}) }, false);
   wb.onDidChangeOptions.event((o) => {
-    invoke("settings_set", { modId: "core", key: "workbench.layout", value: o }).catch(() => {});
+    if (persistArrangement) config.update("core", "workbench.layout", o).catch(() => {});
   });
+  wb.setHiddenViews(hiddenViews());
   // Theme first, so nothing flashes in the wrong colors.
   applyTheme(BUILTIN_DARK, await BUILTIN_DARK.load());
-  await host.load();
+  await host.load(modList);
+  config.installJsonSchemas(modList.map((m) => m.id));
   const allThemes = (): ThemeEntry[] => [BUILTIN_DARK, BUILTIN_LIGHT, ...host.themes];
+
+  // Everything the configuration says about how the window looks.
+  const appearance = new Appearance(await invoke<boolean>("window_is_transparent").catch(() => false));
+  appearance.pinned = !!layout?.alwaysOnTop;
+  appearance.extraHide = layout?.hide ?? [];
+  await appearance.init();
+
+  // Your own title bar buttons and status bar items (workbench.titleBar.items / statusBar.items).
+  let userTitleItems: TitleHandle[] = [];
+  let userStatusItems: StatusHandle[] = [];
+  const applyUserItems = () => {
+    for (const d of userTitleItems.splice(0)) d.dispose();
+    for (const d of userStatusItems.splice(0)) d.dispose();
+    for (const it of config.core<any[]>("workbench.titleBar.items", []) ?? []) {
+      if (it && typeof it === "object" && it.command) userTitleItems.push(wb.addTitleItem({ id: it.id, icon: it.icon, text: it.text, title: it.title ?? it.tooltip, command: it.command, args: it.args, align: it.align, order: it.order }));
+    }
+    for (const it of config.core<any[]>("workbench.statusBar.items", []) ?? []) {
+      if (it && typeof it === "object" && (it.text || it.icon)) userStatusItems.push(wb.addStatus({ id: it.id, icon: it.icon, text: it.text, tooltip: it.title ?? it.tooltip, command: it.command, args: it.args, align: it.align === "right" ? "right" : "left", priority: it.priority ?? it.order ?? 0 }));
+    }
+  };
+  const pinVisible = () => {
+    const mode = config.core<string>("window.pinButton", "auto");
+    wb.pinButton.style.display = mode === "always" || (mode === "auto" && !!spec) ? "" : "none";
+    wb.pinButton.classList.toggle("active", appearance.isOnTop());
+    wb.pinButton.setAttribute("aria-pressed", String(appearance.isOnTop()));
+    wb.pinButton.title = appearance.isOnTop() ? "Stop Keeping on Top" : "Keep on Top";
+  };
+
   // The profile's own settings for the editor and the workbench (see the Settings page).
-  const applyCore = async (s: Record<string, any>, changed = "*") => {
-    const get = <T>(key: string, fallback: T): T => (key in s && s[key] !== null ? s[key] : fallback);
-    editors.setFontSize(Number(get("editor.fontSize", DEFAULT_FONT_SIZE)));
-    editors.editor.updateOptions({
-      fontFamily: get("editor.fontFamily", "") || DEFAULT_FONT,
-      lineHeight: Number(get("editor.lineHeight", 0)),
-      wordWrap: get("editor.wordWrap", "off"),
-      minimap: { enabled: get("editor.minimap", true) },
-      lineNumbers: get("editor.lineNumbers", "on"),
-      renderWhitespace: get("editor.renderWhitespace", "selection"),
-      cursorStyle: get("editor.cursorStyle", "line"),
-      stickyScroll: { enabled: get("editor.stickyScroll", true) },
-      bracketPairColorization: { enabled: get("editor.bracketPairColorization", true) },
-    });
-    document.documentElement.dataset.iconSize = get("workbench.iconSize", "normal");
-    editors.previewEnabled = get<boolean>("workbench.previewEditors", true) !== false;
-    editors.useModal = get<string>("workbench.editor.useModal", "some") !== "off";
-    if (changed === "*" || changed === "workbench.iconTheme") {
-      configureFileIcons({ enabled: get<string>("workbench.iconTheme", "seti") !== "none" });
-      if (changed !== "*") {
+  const applyCore = async (changed: string[] | "*") => {
+    const all = changed === "*";
+    const has = (...keys: string[]) => all || keys.some((k) => (k.endsWith("*") ? (changed as string[]).some((c) => c.startsWith(k.slice(0, -1))) : (changed as string[]).includes(k)));
+    if (has("editor.*")) {
+      editors.setFontSize(Number(config.core("editor.fontSize", DEFAULT_FONT_SIZE)));
+      editors.editor.updateOptions(editorOptions());
+    }
+    document.documentElement.dataset.iconSize = config.core("workbench.iconSize", "normal");
+    editors.previewEnabled = config.core<boolean>("workbench.previewEditors", true) !== false;
+    editors.useModal = config.core<string>("workbench.editor.useModal", "some") !== "off";
+    editors.dragTabsToWindow = config.core("workbench.tabs.dragToWindow", true) !== false;
+    if (has("workbench.iconTheme")) {
+      configureFileIcons({ enabled: config.core<string>("workbench.iconTheme", "seti") !== "none" });
+      if (!all) {
         editors.refreshTabs();
         decorations.onDidChange.fire(); // lists that show files repaint
       }
     }
-    setMotion(get<boolean>("animations", true) !== false);
-    if (changed === "theme") {
-      const entry = allThemes().find((t) => t.id === s.theme);
-      if (entry) await setTheme(entry, false);
+    setMotion(config.core<boolean>("animations", true) !== false);
+    if (has("workbench.hiddenViews")) wb.setHiddenViews(hiddenViews());
+    if (has("workbench.titleBar.items", "workbench.statusBar.items")) applyUserItems();
+    if (!all && persistArrangement && has("workbench.layout")) wb.setOptions(config.core("workbench.layout", {}) ?? {}, false);
+    if (!all && has("workbench.viewPlacement")) wb.setPlacement(placementFor());
+    if (!all && has("theme")) {
+      const entry = allThemes().find((t) => t.id === config.core("theme"));
+      if (entry && entry.id !== currentThemeId) await setTheme(entry, false);
     }
+    if (all) await appearance.applyAll();
+    else await appearance.applyChanged(changed as string[]);
+    if (has("window.*")) pinVisible();
   };
-  await applyCore(coreSettings);
   editors.onDidChangeFontSize.event((size) => {
-    invoke("settings_set", { modId: "core", key: "editor.fontSize", value: size }).catch(() => {});
+    config.update("core", "editor.fontSize", size).catch(() => {});
   });
   let currentThemeId = BUILTIN_DARK.id;
   const setTheme = async (entry: ThemeEntry, persist = true) => {
@@ -112,13 +169,18 @@ async function boot() {
       applyTheme(entry, await entry.load());
       configureFileIcons({ light: entry.uiTheme === "vs" });
       editors.refreshTabs();
-      if (persist) await invoke("settings_set", { modId: "core", key: "theme", value: entry.id });
+      if (persist) await config.update("core", "theme", entry.id);
     } catch (e) {
       notify("error", `Could not load the theme ${entry.label}: ${e}`);
     }
   };
-  const savedTheme = allThemes().find((t) => t.id === coreSettings.theme);
+  const savedTheme = allThemes().find((t) => t.id === config.core("theme"));
   if (savedTheme && savedTheme !== BUILTIN_DARK) await setTheme(savedTheme, false);
+  await applyCore("*");
+  config.onDidChange.event((changes) => {
+    const core = changes.filter((c) => c.owner === "core").map((c) => c.key);
+    if (core.length) applyCore(core).catch((e) => console.error("applying settings", e));
+  });
 
   // The profile's keyboard shortcuts go over the mods' (a shortcut set for a command replaces its default).
   const userBindings: { dispose: () => void }[] = [];
@@ -133,7 +195,15 @@ async function boot() {
   };
   applyUserKeybindings(profile.keybindings);
 
-  registerWorkbenchCommands(wb, editors, workspace, host, allThemes, setTheme, () => currentThemeId, applyCore, applyUserKeybindings);
+  // Another window changed a setting (or saved profile.json): reread them here too.
+  const myLabel = getCurrentWindow().label;
+  await listen<string>("settings://changed", async (e) => {
+    if (e.payload === myLabel) return;
+    await config.loadUser();
+    applyUserKeybindings((await invoke<ProfileView>("profile_get")).keybindings);
+  });
+
+  registerWorkbenchCommands(wb, editors, workspace, host, allThemes, setTheme, () => currentThemeId, applyUserKeybindings);
   commands.installKeyHandler();
 
   // Which profile this is, when there is more than one.
@@ -141,16 +211,24 @@ async function boot() {
     wb.addStatus({ id: "profile", icon: profile.icon || "account", text: profile.name, tooltip: `Profile: ${profile.name}${profile.description ? ` — ${profile.description}` : ""}\nClick to manage profiles`, command: "profiles.manage", align: "left", priority: 1000 });
   }
 
-  // Saving profile.json or a mod's mod.json by hand: say how to apply it.
+  // Saving profile.json applies it right away (settings and shortcuts); only turning mods on or
+  // off needs a reload. Saving a mod's mod.json says how to try it; a CSS file of yours reapplies.
   editors.onDidSave.event(async (info) => {
     if (!info.path) return;
     if (info.path === profile.path) {
       try {
         await invoke("profile_reload");
-        notify("info", "Profile saved. Reload the window to apply every change.", [{ label: "Reload Window", run: () => location.reload() }]);
+        const now = await invoke<ProfileView>("profile_get");
+        await config.loadUser();
+        applyUserKeybindings(now.keybindings);
+        const before = [...profile.enabled].sort().join("|");
+        if ([...now.enabled].sort().join("|") !== before) notify("info", "Profile saved. Reload the window to turn the mods you changed on or off.", [{ label: "Reload Window", run: () => location.reload() }]);
+        else notify("info", "Profile saved and applied.", [], 2500);
       } catch (e) {
         notify("error", `profile.json was not applied: ${e}`);
       }
+    } else if (info.path.endsWith(".css")) {
+      await appearance.fileSaved(info.path);
     } else if (info.path.endsWith("/mod.json")) {
       const mods = await invoke<{ dir: string }[]>("mods_list");
       if (mods.some((m) => info.path === `${m.dir}/mod.json`)) notify("info", "Mod saved. Reload the window to try your changes.", [{ label: "Reload Window", run: () => location.reload() }]);
@@ -160,8 +238,24 @@ async function boot() {
   // Native menu items arrive as commands.
   await listen<string>("menu", (e) => commands.runOnce(e.payload));
 
-  // Layout and session.
+  // Layout and session. A window opened with a layout starts with its parts as the layout says.
+  if (layout && !session?.layout) {
+    const start: Partial<LayoutState> = {};
+    for (const loc of ["sidebar", "secondary", "panel"] as ViewLocation[]) {
+      const visible = layout.parts?.[loc];
+      const size = layout.sizes?.[loc];
+      if (visible !== undefined || size !== undefined) (start as any)[loc] = { ...(visible !== undefined ? { visible } : {}), ...(size !== undefined ? { size } : {}) };
+    }
+    wb.restore(start);
+  }
   wb.restore(session?.layout);
+  if (centerId) await wb.setCenterView(centerId);
+  if (layout?.title) getCurrentWindow().setTitle(layout.title).catch(() => {});
+  // Restored after a restart: Rust made the window at the default size; give it its layout's.
+  if (layout && !freshSpec && layout.width && layout.height) getCurrentWindow().setSize(new LogicalSize(layout.width, layout.height)).catch(() => {});
+  applyUserItems();
+  pinVisible();
+  appearance.checkTransparency();
   if (session?.folder) workspace.set(session.folder);
   const updateTitle = () => wb.setTitle(workspace.name ?? (editors.activeInfo()?.title ?? "Search"));
   workspace.onDidChange.event(updateTitle);
@@ -170,6 +264,15 @@ async function boot() {
   workspace.onDidChange.event((folder) => folder && invoke("recent_add", { path: folder }));
   editors.onDidChangeActive.event(updateTitle);
   await editors.restore(session?.editors);
+  // A tab moved here from another window: its file, with its unsaved text.
+  if (freshSpec && spec?.files?.length) {
+    for (const f of spec.files) {
+      if (f.path) {
+        const doc = await editors.openFile(f.path, { line: f.line, column: f.column, preview: false });
+        if (doc && typeof f.text === "string" && f.text !== doc.model.getValue()) doc.model.setValue(f.text);
+      } else if (typeof f.text === "string") editors.newUntitled(f.text, f.language ?? "plaintext");
+    }
+  }
   // Paths this window was opened with (command line, Dock, "Open Folder in New Window"). Asking
   // marks the window ready, so the listener for later ones goes first and queues until we can open.
   let openLater: ((paths: string[]) => void) | null = null;
@@ -182,7 +285,7 @@ async function boot() {
 
   // Updates: progress and "Update available" in the status bar; the check at startup if it is on.
   await initUpdates((item) => wb.addStatus(item));
-  checkOnStartup(!!coreSettings["update.checkOnStartup"]);
+  checkOnStartup(!!config.core("update.checkOnStartup", false));
 
   host.fire("onStartup");
   await wb.revealVisible();
@@ -235,14 +338,17 @@ async function boot() {
   // a reload never loses anything and never asks.
   let timer: number | undefined;
   let closing = false;
+  // What the window was opened as stays in its session (the files it came with are in `editors` now).
+  const windowForSession = spec ? { ...spec, files: undefined } : undefined;
+  const sessionData = () => JSON.stringify({ layout: wb.snapshot(), folder: workspace.folder, editors: editors.snapshot(), window: windowForSession });
   const persist = () => {
     if (closing) return;
     clearTimeout(timer);
     timer = window.setTimeout(() => {
-      const data = JSON.stringify({ layout: wb.snapshot(), folder: workspace.folder, editors: editors.snapshot() });
-      invoke("session_save", { data }).catch((e) => console.warn("session", e));
+      invoke("session_save", { data: sessionData() }).catch((e) => console.warn("session", e));
     }, 600);
   };
+  if (freshSpec) persist();
   editors.onDidChangeContent.event(persist);
   editors.onDidChangeDocs.event(persist);
   wb.onDidChangeLayout.event(persist);
@@ -251,11 +357,11 @@ async function boot() {
   await listen("session-flush", async () => {
     clearTimeout(timer);
     closing = true;
-    await invoke("session_save", { data: JSON.stringify({ layout: wb.snapshot(), folder: workspace.folder, editors: editors.snapshot() }) }).catch(() => {});
+    await invoke("session_save", { data: sessionData() }).catch(() => {});
   });
   window.addEventListener("beforeunload", () => {
     if (closing) return;
-    invoke("session_save", { data: JSON.stringify({ layout: wb.snapshot(), folder: workspace.folder, editors: editors.snapshot() }) });
+    invoke("session_save", { data: sessionData() });
   });
 
   // A focused text field costs WebKit a repaint per caret blink (measured: ~3% CPU and ~55 MB of
@@ -280,7 +386,7 @@ async function boot() {
     const others = (await invoke<number>("window_count")) > 1;
     if (!others) {
       clearTimeout(timer);
-      await invoke("session_save", { data: JSON.stringify({ layout: wb.snapshot(), folder: workspace.folder, editors: editors.snapshot() }) });
+      await invoke("session_save", { data: sessionData() });
       return;
     }
     const dirty = editors.list().filter((d) => d.dirty);
@@ -303,6 +409,173 @@ async function boot() {
     closing = true;
     clearTimeout(timer);
   });
+
+  // ---------- a clean start, and the last session on request ----------
+  const reopenLastSession = async () => {
+    const data = await invoke<string | null>("session_restore_previous").catch((e) => {
+      notify("error", `Could not reopen the last session: ${e}`);
+      return null;
+    });
+    if (!data) {
+      notify("info", "There is no previous session to reopen.");
+      return;
+    }
+    let prev: any;
+    try {
+      prev = JSON.parse(data);
+    } catch {
+      return;
+    }
+    await editors.restore(prev.editors);
+    if (prev.folder) {
+      if (!workspace.folder) {
+        workspace.set(prev.folder);
+        if (wb.hasView("explorer")) wb.showView("explorer", false);
+      } else if (prev.folder !== workspace.folder) await invoke("window_new", { paths: [prev.folder] });
+    }
+    persist();
+  };
+  commands.register("workbench.reopenLastSession", reopenLastSession, { title: "Reopen Last Session", category: "File", owner: "core" });
+  if (!session) {
+    // Opened clean: offer the last session back once, when it had work that was not saved.
+    invoke<{ windows: number; files: number; unsaved: number; folders: string[]; offer: boolean }>("session_previous_info")
+      .then((info) => {
+        if (!info.offer || !info.unsaved) return;
+        notify("info", `Your last session had ${info.unsaved} unsaved file${info.unsaved === 1 ? "" : "s"}${info.files > info.unsaved ? ` (${info.files} open in all)` : ""}. AICode now starts clean.`, [
+          { label: "Reopen Last Session", run: () => void reopenLastSession() },
+          { label: "Always Restore", run: () => void config.update("core", "window.restoreOnStartup", "all").then(reopenLastSession) },
+        ]);
+      })
+      .catch(() => {});
+  }
+
+  // ---------- windows opened as something ----------
+  const detachView = async (viewId: string): Promise<void> => {
+    const desc = wb.allViews().find((v) => v.id === viewId);
+    if (!desc) {
+      notify("warning", `No view ${viewId}.`);
+      return;
+    }
+    const wasVisible = wb.isVisible(viewId);
+    await openWindow({ view: viewId, title: desc.title });
+    // Moved, not copied: it leaves this window's part (or the center).
+    if (wb.centerViewId() === viewId) await wb.setCenterView(null);
+    else if (wasVisible) wb.toggle(desc.location);
+  };
+  wb.detachView = (id) => void detachView(id).catch((e) => notify("error", String(e)));
+  editors.detachTab = (tab, at) => {
+    openWindow({ layout: "editor", files: [tab], title: tab.title, x: at ? Math.max(0, at.x - 120) : undefined, y: at ? Math.max(0, at.y - 16) : undefined }).catch((e) => notify("error", String(e)));
+  };
+  const reopenWindow = async () => {
+    clearTimeout(timer);
+    closing = true;
+    await invoke("session_save", { data: sessionData() }).catch(() => {});
+    await invoke("window_reopen", { spec: windowForSession ?? null });
+  };
+  host.windowServices = {
+    current: () => (spec ? { ...spec } : null),
+    setPinned: async (on) => {
+      await appearance.setPinned(on);
+      pinVisible();
+    },
+    isOnTop: () => appearance.isOnTop(),
+    reopen: reopenWindow,
+    detachView,
+  };
+  const reg = (id: string, title: string, run: (...a: any[]) => unknown, category: string, hidden = false) => commands.register(id, run, { title, category, owner: "core", hidden });
+  reg("window.toggleAlwaysOnTop", "Toggle Always on Top", async () => {
+    await appearance.setPinned(!appearance.isOnTop());
+    pinVisible();
+  }, "Window");
+  reg("window.reopen", "Reopen Window", reopenWindow, "Window");
+  reg("workbench.openWindowWithLayout", "Open Window with Layout…", async (name?: string) => {
+    let layoutName = typeof name === "string" ? name : undefined;
+    if (!layoutName) {
+      const all = Object.entries(layouts()).filter(([n]) => n !== "view" && n !== "editor");
+      if (!all.length) {
+        notify("info", "No window layouts yet. Add one to workbench.windowLayouts in your profile, or turn on a mod that brings one (Agents Window).", [{ label: "Open Settings (JSON)", run: () => commands.execute("preferences.openProfileJson") }]);
+        return;
+      }
+      const choice = await pick(all.map(([n, l]) => ({ label: l.title ?? n, description: n, value: n, icon: "window" })), { placeholder: "Open a window with layout…" });
+      layoutName = choice?.value as string | undefined;
+    }
+    if (layoutName) await openWindow({ layout: layoutName }).catch((e) => notify("error", String(e)));
+  }, "Window");
+  reg("workbench.moveViewToNewWindow", "Move View to New Window…", async (id?: string) => {
+    let viewId = typeof id === "string" ? id : undefined;
+    if (!viewId) {
+      const choice = await pick(wb.allViews().map((d) => ({ label: d.title, description: d.location, icon: d.icon, id: d.id })), { placeholder: "Select a view to move to a new window" });
+      viewId = choice?.id as string | undefined;
+    }
+    if (viewId) await detachView(viewId);
+  }, "View");
+  reg("editor.moveIntoNewWindow", "Move Editor into New Window", async () => {
+    const id = editors.activeInfo()?.id;
+    const doc = id ? editors.find(id) : null;
+    if (doc) await editors.detach(doc);
+  }, "View");
+  const readOnlyJson = (title: string, text: string) =>
+    editors.openCustom({
+      title,
+      icon: "json",
+      render: (el) => {
+        const pre = h("pre", { class: "settings-json-view" });
+        el.append(h("div", { class: "settings-json-page" }, h("div", { class: "settings-json-bar" }, h("button", { class: "btn secondary", onclick: () => invoke("clipboard_write", { text }).then(() => notify("info", "Copied.", [], 1500)) }, icon("copy"), "Copy"), h("button", { class: "btn secondary", onclick: () => commands.execute("preferences.openProfileJson") }, icon("go-to-file"), "Open Your profile.json")), pre));
+        monaco.editor.colorize(text, "json", { tabSize: 2 }).then((html) => (pre.innerHTML = html));
+      },
+    });
+  reg("preferences.openDefaultSettings", "Open Default Settings (JSON)", () => readOnlyJson("Default Settings", config.defaultsDocument()), "Preferences");
+  reg("preferences.openEffectiveSettings", "Open Effective Settings (JSON)", () => readOnlyJson("Effective Settings", config.effectiveDocument()), "Preferences");
+  reg("preferences.setSetting", "Set a Setting", async (key?: string, value?: unknown, owner = "core") => {
+    if (typeof key === "string") await config.update(owner, key, value);
+  }, "Preferences", true);
+  reg("preferences.toggleSetting", "Toggle a Setting", async (key?: string, owner = "core") => {
+    if (typeof key === "string") await config.update(owner, key, !config.get(owner, key));
+  }, "Preferences", true);
+  reg("preferences.editSettingJson", "Edit Setting in JSON", async (owner = "core", key?: string) => {
+    if (typeof key !== "string") return commands.execute("preferences.openProfileJson");
+    // Put the setting in profile.json with its current value, then show it.
+    if (config.userValue(owner, key) === undefined) await config.update(owner, key, config.get(owner, key) ?? null);
+    const prof = await invoke<ProfileView>("profile_get");
+    const doc = await editors.openFile(prof.path, { preview: false });
+    const match = doc?.model.findMatches(JSON.stringify(key), false, false, true, null, false)[0];
+    if (match) {
+      editors.editor.setSelection(match.range);
+      editors.editor.revealRangeInCenter(match.range);
+    }
+  }, "Preferences", true);
+  // Shows the name of the part under the pointer, for writing custom CSS and workbench.hide.
+  let partsInspector: (() => void) | null = null;
+  reg("developer.inspectParts", "Inspect Window Parts", () => {
+    if (partsInspector) return partsInspector();
+    const label = h("div", { class: "parts-inspector-label" });
+    document.body.append(label);
+    document.documentElement.classList.add("inspecting-parts");
+    const move = (e: MouseEvent) => {
+      const chain: string[] = [];
+      let el = (e.target as HTMLElement | null)?.closest("[data-part]") as HTMLElement | null;
+      document.querySelectorAll(".part-inspected").forEach((x) => x.classList.remove("part-inspected"));
+      el?.classList.add("part-inspected");
+      while (el && chain.length < 4) {
+        chain.push(`${el.dataset.part}${el.dataset.id ? `:${el.dataset.id}` : ""}`);
+        el = el.parentElement?.closest("[data-part]") as HTMLElement | null;
+      }
+      label.textContent = chain.length ? chain.join("  ‹  ") : "(no part)";
+      label.style.transform = `translate(${Math.min(e.clientX + 14, innerWidth - label.offsetWidth - 8)}px, ${Math.min(e.clientY + 16, innerHeight - 30)}px)`;
+    };
+    const key = (e: KeyboardEvent) => e.key === "Escape" && partsInspector?.();
+    window.addEventListener("mousemove", move, true);
+    window.addEventListener("keydown", key, true);
+    partsInspector = () => {
+      window.removeEventListener("mousemove", move, true);
+      window.removeEventListener("keydown", key, true);
+      label.remove();
+      document.documentElement.classList.remove("inspecting-parts");
+      document.querySelectorAll(".part-inspected").forEach((x) => x.classList.remove("part-inspected"));
+      partsInspector = null;
+    };
+    notify("info", "Move the pointer over the window to see each part's name. Escape (or the same command) stops.", [], 4000);
+  }, "Developer");
 
   editors.editor.focus();
   // Started behind another window (from a terminal, at login): same as being sent to the back.
@@ -336,10 +609,8 @@ async function boot() {
       diagnostics();
     }, 4000);
   }
-  (window as any).aicode = { wb, editors, workspace, host, commands };
+  (window as any).aicode = { wb, editors, workspace, host, commands, config, appearance, openWindow };
 }
-
-const DEFAULT_FONT = "Menlo, 'SF Mono', Monaco, 'Cascadia Code', Consolas, monospace";
 
 function registerWorkbenchCommands(
   wb: Workbench,
@@ -349,7 +620,6 @@ function registerWorkbenchCommands(
   themes: () => ThemeEntry[],
   setTheme: (t: ThemeEntry, persist?: boolean) => Promise<void>,
   currentThemeId: () => string,
-  applyCore: (s: Record<string, any>, changed?: string) => Promise<void>,
   applyUserKeybindings: (list: ProfileView["keybindings"]) => void,
 ) {
   const reg = (id: string, title: string, run: (...a: any[]) => unknown, category = "View") => commands.register(id, run, { title, category, owner: "core" });
@@ -538,7 +808,7 @@ function registerWorkbenchCommands(
     if (to) wb.moveView(view.id as string, to.loc as any);
   });
   editors.restorers.set("profiles", () => openProfiles(editors));
-  const settingsPage = () => openSettings({ host, editors, themes, applyCore });
+  const settingsPage = () => openSettings({ host, editors, themes });
   reg("preferences.settings", "Settings", settingsPage, "Preferences");
   reg("update.check", "Check for Updates…", () => checkForUpdates(), "Update");
   editors.restorers.set("settings", settingsPage);
@@ -549,8 +819,7 @@ function registerWorkbenchCommands(
   reg("preferences.toggleAnimations", "Toggle Animations", async () => {
     const on = !motionEnabled();
     setMotion(on);
-    void applyCore;
-    await invoke("settings_set", { modId: "core", key: "animations", value: on });
+    await config.update("core", "animations", on);
     notify("info", !on ? "Animations are off." : motionEnabled() ? "Animations are on." : "Animations stay off while macOS Reduce motion is on.");
   }, "Preferences");
   reg("workbench.keybindings", "Keyboard Shortcuts", () => {

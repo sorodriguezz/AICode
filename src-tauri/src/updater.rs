@@ -105,6 +105,8 @@ pub async fn update_install(app: AppHandle, state: State<'_, UpdateState>) -> Re
 /// Every window saves its session (as when switching profiles), then AICode restarts through the
 /// normal quit path, which keeps sessions (see `RunEvent::ExitRequested` in lib.rs).
 fn restart(app: &AppHandle) {
+    // The restarted AICode brings every window back even with a clean start (see windows::stash_sessions).
+    let _ = std::fs::write(crate::paths::state().join("restore-once"), b"update");
     let app = app.clone();
     std::thread::spawn(move || {
         let _ = app.emit("session-flush", ());

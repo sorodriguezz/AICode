@@ -202,12 +202,15 @@ pub fn activate(app: &AppHandle, state: &ModsState, name: &str) {
 
 /// Re-reads the active profile.json after it was edited by hand.
 #[tauri::command]
-pub fn profile_reload(app: AppHandle, state: State<'_, ModsState>) -> Result<(), String> {
+pub fn profile_reload(app: AppHandle, window: tauri::Window, state: State<'_, ModsState>) -> Result<(), String> {
     let name = state.profile_name.lock().unwrap().clone();
     let text = std::fs::read_to_string(mods::profile_path(&name)).map_err(|e| e.to_string())?;
     let profile: Profile = serde_json::from_str(&text).map_err(|e| format!("profile.json: {e}"))?;
     *state.profile.lock().unwrap() = profile;
     mods::refresh(&app, &state);
+    // The other windows apply the saved file too.
+    use tauri::Emitter;
+    let _ = app.emit("settings://changed", window.label());
     Ok(())
 }
 

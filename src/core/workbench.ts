@@ -94,6 +94,30 @@ export interface StatusHandle {
   dispose(): void;
 }
 
+/** A button in the title bar: left (after back/forward), center (beside the search box) or right. */
+export interface TitleItem {
+  id?: string;
+  icon?: string;
+  text?: string;
+  /** Tooltip. */
+  title?: string;
+  command?: string;
+  args?: unknown[];
+  run?: (e: MouseEvent) => void;
+  align?: "left" | "center" | "right";
+  order?: number;
+  /** Shown pressed (a toggle that is on). */
+  checked?: boolean;
+}
+
+export interface TitleHandle {
+  update(patch: Partial<TitleItem>): void;
+  dispose(): void;
+}
+
+/** A view placed by a window layout: in a part, in place of the editor, or off the window. */
+export type ViewPlace = ViewLocation | "center" | "hidden";
+
 const MIN = { sidebar: 170, secondary: 220, panel: 100 };
 
 export class Workbench {
@@ -121,6 +145,18 @@ export class Workbench {
   /** Off while the window is being put together, so a restored layout does not play open. */
   private motionReady = false;
   private statusItems = new Set<{ item: StatusItem; el: HTMLElement }>();
+  private titleItems = new Set<{ item: TitleItem; el: HTMLElement }>();
+  private titleHosts!: Record<"left" | "center" | "right", HTMLElement>;
+  /** Views taken off the window (workbench.hiddenViews, a layout's "hidden"). */
+  private hiddenViews = new Set<string>();
+  /** A view shown in place of the editor (a window layout's `center`). */
+  private centerView: string | null = null;
+  private centerHost!: HTMLElement;
+  private editorGroup!: HTMLElement;
+  /** The pin (always on top) in the title bar; main.ts shows it and gives it its state. */
+  readonly pinButton: HTMLButtonElement;
+  /** "Move to New Window" on a view: main.ts opens the window. */
+  detachView: ((viewId: string) => void) | null = null;
   readonly onDidChangeLayout = new Emitter<void>();
   /** Where the user dragged views to: kept by the profile. */
   private placement: Record<string, { location: ViewLocation; order: number }> = {};
@@ -158,29 +194,40 @@ export class Workbench {
       panel: iconButton("layout-panel", "Toggle Panel", () => this.toggle("panel")),
       secondary: iconButton("layout-sidebar-right", "Toggle Secondary Side Bar", () => this.toggle("secondary")),
     };
+    commandCenter.dataset.part = "titleBar.commandCenter";
+    this.pinButton = iconButton("pin", "Keep on Top", () => commands.execute("window.toggleAlwaysOnTop"));
+    this.pinButton.dataset.part = "titleBar.pin";
+    this.pinButton.style.display = "none";
+    this.titleHosts = {
+      left: h("div", { class: "group title-items", dataset: { part: "titleBar.items", align: "left" } }),
+      center: h("div", { class: "group title-items", dataset: { part: "titleBar.items", align: "center" } }),
+      right: h("div", { class: "group title-items", dataset: { part: "titleBar.items", align: "right" } }),
+    };
     const titlebar = h(
       "div",
-      { class: "titlebar", "data-tauri-drag-region": true, ondblclick: (e: MouseEvent) => e.target === titlebar && commands.execute("window.toggleMaximize") },
-      h("div", { class: "titlebar-left", "data-tauri-drag-region": true }, back, forward),
-      commandCenter,
+      { class: "titlebar", dataset: { part: "titleBar" }, "data-tauri-drag-region": true, ondblclick: (e: MouseEvent) => e.target === titlebar && commands.execute("window.toggleMaximize") },
+      h("div", { class: "titlebar-left", "data-tauri-drag-region": true }, h("div", { class: "group", dataset: { part: "titleBar.nav" } }, back, forward), this.titleHosts.left),
+      h("div", { class: "titlebar-center", "data-tauri-drag-region": true }, commandCenter, this.titleHosts.center),
       h(
         "div",
         { class: "titlebar-right", "data-tauri-drag-region": true },
+        this.titleHosts.right,
         // Right of the search box: the pages VS Code opens as modal editors.
         // Settings live in the status bar's gear (Manage), not up here.
-        h("div", { class: "group" }, iconButton("extensions", `Mods (${commands.prettyKey("mod+shift+x").join(" ")})`, () => commands.execute("mods.manage"))),
-        h("div", { class: "group", "data-tauri-drag-region": true }, iconButton("layout", "Customize Layout…", () => this.customizeLayout()), this.toggles.sidebar, this.toggles.panel, this.toggles.secondary),
+        h("div", { class: "group", dataset: { part: "titleBar.mods" } }, this.pinButton, iconButton("extensions", `Mods (${commands.prettyKey("mod+shift+x").join(" ")})`, () => commands.execute("mods.manage"))),
+        h("div", { class: "group", dataset: { part: "titleBar.layoutControls" }, "data-tauri-drag-region": true }, iconButton("layout", "Customize Layout…", () => this.customizeLayout()), this.toggles.sidebar, this.toggles.panel, this.toggles.secondary),
       ),
     );
 
     this.activityTop = h("div", { class: "group" });
-    this.activitybar = h("div", { class: "activitybar", dataset: { drop: "sidebar" }, oncontextmenu: (e: MouseEvent) => this.activityMenu(e) }, this.activityTop);
+    this.activitybar = h("div", { class: "activitybar", dataset: { drop: "sidebar", part: "activityBar" }, oncontextmenu: (e: MouseEvent) => this.activityMenu(e) }, this.activityTop);
 
+    const partName = { sidebar: "sideBar", secondary: "secondarySideBar", panel: "panel" } as const;
     const makePart = (loc: ViewLocation) => {
-      const header = h("div", { class: "part-header" });
+      const header = h("div", { class: "part-header", dataset: { part: `${partName[loc]}.header` } });
       const body = h("div", { class: "part-body" });
-      const el = h("div", { class: `part ${loc}`, dataset: { drop: loc } }, header, body);
-      const sash = h("div", { class: `sash${loc === "panel" ? " horizontal" : ""}` });
+      const el = h("div", { class: `part ${loc}`, dataset: { drop: loc, part: partName[loc] } }, header, body);
+      const sash = h("div", { class: `sash${loc === "panel" ? " horizontal" : ""}`, dataset: { part: "sash" } });
       this.installSash(sash, loc);
       return { el, header, body, sash };
     };
@@ -192,9 +239,9 @@ export class Workbench {
     }
 
     this.editorTabs = h("div", { class: "tabs-scroll" });
-    this.editorTabsActions = h("div", { class: "tabs-actions" });
+    this.editorTabsActions = h("div", { class: "tabs-actions", dataset: { part: "tab.actions" } });
     this.editorBody = h("div", { class: "editor-body" });
-    this.editorBreadcrumbs = h("div", { class: "breadcrumbs", style: { display: "none" } });
+    this.editorBreadcrumbs = h("div", { class: "breadcrumbs", dataset: { part: "breadcrumbs" }, style: { display: "none" } });
     // Shown while a view is dragged: drop it on an edge of the editor to move it to that part.
     this.dropZones = h(
       "div",
@@ -204,18 +251,21 @@ export class Workbench {
       h("div", { class: "zone right", dataset: { drop: "secondary", zone: "1" } }, h("span", null, "Secondary Side Bar")),
     );
     // A pane beside the editor (a Markdown preview "to the side"), with its own header and a sash.
-    this.editorSide = h("div", { class: "editor-side", style: { display: "none" } });
+    this.editorSide = h("div", { class: "editor-side", dataset: { part: "editorSide" }, style: { display: "none" } });
     this.editorSideSash = h("div", { class: "sash editor-side-sash", style: { display: "none" } });
-    const editorMain = h("div", { class: "editor-main" }, h("div", { class: "tabs" }, this.editorTabs, this.editorTabsActions), this.editorBreadcrumbs, this.editorBody, this.dropZones);
-    const editorGroup = h("div", { class: "editor-group" }, editorMain, this.editorSideSash, this.editorSide);
+    const editorMain = h("div", { class: "editor-main" }, h("div", { class: "tabs", dataset: { part: "tabs" } }, this.editorTabs, this.editorTabsActions), this.editorBreadcrumbs, this.editorBody, this.dropZones);
+    const editorGroup = h("div", { class: "editor-group", dataset: { part: "editor" } }, editorMain, this.editorSideSash, this.editorSide);
+    this.editorGroup = editorGroup;
+    // A view in place of the editor (a window layout's `center`, like the Agents window's chat).
+    this.centerHost = h("div", { class: "center-view", dataset: { part: "centerView" }, style: { display: "none" } });
     // The main area is a grid, so the panel can sit under the editor only, or reach under the side
     // bars (panel alignment), and the side bars can swap sides.
-    const center = h("div", { class: "center" }, editorGroup);
+    const center = h("div", { class: "center" }, editorGroup, this.centerHost);
     this.center = center;
 
     this.statusLeft = h("div", { class: "side" });
     this.statusRight = h("div", { class: "side" });
-    const statusbar = h("div", { class: "statusbar" }, this.statusLeft, this.statusRight);
+    const statusbar = h("div", { class: "statusbar", dataset: { part: "statusBar" } }, this.statusLeft, this.statusRight);
     this.statusbar = statusbar;
     // Manage (settings, profiles, themes…): always first on the left, before the branch.
     this.addStatus({ align: "left", priority: 10_000, icon: "settings-gear", tooltip: "Manage", run: (e) => this.manageMenu(e) });
@@ -269,7 +319,52 @@ export class Workbench {
   }
 
   viewsAt(loc: ViewLocation): ViewDescriptor[] {
-    return [...this.views.values()].map((v) => v.desc).filter((d) => d.location === loc).sort((a, b) => a.order - b.order || a.title.localeCompare(b.title));
+    return [...this.views.values()]
+      .map((v) => v.desc)
+      .filter((d) => d.location === loc && !this.hiddenViews.has(d.id) && d.id !== this.centerView)
+      .sort((a, b) => a.order - b.order || a.title.localeCompare(b.title));
+  }
+
+  /** Every view declared, wherever it is (hidden ones included). */
+  allViews(): ViewDescriptor[] {
+    return [...this.views.values()].map((v) => v.desc);
+  }
+
+  /** Takes views off the window (and puts back the ones no longer listed). */
+  setHiddenViews(ids: Iterable<string>) {
+    const next = new Set(ids);
+    if ([...next].sort().join("|") === [...this.hiddenViews].sort().join("|")) return;
+    for (const id of next) if (!this.hiddenViews.has(id)) this.views.get(id)?.host && (this.views.get(id)!.host!.style.display = "none");
+    this.hiddenViews = next;
+    this.renderChrome();
+    for (const loc of ["sidebar", "secondary", "panel"] as ViewLocation[]) {
+      const id = this.activeAt(loc);
+      if (id && this.state[loc].visible) void this.showView(id, false);
+    }
+  }
+
+  /** Shows a view in place of the editor (null: the editor again). */
+  async setCenterView(id: string | null) {
+    if (id && !this.views.has(id)) id = null;
+    const previous = this.centerView;
+    if (previous === id) return;
+    this.centerView = id;
+    if (previous) {
+      const entry = this.views.get(previous);
+      if (entry?.host) {
+        entry.host.remove();
+        entry.provider?.onHide?.();
+      }
+    }
+    this.editorGroup.style.display = id ? "none" : "";
+    this.centerHost.style.display = id ? "" : "none";
+    this.root.classList.toggle("has-center-view", !!id);
+    this.renderChrome();
+    if (id) await this.showView(id, false);
+  }
+
+  centerViewId() {
+    return this.centerView;
   }
 
   hasView(id: string) {
@@ -279,6 +374,8 @@ export class Workbench {
   isVisible(id: string): boolean {
     const entry = this.views.get(id);
     if (!entry) return false;
+    if (id === this.centerView) return true;
+    if (this.hiddenViews.has(id)) return false;
     const part = this.state[entry.desc.location];
     return part.visible && this.activeAt(entry.desc.location) === id;
   }
@@ -293,6 +390,14 @@ export class Workbench {
   async showView(id: string, focus = true) {
     const entry = this.views.get(id);
     if (!entry) return;
+    if (id === this.centerView) {
+      if (!entry.provider) await this.viewActivator(id);
+      this.mountView(entry);
+      entry.provider?.onShow?.();
+      if (focus) (entry.host?.querySelector("input, textarea, [tabindex]") as HTMLElement | null)?.focus?.();
+      return;
+    }
+    if (this.hiddenViews.has(id)) return;
     const loc = entry.desc.location;
     const previous = this.activeAt(loc);
     this.state[loc].active = id;
@@ -335,7 +440,7 @@ export class Workbench {
   }
 
   private mountView(entry: ViewEntry) {
-    const body = this.parts[entry.desc.location].body;
+    const body = entry.desc.id === this.centerView ? this.centerHost : this.parts[entry.desc.location].body;
     if (!entry.host) entry.host = h("div", { class: "view-host", dataset: { view: entry.desc.id } });
     // A view dragged to another part takes its content along (nothing re-renders).
     if (entry.host.parentElement !== body) body.append(entry.host);
@@ -379,7 +484,7 @@ export class Workbench {
             oncontextmenu: (e: MouseEvent) => this.activityMenu(e, d.id),
           },
           icon(d.icon),
-          entry.badge ? h("span", { class: `badge${this.motionReady && (this.lastBadges.get(d.id) ?? 0) !== entry.badge ? " badge-new" : ""}` }, String(entry.badge)) : null,
+          entry.badge ? h("span", { class: `badge${this.motionReady && (this.lastBadges.get(d.id) ?? 0) !== entry.badge ? " badge-new" : ""}`, dataset: { part: "activityBar.badge" } }, String(entry.badge)) : null,
         ),
       );
       this.lastBadges.set(d.id, entry.badge);
@@ -502,6 +607,7 @@ export class Workbench {
     const moved = entry.desc.location !== entry.original.location;
     contextMenu(e.clientX, e.clientY, [
       ...(["sidebar", "secondary", "panel"] as ViewLocation[]).filter((l) => l !== entry.desc.location).map((l) => ({ label: `Move to ${names[l]}`, run: () => this.moveView(id, l) })),
+      ...(this.detachView ? [{ label: "Move to New Window", run: () => this.detachView!(id) }] : []),
       ...(moved ? [{ separator: true, label: "" }, { label: "Reset Location", run: () => this.moveView(id, entry.original.location) }] : []),
       { separator: true, label: "" },
       { label: "Reset All View Locations", run: () => this.resetPlacement() },
@@ -528,6 +634,7 @@ export class Workbench {
     if (entry) {
       items.push({ label: `Hide '${entry.desc.title}'`, disabled: shownCount <= 1, run: () => setHidden(entry.desc.id, true) });
       for (const l of ["secondary", "panel"] as ViewLocation[]) items.push({ label: `Move to ${names[l]}`, run: () => this.moveView(entry.desc.id, l) });
+      if (this.detachView) items.push({ label: "Move to New Window", run: () => this.detachView!(entry.desc.id) });
       items.push({ separator: true, label: "" });
     }
     for (const d of views) {
@@ -831,6 +938,8 @@ export class Workbench {
       if (it.text) record.el.append(h("span", null, it.text));
       record.el.title = it.tooltip ?? "";
       record.el.className = `status-item${it.command || it.run ? " clickable" : ""}${it.accent ? " accent" : ""}`;
+      record.el.dataset.part = "statusBar.item";
+      if (it.id) record.el.dataset.id = it.id;
       record.el.onclick = it.run ? (e) => it.run!(e) : it.command ? () => commands.execute(it.command!, ...(it.args ?? [])) : null;
       record.el.style.display = it.text || it.icon ? "" : "none";
       if (changed) play(record.el, "status-changed");
@@ -854,6 +963,44 @@ export class Workbench {
   private placeStatus() {
     const sorted = [...this.statusItems].sort((a, b) => (b.item.priority ?? 0) - (a.item.priority ?? 0));
     for (const r of sorted) (r.item.align === "right" ? this.statusRight : this.statusLeft).append(r.el);
+  }
+
+  // ---------- title bar ----------
+
+  addTitleItem(item: TitleItem): TitleHandle {
+    const record = { item: { align: "right", order: 0, ...item } as TitleItem, el: h("button", { class: "title-item" }) as HTMLElement };
+    const paint = () => {
+      const it = record.item;
+      clear(record.el);
+      if (it.icon) record.el.append(icon(it.icon));
+      if (it.text) record.el.append(h("span", null, it.text));
+      record.el.title = it.title ?? it.text ?? "";
+      record.el.setAttribute("aria-label", it.title ?? it.text ?? it.icon ?? "");
+      record.el.className = `title-item${it.text ? " with-text" : " icon-button"}${it.checked ? " active" : ""}`;
+      record.el.dataset.part = "titleBar.item";
+      if (it.id) record.el.dataset.id = it.id;
+      record.el.onclick = it.run ? (e) => it.run!(e) : it.command ? () => commands.execute(it.command!, ...(it.args ?? [])).catch((err) => console.error(err)) : null;
+      record.el.style.display = it.text || it.icon ? "" : "none";
+    };
+    paint();
+    this.titleItems.add(record);
+    this.placeTitleItems();
+    return {
+      update: (patch) => {
+        Object.assign(record.item, patch);
+        paint();
+        if (patch.order !== undefined || patch.align !== undefined) this.placeTitleItems();
+      },
+      dispose: () => {
+        record.el.remove();
+        this.titleItems.delete(record);
+      },
+    };
+  }
+
+  private placeTitleItems() {
+    const sorted = [...this.titleItems].sort((a, b) => (a.item.order ?? 0) - (b.item.order ?? 0));
+    for (const r of sorted) this.titleHosts[r.item.align ?? "right"].append(r.el);
   }
 
   // ---------- persistence ----------

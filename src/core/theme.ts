@@ -236,12 +236,43 @@ function defineMonacoTheme() {
   monaco.editor.setTheme("aicode");
 }
 
+/** What the configuration adds over any theme (colorCustomizations, token rules, see-through parts). */
+export interface ThemeCustomizations {
+  colors?: Record<string, string>;
+  tokenColors?: VsTheme["tokenColors"];
+  /** Colors for the editor only (Monaco), over everything: see-through backgrounds. */
+  editorColors?: Record<string, string>;
+}
+type Customizer = (themeId: string, kind: "dark" | "light", colors: Record<string, string>) => ThemeCustomizations;
+let customize: Customizer | null = null;
+let lastApplied: { entry: ThemeEntry; theme: VsTheme } | null = null;
+
+/** Sets what goes over every theme, and repaints the current one with it. */
+export function setThemeCustomizations(fn: Customizer) {
+  customize = fn;
+  if (lastApplied) applyTheme(lastApplied.entry, lastApplied.theme);
+}
+
+/** The theme on screen now (id and kind), once one is applied. */
+export function currentTheme(): { id: string; kind: "dark" | "light" } | null {
+  return lastApplied ? { id: lastApplied.entry.id, kind: lastApplied.entry.uiTheme === "vs" ? "light" : "dark" } : null;
+}
+
 export function applyTheme(entry: ThemeEntry, theme: VsTheme) {
+  lastApplied = { entry, theme };
   const base = entry.uiTheme;
   // Unset keys fall back to the built-in dark/light palette, so a sparse theme still paints
   // every part of the window.
   const fallback = base === "vs" ? LIGHT_FALLBACK : DARK;
-  const colors = { ...fallback, ...(theme.colors ?? {}) };
+  const themed: Record<string, string> = { ...fallback, ...(theme.colors ?? {}) };
+  let extra: ThemeCustomizations = {};
+  try {
+    extra = customize?.(entry.id, base === "vs" ? "light" : "dark", themed) ?? {};
+  } catch (e) {
+    console.warn("theme customizations", e);
+  }
+  const colors: Record<string, string> = { ...themed, ...(extra.colors ?? {}) };
+  theme = { ...theme, tokenColors: [...(theme.tokenColors ?? []), ...(extra.tokenColors ?? [])] };
   const root = document.documentElement;
   for (const key of applied.split("|")) if (key) root.style.removeProperty(cssVarName(key));
   for (const [key, value] of Object.entries(colors)) root.style.setProperty(cssVarName(key), value);
@@ -270,10 +301,11 @@ export function applyTheme(entry: ThemeEntry, theme: VsTheme) {
       editorColors[key] = value;
     }
   }
+  Object.assign(editorColors, extra.editorColors ?? {});
   tmTheme = {
     name: entry.id,
     settings: [
-      { settings: { foreground: colors["editor.foreground"], background: colors["editor.background"] } },
+      { settings: { foreground: colors["editor.foreground"], background: editorColors["editor.background"] ?? colors["editor.background"] } },
       ...(theme.tokenColors ?? []),
     ],
   };

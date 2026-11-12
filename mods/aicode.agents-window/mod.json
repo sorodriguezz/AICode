@@ -1,0 +1,51 @@
+{
+  "id": "aicode.agents-window",
+  "name": "Agents Window",
+  "version": "1.0.0",
+  "description": "A window made for working with AI agents, like VS Code's: the chat in the middle, files, changes and search on the right, the terminal below. Open it from the title bar or with ⌥⇧⌘A. It is only configuration (a window layout, a command and a title bar button): copy it to build your own.",
+  "author": "AICode",
+  "icon": "comment-discussion",
+  "api": 1,
+  "dependencies": ["aicode.agents"],
+  "optionalDependencies": ["aicode.explorer", "aicode.git", "aicode.search", "aicode.terminal"],
+  "contributes": {
+    "windowLayouts": {
+      "agents": {
+        "title": "Agents",
+        "width": 1320,
+        "height": 860,
+        "center": "agents.chat",
+        "options": { "activityBar": false, "statusBar": true, "panelAlign": "center" },
+        "parts": { "sidebar": false, "secondary": true, "panel": false },
+        "sizes": { "secondary": 340, "panel": 220 },
+        "views": {
+          "explorer": "secondary",
+          "scm": "secondary",
+          "search": "secondary",
+          "terminal": "panel"
+        },
+        "hide": ["titleBar.item:agentsWindow.open"]
+      }
+    },
+    "commands": [
+      {
+        "id": "agentsWindow.open",
+        "title": "Open in Agents Window",
+        "category": "Chat",
+        "icon": "comment-discussion",
+        "keybinding": "mod+alt+shift+a",
+        "run": { "type": "window", "layout": "agents" }
+      }
+    ],
+    "titleBar": [
+      {
+        "id": "agentsWindow.open",
+        "icon": "comment-discussion",
+        "text": "Open in Agents",
+        "title": "Open in Agents Window (⌥⇧⌘A)",
+        "command": "agentsWindow.open",
+        "align": "center"
+      }
+    ]
+  }
+}

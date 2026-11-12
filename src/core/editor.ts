@@ -123,6 +123,16 @@ export interface SidePaneSpec {
   render(container: HTMLElement): void | Disposable;
 }
 
+/** A tab moved to another window: its file, and its text when it has unsaved changes. */
+export interface DetachedTab {
+  path: string | null;
+  title: string;
+  text?: string;
+  language?: string;
+  line?: number;
+  column?: number;
+}
+
 export interface EditorInfo {
   id: string;
   /** "default" for the text editor; a mod's editor type id for its view of a file (a preview). */
@@ -192,6 +202,10 @@ export class EditorService {
   readonly onDidChangeFontSize = new Emitter<number>();
   /** Custom tabs the session knows how to reopen, by `restore` key. */
   readonly restorers = new Map<string, () => void>();
+  /** A tab dragged out of the window, or "Move into New Window": main.ts opens the window. */
+  detachTab: ((tab: DetachedTab, at?: { x: number; y: number }) => void) | null = null;
+  /** workbench.tabs.dragToWindow */
+  dragTabsToWindow = true;
 
   constructor(private wb: Workbench) {
     this.monacoHost = h("div", { class: "monaco-host" });
@@ -656,7 +670,98 @@ export class EditorService {
     if (file?.path && this.typesFor(file.info).length) items.push({ separator: true, label: "" }, { label: "Reopen Editor With…", run: () => this.reopenWith() });
     if (doc.kind === "text" && doc.preview)
       items.push({ separator: true, label: "" }, { label: "Keep Open", run: () => { doc.preview = false; this.renderTabs(); } });
+    if (doc.kind === "text" && this.detachTab) items.push({ separator: true, label: "" }, { label: "Move into New Window", run: () => this.detach(doc) }, { label: "Copy into New Window", run: () => this.detach(doc, undefined, false) });
     contextMenu(e.clientX, e.clientY, items);
+  }
+
+  /** Opens a text tab in a window of its own (keeping unsaved text), and closes it here unless `move` is false. */
+  async detach(doc: Doc, at?: { x: number; y: number }, move = true) {
+    if (doc.kind !== "text" || !this.detachTab) return;
+    const pos = doc === this.active ? this.editor.getPosition() : null;
+    const dirty = this.isDirty(doc);
+    this.detachTab(
+      {
+        path: doc.path,
+        title: doc.title,
+        text: dirty || !doc.path ? doc.model.getValue() : undefined,
+        language: doc.model.getLanguageId(),
+        line: pos?.lineNumber,
+        column: pos?.column,
+      },
+      at,
+    );
+    if (move) await this.close(doc, true);
+  }
+
+  /** Press on a tab and drag: along the tab bar to reorder, out of the window to open it in a new one. */
+  private dragTab(down: MouseEvent, doc: Doc) {
+    const startX = down.clientX;
+    const startY = down.clientY;
+    let ghost: HTMLElement | null = null;
+    let before: string | null | undefined;
+    const bar = this.wb.editorTabs;
+    const outside = (e: MouseEvent) => e.clientX < 0 || e.clientY < 0 || e.clientX > window.innerWidth || e.clientY > window.innerHeight;
+    const mark = (el: Element | null, after = false) => {
+      bar.querySelectorAll(".drop-before, .drop-after").forEach((x) => x.classList.remove("drop-before", "drop-after"));
+      el?.classList.add(after ? "drop-after" : "drop-before");
+    };
+    const move = (e: MouseEvent) => {
+      if (!ghost) {
+        if (Math.hypot(e.clientX - startX, e.clientY - startY) < 6) return;
+        ghost = h("div", { class: "view-drag-ghost tab-drag-ghost" }, h("span", null, doc.title));
+        document.body.append(ghost);
+        document.body.classList.add("view-dragging");
+      }
+      ghost.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 10}px)`;
+      const out = outside(e);
+      ghost.classList.toggle("detaching", out && this.dragTabsToWindow && doc.kind === "text");
+      const under = out ? null : (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null);
+      const tab = under?.closest(".tab[data-doc]") as HTMLElement | null;
+      if (tab && bar.contains(tab)) {
+        const r = tab.getBoundingClientRect();
+        const after = e.clientX > r.left + r.width / 2;
+        const ids = this.docs.map((d) => d.id);
+        const i = ids.indexOf(tab.dataset.doc!);
+        before = after ? ids[i + 1] ?? null : tab.dataset.doc!;
+        mark(tab, after);
+      } else if (under && bar.contains(under)) {
+        before = null;
+        mark(bar.lastElementChild, true);
+      } else {
+        before = undefined;
+        mark(null);
+      }
+    };
+    const end = (e: MouseEvent | null) => {
+      window.removeEventListener("mousemove", move, true);
+      window.removeEventListener("mouseup", up, true);
+      window.removeEventListener("keydown", key, true);
+      mark(null);
+      if (!ghost) return;
+      ghost.remove();
+      document.body.classList.remove("view-dragging");
+      if (!e) return;
+      if (outside(e) && this.dragTabsToWindow && doc.kind === "text") {
+        void this.detach(doc, { x: e.screenX, y: e.screenY });
+        return;
+      }
+      if (before === undefined || before === doc.id) return;
+      const from = this.docs.indexOf(doc);
+      this.docs.splice(from, 1);
+      const to = before === null ? this.docs.length : this.docs.findIndex((d) => d.id === before);
+      this.docs.splice(to < 0 ? this.docs.length : to, 0, doc);
+      this.renderTabs();
+    };
+    const up = (e: MouseEvent) => end(e);
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        end(null);
+      }
+    };
+    window.addEventListener("mousemove", move, true);
+    window.addEventListener("mouseup", up, true);
+    window.addEventListener("keydown", key, true);
   }
 
   private symbolCrumbs: HTMLElement | null = null;
@@ -800,18 +905,22 @@ export class EditorService {
       const dirty = doc.kind === "text" && this.isDirty(doc);
       const tabIcon = doc.kind === "custom" ? doc.spec.icon ?? "file" : doc.path ? fileIcon(doc.path) : "file";
       const tabIconEl = doc.kind === "text" && doc.path ? fileIconEl(basename(doc.path), "tab-icon") : icon(tabIcon, "tab-icon");
+      tabIconEl.dataset.part = "tab.icon";
       const deco = doc.kind === "text" && doc.path ? this.decorate(doc.path) : undefined;
       const tab = h(
         "div",
         {
           class: `tab${doc === this.active ? " active" : ""}${dirty ? " dirty" : ""}${doc.kind === "text" && doc.preview ? " preview" : ""}${isNew && this.motionReady ? " tab-enter" : ""}${doc === this.active && activeChanged && this.motionReady && !isNew ? " just-active" : ""}`,
-          dataset: { doc: doc.id },
+          dataset: { doc: doc.id, part: "tab" },
           title: doc.kind === "text" && doc.path ? doc.path : doc.title,
           onmousedown: (e: MouseEvent) => {
             if (e.button === 1) {
               e.preventDefault();
               this.close(doc);
-            } else if (e.button === 0) this.activate(doc);
+            } else if (e.button === 0) {
+              this.activate(doc);
+              this.dragTab(e, doc);
+            }
           },
           oncontextmenu: (e: MouseEvent) => {
             e.preventDefault();
@@ -833,6 +942,7 @@ export class EditorService {
           {
             class: "tab-close",
             title: "Close",
+            dataset: { part: "tab.close" },
             onmousedown: (e: MouseEvent) => e.stopPropagation(),
             onclick: (e: MouseEvent) => {
               e.stopPropagation();
@@ -1290,7 +1400,7 @@ export class EditorService {
       this.previewEnabled = !this.previewEnabled;
       if (!this.previewEnabled) for (const d of this.docs) if (d.kind === "text") d.preview = false;
       this.renderTabs();
-      await invoke("settings_set", { modId: "core", key: "workbench.previewEditors", value: this.previewEnabled }).catch(() => {});
+      await import("./config").then(({ config }) => config.update("core", "workbench.previewEditors", this.previewEnabled)).catch(() => {});
     }, "View");
   }
 

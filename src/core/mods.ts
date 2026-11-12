@@ -15,7 +15,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { invoke, listen, onStream, ModInfo } from "./ipc";
 import * as commands from "./commands";
-import { Workbench, ViewProvider, StatusItem } from "./workbench";
+import { Workbench, ViewProvider, StatusItem, TitleItem, ViewLocation, LayoutOptions } from "./workbench";
 import { EditorService, EditProposal, CustomTabSpec, TitleAction, EditorType, SidePaneSpec } from "./editor";
 import { Workspace } from "./workspace";
 import { notify, pick, inputBox, confirm, contextMenu, QuickItem, MenuItem } from "./widgets";
@@ -25,8 +25,66 @@ import type { GrammarSource } from "./textmate";
 import { Emitter } from "./events";
 import { Declarative, checkActions } from "./declarative";
 import { fileIconEl } from "./fileIcons";
+import { config, type SettingSchema, type Values, type Change } from "./config";
+import { openWindow, layouts, type WindowSpec } from "./windows";
 
 export type ModState = "idle" | "activating" | "active" | "failed";
+
+/** What main.ts gives the host for the window API (the window's own spec, pinning, reopening). */
+export interface WindowServices {
+  current: () => WindowSpec | null;
+  setPinned: (on: boolean) => Promise<void>;
+  isOnTop: () => boolean;
+  reopen: () => Promise<void>;
+  detachView: (viewId: string) => Promise<void>;
+}
+
+const isPlainObject = (v: unknown): v is Record<string, any> => !!v && typeof v === "object" && !Array.isArray(v);
+
+/** A mod's settings declarations (contributes.settings) as configuration schema. */
+export function modSchema(declared: unknown): Record<string, SettingSchema> {
+  const out: Record<string, SettingSchema> = {};
+  if (!isPlainObject(declared)) return out;
+  for (const [key, d] of Object.entries(declared)) {
+    if (!isPlainObject(d)) continue;
+    const type = ["number", "boolean", "array", "object"].includes(d.type) ? d.type : "string";
+    out[key] = {
+      type,
+      default: d.default ?? (type === "boolean" ? false : type === "number" ? 0 : type === "array" ? [] : type === "object" ? {} : ""),
+      title: d.title ?? key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c: string) => c.toUpperCase()),
+      description: d.description,
+      enum: Array.isArray(d.enum) ? d.enum.map((v: unknown, i: number) => ({ value: v, label: Array.isArray(d.enumLabels) ? String(d.enumLabels[i] ?? v) : String(v) })) : undefined,
+      min: d.minimum ?? d.min,
+      max: d.maximum ?? d.max,
+      hidden: d.hidden,
+      format: d.format === "color" ? "color" : undefined,
+    };
+  }
+  return out;
+}
+
+/**
+ * A mod's `configurationDefaults` as a configuration layer. It is written like profile.json's
+ * `settings` ({ "core": {…}, "<mod id>": {…} }); keys that are not an owner are core settings, so
+ * { "editor.cursorColor": "#f0f" } works too. `contributes.windowLayouts` joins core
+ * "workbench.windowLayouts".
+ */
+export function modDefaults(info: ModInfo, owners: Set<string>): Values {
+  const out: Values = {};
+  const raw = info.contributes?.configurationDefaults;
+  if (isPlainObject(raw)) {
+    for (const [k, v] of Object.entries(raw)) {
+      if ((k === "core" || owners.has(k)) && isPlainObject(v)) out[k] = { ...(out[k] ?? {}), ...v };
+      else (out.core ??= {})[k] = v;
+    }
+  }
+  const layoutsOf = info.contributes?.windowLayouts;
+  if (isPlainObject(layoutsOf)) {
+    const core = (out.core ??= {});
+    core["workbench.windowLayouts"] = { ...(isPlainObject(core["workbench.windowLayouts"]) ? core["workbench.windowLayouts"] : {}), ...layoutsOf };
+  }
+  return out;
+}
 
 /** How a file shows in lists (the explorer, open editors): a letter, a theme color, a tooltip. */
 export interface Decoration {
@@ -88,6 +146,8 @@ export class ModHost {
   readonly onDidChangeState = new Emitter<string>();
   private mcpHandler: ((call: { callId: number; name: string; arguments: any }) => Promise<unknown>) | null = null;
   readonly declarative: Declarative;
+  /** Set by main.ts once the window knows what it is. */
+  windowServices: WindowServices | null = null;
 
   constructor(private wb: Workbench, private editors: EditorService, private workspace: Workspace) {
     this.declarative = new Declarative({
@@ -134,8 +194,8 @@ export class ModHost {
   }
 
   /** Reads manifests and lays out every enabled mod's declarations. Loads no mod code. */
-  async load(): Promise<ModInfo[]> {
-    const all = await invoke<ModInfo[]>("mods_list");
+  async load(list?: ModInfo[]): Promise<ModInfo[]> {
+    const all = list ?? (await invoke<ModInfo[]>("mods_list"));
     for (const info of all.filter((m) => m.enabled && !m.problems.length)) {
       const loaded: Loaded = { info, state: "idle", subscriptions: [] };
       this.mods.set(info.id, loaded);
@@ -151,8 +211,29 @@ export class ModHost {
     return all;
   }
 
+  /** The configuration layers of the enabled mods (their configurationDefaults), in load order. */
+  static configurationLayers(all: ModInfo[]): { mod: string; values: Values }[] {
+    const owners = new Set(all.map((m) => m.id));
+    return all.filter((m) => m.enabled && !m.problems.length).map((m) => ({ mod: m.id, values: modDefaults(m, owners) })).filter((l) => Object.keys(l.values).length);
+  }
+
   private contribute(m: Loaded) {
     const c = m.info.contributes ?? {};
+    const declared = modSchema(c.settings);
+    if (Object.keys(declared).length) config.registerSchema(m.info.id, declared);
+    // Stylesheets: a file of the mod, or CSS written in mod.json. They stay while the mod is on.
+    for (const st of Array.isArray(c.styles) ? c.styles : []) {
+      const path = typeof st === "string" ? st : st?.path;
+      const css = typeof st === "object" && st ? st.css : undefined;
+      if (path) m.subscriptions.push(addStylesheetLink(this.url(m.info.id, path), m.info.id));
+      else if (typeof css === "string" || Array.isArray(css)) m.subscriptions.push(addStyle(Array.isArray(css) ? css.join("\n") : css, m.info.id));
+    }
+    // Title bar buttons (like VS Code's "Open in Agents").
+    for (const item of Array.isArray(c.titleBar) ? c.titleBar : []) {
+      if (!item || (!item.command && !item.run)) continue;
+      const handle = this.wb.addTitleItem({ id: item.id, icon: item.icon, text: item.text, title: item.title ?? item.tooltip, command: item.command, args: item.args, align: item.align, order: item.order });
+      m.subscriptions.push({ dispose: handle.dispose });
+    }
     for (const v of c.views ?? []) {
       this.wb.registerView({ id: v.id, title: v.title, icon: v.icon ?? m.info.icon ?? "extensions", location: v.location ?? "sidebar", order: v.order ?? 50, owner: m.info.id });
       commands.register(`workbench.view.${v.id}`, () => this.wb.showView(v.id), { title: `Show ${v.title}`, category: "View", owner: m.info.id });
@@ -366,6 +447,8 @@ export class ModHost {
         execute: (id: string, ...args: any[]) => commands.execute(id, ...args),
         bind: (key: string, command: string, args?: unknown) => track(commands.bind(key, command, modId, args)),
         exists: (id: string) => commands.has(id),
+        /** Every command: id, title, category, owner and its keybinding. */
+        list: () => commands.all().map((c) => ({ id: c.id, title: c.title, category: c.category, owner: c.owner, keybinding: commands.keybindingFor(c.id) ?? null })),
       },
 
       views: {
@@ -568,13 +651,69 @@ export class ModHost {
         onDidChange: (fn: () => void) => track(decorations.onDidChange.event(fn)),
       },
 
+      /** This mod's settings: the user's value, else a mod's default, else the one declared in contributes.settings. */
       settings: {
-        all: () => invoke<Record<string, unknown>>("settings_get", { modId }),
-        get: async <T>(key: string, fallback: T): Promise<T> => {
-          const all = await invoke<Record<string, unknown>>("settings_get", { modId });
-          return (key in all ? all[key] : fallback) as T;
+        all: async () => config.all(modId),
+        get: async <T>(key: string, fallback: T): Promise<T> => config.get(modId, key, fallback) as T,
+        /** The same, without waiting (the configuration is already in memory). */
+        getNow: <T>(key: string, fallback?: T): T => config.get(modId, key, fallback) as T,
+        set: (key: string, value: unknown) => config.update(modId, key, value),
+        inspect: (key: string) => config.inspect(modId, key),
+        onDidChange: (fn: (keys: string[]) => void) => track(config.watch(modId, "*", (changes) => fn(changes.map((c) => c.key)))),
+      },
+
+      /** The whole configuration: the editor's settings ("core") and every mod's, by layers. */
+      config: {
+        /** A core setting's effective value (editor.*, workbench.*, window.*…). */
+        get: <T>(key: string, fallback?: T): T => config.core(key, fallback) as T,
+        /** Any owner's setting (another mod's, by its id). */
+        getFor: <T>(owner: string, key: string, fallback?: T): T => config.get(owner, key, fallback) as T,
+        all: (owner = "core") => config.all(owner),
+        inspect: (key: string, owner = "core") => config.inspect(owner, key),
+        /** Writes the user's value to profile.json (null removes it). */
+        update: (key: string, value: unknown, owner = "core") => config.update(owner, key, value),
+        onDidChange: (fn: (changes: Change[]) => void) => track(config.onDidChange.event(fn)),
+        /** Calls fn when these core keys (a trailing * matches a prefix) change. */
+        watch: (keys: string[] | string, fn: (changes: Change[]) => void, owner = "core") => track(config.watch(owner, keys, fn)),
+        schema: (owner = "core") => config.schema(owner),
+      },
+
+      /** CSS that stays while the mod runs (or until disposed). */
+      styles: {
+        add: (css: string) => track(addStyle(css, modId)),
+        addFile: (path: string) => track(addStylesheetLink(host.url(modId, path), modId)),
+      },
+
+      /** The window's parts and layout. Parts carry data-part="<name>" (see docs/CONFIGURATION.md). */
+      workbench: {
+        root: () => wb.root,
+        part: (name: string) => document.querySelector<HTMLElement>(`[data-part="${name}"]`),
+        parts: (name: string) => Array.from(document.querySelectorAll<HTMLElement>(`[data-part="${name}"]`)),
+        addTitleItem: (item: TitleItem) => {
+          const handle = wb.addTitleItem(item);
+          track({ dispose: handle.dispose });
+          return handle;
         },
-        set: (key: string, value: unknown) => invoke("settings_set", { modId, key, value }),
+        options: () => ({ ...wb.options }),
+        setOptions: (o: Partial<LayoutOptions>) => wb.setOptions(o),
+        toggle: (loc: ViewLocation) => wb.toggle(loc),
+        isPartVisible: (loc: ViewLocation) => wb.viewsAt(loc).length > 0 && wb.state[loc].visible,
+        views: () => wb.allViews(),
+        moveView: (id: string, to: ViewLocation) => wb.moveView(id, to),
+        setCenterView: (id: string | null) => wb.setCenterView(id),
+        centerView: () => wb.centerViewId(),
+      },
+
+      /** Windows: open one with a layout or a single view, keep this one on top, and so on. */
+      windows: {
+        open: (spec: WindowSpec) => openWindow(spec),
+        openView: (viewId: string, opts: Omit<WindowSpec, "view"> = {}) => openWindow({ ...opts, view: viewId }),
+        layouts: () => layouts(),
+        current: () => host.windowServices?.current() ?? null,
+        setAlwaysOnTop: (on: boolean) => host.windowServices?.setPinned(on),
+        isAlwaysOnTop: () => host.windowServices?.isOnTop() ?? false,
+        reopen: () => host.windowServices?.reopen(),
+        moveViewToNewWindow: (viewId: string) => host.windowServices?.detachView(viewId),
       },
 
       mods: {
@@ -586,6 +725,25 @@ export class ModHost {
       ui: { h, icon, iconButton, clear, basename, dirname, joinPath, fileIcon, fileIconColor, fileIconEl },
     });
   }
+}
+
+/** A `<style>` in the page until disposed. */
+export function addStyle(css: string, owner: string): Disposable {
+  const el = document.createElement("style");
+  el.dataset.owner = owner;
+  el.textContent = css;
+  document.head.append(el);
+  return toDisposable(() => el.remove());
+}
+
+/** A stylesheet file (a mod's, by its aimod: URL) until disposed. */
+export function addStylesheetLink(href: string, owner: string): Disposable {
+  const el = document.createElement("link");
+  el.rel = "stylesheet";
+  el.href = href;
+  el.dataset.owner = owner;
+  document.head.append(el);
+  return toDisposable(() => el.remove());
 }
 
 function normalizePath(p: string): string {

@@ -2,7 +2,7 @@
   "id": "aicode.mcp-server",
   "name": "MCP Server",
   "version": "1.0.0",
-  "description": "Lets agents outside the editor (CodeFlow, Claude Code, Codex\u2026) see what is open in AICode \u2014 unsaved text included \u2014 and propose edits you accept or reject. Listens on 127.0.0.1 only, behind a token. Reads a file from disk only when an agent asks for one that is not open.",
+  "description": "Lets agents outside the editor (CodeFlow, Claude Code, Codex…) see what is open in AICode — unsaved text included — propose edits you accept or reject, and drive the interface: run any command, read and change settings, move views and open windows. Listens on 127.0.0.1 only, behind a token. Reads a file from disk only when an agent asks for one that is not open.",
   "author": "AICode",
   "icon": "mcp",
   "main": "main.js",
