@@ -3,6 +3,8 @@
 //! a single text editor comes from a mod.
 
 mod bundle;
+#[cfg(target_os = "macos")]
+mod dock;
 mod fsops;
 mod mcp;
 mod mods;
@@ -30,6 +32,23 @@ fn session_save(app: tauri::AppHandle, window: tauri::Window, data: String) -> R
 #[tauri::command]
 fn core_log(level: String, message: String) {
     eprintln!("[window {level}] {}", message.chars().take(4000).collect::<String>());
+}
+
+/// A folder or file opened from AICode, for the Dock icon's "recent" list.
+#[tauri::command]
+fn recent_add(app: tauri::AppHandle, path: String) {
+    #[cfg(target_os = "macos")]
+    dock::note_recent(&app, path);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, path);
+}
+
+#[tauri::command]
+fn recent_clear(app: tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    dock::clear_recent(&app);
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
 }
 
 #[tauri::command]
@@ -162,15 +181,24 @@ pub fn run() {
             });
             // Paths given on the command line open in the first window.
             let args: Vec<String> = std::env::args().skip(1).filter(|a| !a.starts_with('-')).collect();
-            let initial = windows::to_paths(args.into_iter().map(|a| {
+            let mut initial = windows::to_paths(args.into_iter().map(|a| {
                 if a.starts_with('/') { a } else { std::env::current_dir().map(|d| d.join(&a).to_string_lossy().into_owned()).unwrap_or(a) }
             }));
+            // A launch by dropping something on the Dock icon delivers it before setup runs: it
+            // waited in `launch_paths` and opens in the first window, like the command line.
+            let wins = app.state::<windows::WindowsState>();
+            initial.extend(wins.launch_paths.lock().unwrap().drain(..));
             windows::restore(app.handle(), initial)?;
+            wins.started.store(true, std::sync::atomic::Ordering::SeqCst);
+            #[cfg(target_os = "macos")]
+            dock::install(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             core_info,
             core_log,
+            recent_add,
+            recent_clear,
             session_load,
             session_save,
             mods::mods_list,
@@ -253,7 +281,11 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Opened { urls } => {
                 let paths = windows::to_paths(urls.into_iter().map(|u| u.to_string()));
-                if !paths.is_empty() {
+                let state = app.state::<windows::WindowsState>();
+                if !state.started.load(std::sync::atomic::Ordering::SeqCst) {
+                    // Launched by this: no window exists yet, and setup will create them.
+                    state.launch_paths.lock().unwrap().extend(paths);
+                } else if !paths.is_empty() {
                     windows::open_in_front(app, paths);
                 }
             }

@@ -165,6 +165,9 @@ async function boot() {
   if (session?.folder) workspace.set(session.folder);
   const updateTitle = () => wb.setTitle(workspace.name ?? (editors.activeInfo()?.title ?? "Search"));
   workspace.onDidChange.event(updateTitle);
+  // Every folder this window opens joins the Dock icon's recent list, as in VS Code.
+  if (session?.folder) invoke("recent_add", { path: session.folder });
+  workspace.onDidChange.event((folder) => folder && invoke("recent_add", { path: folder }));
   editors.onDidChangeActive.event(updateTitle);
   await editors.restore(session?.editors);
   // Paths this window was opened with (command line, Dock, "Open Folder in New Window"). Asking
@@ -199,15 +202,17 @@ async function boot() {
         continue;
       }
       if (st.is_dir) folders.push(path);
-      else await editors.openFile(path);
+      else if (await editors.openFile(path)) invoke("recent_add", { path });
     }
-    if (folders.length) {
-      // The first folder becomes this window's; any others get windows of their own, as in VS Code.
-      workspace.set(folders[0]);
-      for (const extra of folders.slice(1)) invoke("window_new", { paths: [extra] });
+    // As in VS Code, a window without a folder takes the first one; a window that already has one
+    // keeps it, and every other folder gets a window of its own.
+    const mine = workspace.folder === null ? folders[0] : folders.find((f) => f === workspace.folder);
+    for (const other of folders.filter((f) => f !== mine)) invoke("window_new", { paths: [other] });
+    if (mine) {
+      workspace.set(mine);
       if (wb.hasView("explorer")) wb.showView("explorer", false);
       else
-        notify("info", `Opened ${basename(folders[0])}. Turn on the Explorer mod to browse it (⌘P already finds its files).`, [
+        notify("info", `Opened ${basename(mine)}. Turn on the Explorer mod to browse it (⌘P already finds its files).`, [
           { label: "Open Mods", run: () => commands.execute("mods.manage") },
         ]);
     }
@@ -478,6 +483,7 @@ function registerWorkbenchCommands(
   reg("workbench.toggleSecondary", "Toggle Secondary Side Bar Visibility", () => wb.toggle("secondary"));
   reg("workbench.reload", "Reload Window", () => location.reload(), "Developer");
   reg("workbench.newWindow", "New Window", () => invoke("window_new", {}), "File");
+  reg("workbench.clearRecentlyOpened", "Clear Recently Opened", () => invoke("recent_clear"), "File");
   reg("workbench.openFolderNewWindow", "Open Folder in New Window…", async () => {
     const folder = await openDialog({ directory: true, multiple: false });
     if (typeof folder === "string") await invoke("window_new", { paths: [folder] });

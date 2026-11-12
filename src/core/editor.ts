@@ -373,7 +373,7 @@ export class EditorService {
   async openWithDialog() {
     const picked = await openDialog({ multiple: true, directory: false });
     const list = Array.isArray(picked) ? picked : picked ? [picked] : [];
-    for (const p of list) await this.openFile(p);
+    for (const p of list) if (await this.openFile(p)) invoke("recent_add", { path: p });
   }
 
   openCustom(spec: CustomTabSpec): CustomDoc {

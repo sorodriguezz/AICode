@@ -27,6 +27,10 @@ pub struct WindowsState {
     pub ready: Mutex<Vec<String>>,
     /// Closing every window to bring back another profile's: keep sessions, do not quit.
     pub switching: AtomicBool,
+    /// Setup has created the first windows. Before that, paths the OS asks us to open (the drop on
+    /// the Dock icon that launched AICode) wait in `launch_paths`.
+    pub started: AtomicBool,
+    pub launch_paths: Mutex<Vec<String>>,
 }
 
 fn profile_name(app: &AppHandle) -> String {
@@ -167,7 +171,9 @@ pub fn restore(app: &AppHandle, initial_paths: Vec<String>) -> tauri::Result<()>
         app.state::<WindowsState>().pending.lock().unwrap().entry(labels[0].clone()).or_default().extend(initial_paths);
     }
     for label in &labels {
-        create(app, label)?;
+        if app.get_webview_window(label).is_none() {
+            create(app, label)?;
+        }
     }
     write_registry(app, &labels);
     Ok(())
