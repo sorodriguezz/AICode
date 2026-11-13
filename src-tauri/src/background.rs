@@ -230,7 +230,15 @@ pub fn app_set_dock_visible(app: AppHandle, visible: bool) -> Result<(), String>
 /// The Dock icon's badge (a count, a word), or none.
 #[tauri::command]
 pub fn app_set_badge(window: tauri::Window, text: Option<String>) -> Result<(), String> {
-    window.set_badge_label(text.filter(|t| !t.is_empty())).map_err(|e| e.to_string())
+    #[cfg(target_os = "macos")]
+    {
+        window.set_badge_label(text.filter(|t| !t.is_empty())).map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (window, text);
+        Ok(())
+    }
 }
 
 /// Quits AICode (every window keeps its session, as with ⌘Q).
