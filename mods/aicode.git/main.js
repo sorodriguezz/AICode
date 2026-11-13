@@ -153,7 +153,16 @@ export async function activate(ctx) {
   };
   let refreshing = null;
   let lastRefreshKey = "";
-  const refresh = () => (refreshing ??= doRefresh().finally(() => (refreshing = null)));
+  let queued = null;
+  const refresh = () => {
+    if (!refreshing) return (refreshing = doRefresh().finally(() => (refreshing = null)));
+    // One is running, with what it read before (say, "Fetching…" while the fetch was still on):
+    // run once more after it, so whoever asked now sees the state as it is now.
+    return (queued ??= refreshing.catch(() => {}).then(() => {
+      queued = null;
+      return refresh();
+    }));
+  };
   const doRefresh = async () => {
     root = await repoFor(ctx.workspace.folder());
     watchRepo();
