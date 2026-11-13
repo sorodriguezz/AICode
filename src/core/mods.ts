@@ -970,6 +970,12 @@ export class ModHost {
         home: () => invoke<string>("home_dir"),
       },
 
+      /** The mod's own folder for what it downloads or builds up (models, binaries, caches):
+       *  `AICode/data/<mod id>/`, created on first use, kept across updates of the mod. */
+      storage: {
+        dir: () => call<string>("mod_data_dir"),
+      },
+
       process: {
         which: (program: string) => call<string | null>("proc_which", { program }),
         /** Runs a program; output streams to onData, the end to onExit. */

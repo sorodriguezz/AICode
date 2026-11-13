@@ -238,6 +238,9 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         b.build(app)
     };
     let item = |id: &str, text: &str, accel: Option<&str>| item_if(id, text, accel, true);
+    // macOS: the app menu (About, Settings, Hide, Quit). Elsewhere there is no app menu: as in VS
+    // Code, its items are in File > Preferences, Exit ends File and About is under Help.
+    #[cfg(target_os = "macos")]
     let app_menu = SubmenuBuilder::new(app, "AICode")
         .about(None)
         .item(&item("update.check", "Check for Updates…", None)?)
@@ -285,9 +288,23 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     // Only with a folder open, as in VS Code. A chord (⌘K F) cannot be a menu accelerator: the
     // window binds it and the title shows it.
     if ctx.folder {
-        file = file.item(&item("workbench.closeFolder", "Close Folder [⌘K F]", None)?);
+        let label = if cfg!(target_os = "macos") { "Close Folder [⌘K F]" } else { "Close Folder [Ctrl+K F]" };
+        file = file.item(&item("workbench.closeFolder", label, None)?);
     }
-    let file = add_extra(app, file.item(&item("window.close", "Close Window", Some("CmdOrCtrl+Shift+W"))?), "File")?.build()?;
+    file = file.item(&item("window.close", "Close Window", Some("CmdOrCtrl+Shift+W"))?);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let preferences = SubmenuBuilder::new(app, "Preferences")
+            .item(&item("preferences.settings", "Settings", Some("CmdOrCtrl+,"))?)
+            .item(&item("profiles.manage", "Profiles", None)?)
+            .item(&item("mods.manage", "Mods", Some("CmdOrCtrl+Shift+X"))?)
+            .item(&item("workbench.keybindings", "Keyboard Shortcuts", None)?)
+            .separator()
+            .item(&item("preferences.theme", "Color Theme", None)?)
+            .build()?;
+        file = file.separator().item(&preferences).separator().item(&item("app.quit", "Exit", None)?);
+    }
+    let file = add_extra(app, file, "File")?.build()?;
     // Undo/Redo are the editor's own (Monaco keeps the undo stack), so they are plain items routed
     // to the window; Cut/Copy/Paste/Select All stay the system's, which is what makes the clipboard
     // work inside the web view.
@@ -318,12 +335,25 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .item(&item("workbench.reload", "Reload Window", Some("CmdOrCtrl+R"))?);
     let view = add_extra(app, view, "View")?.build()?;
     let window = add_extra(app, SubmenuBuilder::new(app, "Window").minimize().fullscreen(), "Window")?.build()?;
+    #[cfg(not(target_os = "macos"))]
+    let help = SubmenuBuilder::new(app, "Help")
+        .item(&item("workbench.commandPalette", "Show All Commands", Some("CmdOrCtrl+Shift+P"))?)
+        .separator()
+        .item(&item("update.check", "Check for Updates…", None)?)
+        .separator()
+        .about(None)
+        .build()?;
     let extra = extra_menus(app)?;
-    let mut menus: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = vec![&app_menu, &file, &edit, &view];
+    let mut menus: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = Vec::new();
+    #[cfg(target_os = "macos")]
+    menus.push(&app_menu);
+    menus.extend([&file as &dyn tauri::menu::IsMenuItem<Wry>, &edit, &view]);
     for m in &extra {
         menus.push(m);
     }
     menus.push(&window);
+    #[cfg(not(target_os = "macos"))]
+    menus.push(&help);
     MenuBuilder::new(app).items(&menus).build()
 }
 
@@ -333,14 +363,62 @@ pub fn refresh(app: &AppHandle) {
     let _ = app.run_on_main_thread(move || match build(&app2) {
         Ok(menu) => {
             let _ = app2.set_menu(menu);
+            #[cfg(not(target_os = "macos"))]
+            {
+                // Setting the menu puts a menu bar back on every window: the title bar draws it.
+                for w in app2.webview_windows().values() {
+                    let _ = w.hide_menu();
+                }
+                let _ = app2.emit("menu-titles", titles(&app2));
+            }
         }
         Err(e) => eprintln!("[aicode] could not rebuild the menu: {e}"),
     });
 }
 
+// ---------- the menu bar drawn in the title bar (Windows and Linux) ----------
+//
+// Outside macOS the window has no frame of its own: the title bar shows the menus' names (as VS
+// Code's does), and picking one opens that menu, the same native menu, under it. The menu is still
+// the app's (hidden on each window), so its accelerators keep working.
+
+fn titles(app: &AppHandle) -> Vec<String> {
+    let Some(menu) = app.menu() else { return Vec::new() };
+    menu.items().unwrap_or_default().iter().filter_map(|i| i.as_submenu().and_then(|s| s.text().ok())).collect()
+}
+
+/// The names of the menus, in order (empty on macOS, where the system shows them).
+#[tauri::command]
+pub fn menu_titles(app: AppHandle) -> Vec<String> {
+    if cfg!(target_os = "macos") {
+        return Vec::new();
+    }
+    titles(&app)
+}
+
+/// Opens the menu named `title` at (`x`, `y`), in physical pixels from the window's top left; no
+/// title opens all of them (the title bar's ☰ when there is no room for the names).
+#[tauri::command]
+pub fn menu_popup(app: AppHandle, window: tauri::Window, title: Option<String>, x: f64, y: f64) -> Result<(), String> {
+    let menu = app.menu().ok_or("no menu")?;
+    let at = tauri::PhysicalPosition::new(x, y);
+    match title {
+        None => window.popup_menu_at(&menu, at).map_err(|e| e.to_string()),
+        Some(title) => {
+            let items = menu.items().map_err(|e| e.to_string())?;
+            let sub = items.iter().filter_map(|i| i.as_submenu()).find(|s| s.text().ok().as_deref() == Some(title.as_str())).ok_or("no such menu")?;
+            window.popup_menu_at(sub, at).map_err(|e| e.to_string())
+        }
+    }
+}
+
 /// A menu item was picked.
 pub fn on_event(app: &AppHandle, event: MenuEvent) {
     let id = event.id().0.as_str();
+    if id == "app.quit" {
+        app.exit(0);
+        return;
+    }
     // A mod's icon in the menu bar: to the window that set it.
     if let Some(rest) = id.strip_prefix(crate::background::TRAY_PREFIX) {
         crate::background::on_menu(app, rest);

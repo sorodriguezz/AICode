@@ -571,6 +571,17 @@ pub fn home_dir() -> String {
     dirs::home_dir().map(crate::paths::ui).unwrap_or_default()
 }
 
+/// A folder of the mod's own for what it downloads or builds up (models, binaries, caches):
+/// `AICode/data/<mod id>/`, created on first use. It outlives updates of the mod and is shared by
+/// every profile. Needs no permission: it is the mod's own place.
+#[tauri::command]
+pub fn mod_data_dir(mod_id: String) -> Result<String, String> {
+    let id = crate::paths::safe_name(&mod_id).ok_or_else(|| format!("not a mod id: {mod_id}"))?;
+    let dir = crate::paths::root().join("data").join(id);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(crate::paths::ui(dir))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

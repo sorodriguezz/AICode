@@ -15,10 +15,13 @@
 //! Global keyboard shortcuts (`app_shortcut_*`) are here too: they work while AICode is in the
 //! background and need no permission.
 
+#[cfg(target_os = "macos")]
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Mutex, OnceLock};
+#[cfg(target_os = "macos")]
+use std::sync::mpsc;
+use std::sync::{Mutex, OnceLock};
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -190,6 +193,7 @@ pub fn install(app: &AppHandle) {
 }
 
 /// Runs `f` on the main thread and waits for it (JXA and AppKit live there).
+#[cfg(target_os = "macos")]
 async fn on_main<T: Send + 'static>(app: &AppHandle, f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
     let (tx, rx) = mpsc::channel();
     app.run_on_main_thread(move || {

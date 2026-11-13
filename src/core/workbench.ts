@@ -8,6 +8,7 @@ import * as commands from "./commands";
 import { keyCaps } from "./commands";
 import { contextMenu, type MenuItem } from "./widgets";
 import { motionEnabled, play } from "./motion";
+import { OWN_TITLE_BAR, menuBar, windowControls } from "./titlebar";
 
 export type ViewLocation = "sidebar" | "secondary" | "panel";
 
@@ -302,8 +303,8 @@ export class Workbench {
     };
     const titlebar = h(
       "div",
-      { class: "titlebar", dataset: { part: "titleBar" }, "data-tauri-drag-region": true, ondblclick: (e: MouseEvent) => e.target === titlebar && commands.execute("window.toggleMaximize") },
-      h("div", { class: "titlebar-left", "data-tauri-drag-region": true }, h("div", { class: "group", dataset: { part: "titleBar.nav" } }, back, forward), this.titleHosts.left),
+      { class: "titlebar", dataset: { part: "titleBar" }, "data-tauri-drag-region": true, ondblclick: (e: MouseEvent) => !OWN_TITLE_BAR && e.target === titlebar && commands.execute("window.toggleMaximize") },
+      h("div", { class: "titlebar-left", "data-tauri-drag-region": true }, OWN_TITLE_BAR ? menuBar() : null, h("div", { class: "group", dataset: { part: "titleBar.nav" } }, back, forward), this.titleHosts.left),
       h("div", { class: "titlebar-center", "data-tauri-drag-region": true }, commandCenter, this.titleHosts.center),
       h(
         "div",
@@ -313,6 +314,7 @@ export class Workbench {
         // workbench.titleBar.items can put a button back ({ "icon": "extensions", "command": "mods.manage" }).
         h("div", { class: "group" }, this.pinButton),
         h("div", { class: "group", dataset: { part: "titleBar.layoutControls" }, "data-tauri-drag-region": true }, iconButton("layout", "Customize Layout…", () => this.customizeLayout()), this.toggles.sidebar, this.toggles.panel, this.toggles.secondary),
+        OWN_TITLE_BAR ? windowControls() : null,
       ),
     );
 

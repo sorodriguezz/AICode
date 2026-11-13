@@ -192,6 +192,11 @@ fn create_with(app: &AppHandle, label: &str, spec: Option<&Value>) -> tauri::Res
     if on_top == Some(true) || crate::mods::effective_core_setting(&mods, "window.alwaysOnTop").and_then(|v| v.as_bool()) == Some(true) {
         config.always_on_top = true;
     }
+    // Outside macOS the title bar is AICode's own (menus, window buttons), as in VS Code: no frame.
+    #[cfg(not(target_os = "macos"))]
+    {
+        config.decorations = false;
+    }
     let mut builder = WebviewWindowBuilder::from_config(app, &config)?;
     if let (Some(x), Some(y)) = (num("x"), num("y")) {
         builder = builder.position(x, y);
@@ -209,7 +214,10 @@ fn create_with(app: &AppHandle, label: &str, spec: Option<&Value>) -> tauri::Res
             }
         }
     }
-    builder.build()?;
+    let _window = builder.build()?;
+    // The app's menu stays on the window for its shortcuts; the title bar shows it instead.
+    #[cfg(not(target_os = "macos"))]
+    let _ = _window.hide_menu();
     Ok(())
 }
 

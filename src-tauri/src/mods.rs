@@ -107,8 +107,8 @@ pub struct Profile {
 /// Mods every profile starts with, because they do what the core itself used to (or what an editor
 /// is expected to): the file icons (Seti) were built in before they became `aicode.icons`, the
 /// JSON/YAML keys in the breadcrumbs before they became `aicode.json-yaml`, and images open as
-/// images with `aicode.image-preview`.
-pub const DEFAULT_ON: &[&str] = &["aicode.icons", "aicode.json-yaml", "aicode.image-preview"];
+/// images with `aicode.image-preview`. `aicode.motion` gives the whole window its fluid animations.
+pub const DEFAULT_ON: &[&str] = &["aicode.icons", "aicode.json-yaml", "aicode.image-preview", "aicode.motion"];
 
 /// Mods split out of another one: a profile that had the first on gets the others, once, so it
 /// keeps what it had (the AI Chat carried every agent; Glass carried pill tabs and the cursor).

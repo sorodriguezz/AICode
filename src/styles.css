@@ -1089,6 +1089,38 @@ body .modal-editor-title .codicon { font-size: 14px; }
 .titlebar-right { justify-content: space-between; padding-left: 4px; }
 .titlebar-right > .group { display: flex; align-items: center; gap: 2px; }
 
+/* Windows and Linux: the window has no frame, so the title bar carries the app's icon, the menus
+   and the window buttons, laid out as VS Code's (titlebar.ts). macOS is untouched. */
+:root:not([data-platform="mac"]) .titlebar { grid-template-columns: 1fr minmax(160px, 500px) 1fr; }
+:root:not([data-platform="mac"]) .titlebar-left { padding-left: 0; }
+:root:not([data-platform="mac"]) .titlebar-right { padding-right: 0; }
+:root:not([data-platform="mac"]) .titlebar-right > [data-part="titleBar.layoutControls"] { margin-right: 6px; }
+.menubar { display: flex; align-items: center; height: 100%; margin-right: auto; min-width: 0; overflow: hidden; }
+.menubar-icon { flex: 0 0 auto; width: 35px; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--aicode-focusBorder, #0078d4); }
+.menubar-icon .codicon { font-size: 16px; pointer-events: none; }
+.menubar-items { display: flex; align-items: center; height: 100%; min-width: 0; }
+.menubar-item {
+  flex: 0 0 auto; height: 26px; padding: 0 8px; border: 0; border-radius: 5px; background: transparent;
+  color: inherit; font: inherit; font-size: 13px; line-height: 26px; cursor: default; white-space: nowrap;
+}
+.menubar-item:hover, .menubar-item.open { background: var(--aicode-toolbar-hoverBackground); }
+.menubar-more { display: none; width: 30px; padding: 0; align-items: center; justify-content: center; }
+.menubar-more .codicon { font-size: 16px; }
+/* Too narrow for the names: one ☰ opens all the menus, as in VS Code. */
+@media (max-width: 1180px) {
+  .menubar-items { display: none; }
+  .menubar-more { display: inline-flex; }
+}
+.window-controls { display: flex; align-items: stretch; height: var(--titlebar-h); flex: 0 0 auto; }
+.window-control {
+  width: 46px; height: 100%; border: 0; border-radius: 0; padding: 0; margin: 0; background: transparent;
+  color: inherit; display: flex; align-items: center; justify-content: center; cursor: default;
+}
+.window-control .codicon { font-size: 16px; }
+.window-control:hover { background: var(--aicode-toolbar-hoverBackground, rgba(128, 128, 128, .2)); }
+.window-control.close:hover { background: #e81123; color: #fff; }
+.window-control.close:active { background: #f1707a; color: #fff; }
+
 /* ---------- editor group: the main editor and a pane to the side ---------- */
 .editor-group { flex-direction: row; }
 .editor-main { position: relative; flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }

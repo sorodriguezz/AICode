@@ -1,0 +1,62 @@
+{
+  "id": "aicode.motion",
+  "name": "Fluid Motion",
+  "version": "1.0.0",
+  "description": "Smooth, fluid animations for the whole window: softer easing curves, tabs and activity bar icons that glide to their new place, views and editors that cross-fade, menus, pickers, hovers, suggestions and the find widget that ease in, a smooth caret, and ghost text that fades in. Three intensities (Subtle, Fluid, Expressive). Follows \"Toggle Animations\" and the system's Reduce motion: with either on, nothing moves.",
+  "author": "AICode",
+  "icon": "sparkle",
+  "main": "main.js",
+  "api": 1,
+  "activation": [
+    "onStartup"
+  ],
+  "contributes": {
+    "styles": [
+      {
+        "path": "motion.css"
+      }
+    ],
+    "configurationDefaults": {
+      "core": {
+        "animations": true,
+        "editor.smoothScrolling": true,
+        "editor.cursorBlinking": "smooth",
+        "editor.cursorSmoothCaretAnimation": "on"
+      }
+    },
+    "commands": [
+      {
+        "id": "motion.cycleIntensity",
+        "title": "Cycle Animation Intensity",
+        "category": "Motion"
+      },
+      {
+        "id": "motion.pickIntensity",
+        "title": "Animation Intensity…",
+        "category": "Motion"
+      }
+    ],
+    "settings": {
+      "intensity": {
+        "type": "string",
+        "enum": [
+          "subtle",
+          "fluid",
+          "expressive"
+        ],
+        "default": "fluid",
+        "description": "subtle: quick fades only. fluid: smooth eased motion everywhere (default). expressive: longer, springier motion, hover lift and a press ripple on buttons."
+      },
+      "flipTabs": {
+        "type": "boolean",
+        "default": true,
+        "description": "Tabs glide to their new place when they are reordered, opened or closed."
+      },
+      "flipActivityBar": {
+        "type": "boolean",
+        "default": true,
+        "description": "Activity bar icons glide when views are added, moved or removed."
+      }
+    }
+  }
+}

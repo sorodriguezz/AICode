@@ -1,0 +1,147 @@
+/* Fluid Motion — animations for the whole window.
+   The core already animates the basics (styles.css, "Motion"); this mod retunes its timing and
+   easing and adds motion where the core has none. Everything here is switched off by the core's
+   `html.no-motion` rule and by prefers-reduced-motion, so nothing moves when the user said no.
+   Intensity comes from `html[data-motion="subtle|fluid|expressive"]`, set by main.js. */
+
+/* ---------- timing and easing ---------- */
+html[data-motion="subtle"] {
+  --motion-fast: 90ms;
+  --motion: 140ms;
+  --motion-slow: 180ms;
+  --ease-out: cubic-bezier(.25, .8, .25, 1);
+  --ease-in: cubic-bezier(.4, 0, 1, 1);
+  --ease-spring: cubic-bezier(.25, .8, .25, 1);
+  --motion-dist: 2px;
+  --motion-scale: .99;
+}
+html[data-motion="fluid"] {
+  --motion-fast: 120ms;
+  --motion: 200ms;
+  --motion-slow: 280ms;
+  --ease-out: cubic-bezier(.16, 1, .3, 1);       /* easeOutExpo-ish: fast start, long soft landing */
+  --ease-in: cubic-bezier(.5, 0, .75, 0);
+  --ease-spring: cubic-bezier(.34, 1.4, .64, 1);
+  --motion-dist: 6px;
+  --motion-scale: .97;
+}
+html[data-motion="expressive"] {
+  --motion-fast: 150ms;
+  --motion: 260ms;
+  --motion-slow: 380ms;
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --ease-in: cubic-bezier(.55, 0, .75, .1);
+  --ease-spring: cubic-bezier(.34, 1.7, .5, 1);
+  --motion-dist: 10px;
+  --motion-scale: .94;
+}
+
+/* ---------- state colors: everything that can be hovered or selected fades ---------- */
+.list-row, .tree-row, .quick-item, .setting-row, .part-tab, .tab, .status-item, .activity-item,
+.icon-button, .btn, .chip, .ctx-chip, .input, .context-menu .item, .mod-card, .mod-tile,
+.section-header, .command-center, [data-part="titleBar.items"] > *, [data-part="edge.item"] {
+  transition-property: background-color, color, border-color, opacity, box-shadow, transform, outline-color;
+  transition-duration: var(--motion-fast);
+  transition-timing-function: var(--ease-out);
+}
+.input:focus, textarea.input:focus { transition-duration: var(--motion); }
+
+/* ---------- views, panels, editors ---------- */
+@keyframes fm-view-in { from { opacity: 0; } }
+.view-host.view-enter { animation: fm-view-in var(--motion) var(--ease-out); }
+
+@keyframes fm-content-in { from { opacity: .2; transform: scale(calc(1 - (1 - var(--motion-scale)) / 3)); } }
+.monaco-host.content-enter, .custom-host > .content-enter { animation: fm-content-in var(--motion) var(--ease-out); transform-origin: 50% 0; }
+
+/* The side pane beside the editor (Markdown preview, splits). */
+@keyframes fm-side-in { from { opacity: 0; transform: translateX(var(--motion-dist)); } }
+[data-part="editorSide"] { animation: fm-side-in var(--motion-slow) var(--ease-out); }
+
+/* Floating views lift off the page. */
+@keyframes fm-float-in { from { opacity: 0; transform: translateY(var(--motion-dist)) scale(var(--motion-scale)); } }
+.floating-enter { animation: fm-float-in var(--motion-slow) var(--ease-spring); }
+.view-drag-ghost { transition: transform var(--motion) var(--ease-out), box-shadow var(--motion) var(--ease-out); box-shadow: 0 10px 30px var(--aicode-widget-shadow, rgba(0, 0, 0, .35)); }
+.drop-target { transition: background-color var(--motion) var(--ease-out), outline-color var(--motion) var(--ease-out); }
+
+/* ---------- tabs ---------- */
+@keyframes fm-tab-in { from { max-width: 0; opacity: 0; padding-left: 0; padding-right: 0; transform: translateY(var(--motion-dist)); } to { max-width: 240px; } }
+.tab.tab-enter { animation: fm-tab-in var(--motion-slow) var(--ease-out); }
+@keyframes fm-tab-marker { from { transform: scaleX(0); opacity: 0; } }
+.tab.just-active::after { animation: fm-tab-marker var(--motion) var(--ease-spring); }
+.tab .codicon-close, .tab .close { transition: opacity var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+
+/* ---------- activity bar ---------- */
+@keyframes fm-marker-in { from { transform: scaleY(0); opacity: 0; } }
+.activity-item.just-active::before { animation: fm-marker-in var(--motion) var(--ease-spring); }
+@keyframes fm-icon-pop { 40% { transform: scale(.86); } }
+.activity-item.just-active .codicon { animation: fm-icon-pop var(--motion) var(--ease-spring); }
+
+/* ---------- pickers, menus, dialogs, toasts ---------- */
+@keyframes fm-drop-in { from { opacity: 0; transform: translate(-50%, calc(var(--motion-dist) * -1.5)) scale(var(--motion-scale)); } }
+.quick-input { animation: fm-drop-in var(--motion) var(--ease-out); }
+@keyframes fm-list-in { from { opacity: 0; transform: translateY(calc(var(--motion-dist) * -.5)); } }
+.quick-list.refresh .quick-item { animation: fm-list-in var(--motion) var(--ease-out) both; }
+.quick-list.refresh .quick-item:nth-child(2) { animation-delay: 12ms; }
+.quick-list.refresh .quick-item:nth-child(3) { animation-delay: 24ms; }
+.quick-list.refresh .quick-item:nth-child(4) { animation-delay: 36ms; }
+.quick-list.refresh .quick-item:nth-child(5) { animation-delay: 48ms; }
+.quick-list.refresh .quick-item:nth-child(n+6) { animation-delay: 60ms; }
+
+@keyframes fm-menu-in { from { opacity: 0; transform: translateY(calc(var(--motion-dist) * -.5)) scale(var(--motion-scale)); } }
+.context-menu { animation: fm-menu-in var(--motion) var(--ease-out); }
+
+@keyframes fm-dialog-in { from { opacity: 0; transform: translateY(calc(var(--motion-dist) * -1.5)) scale(var(--motion-scale)); } }
+.dialog { animation: fm-dialog-in var(--motion-slow) var(--ease-spring); }
+.dialog-backdrop { animation-duration: var(--motion-slow); }
+
+@keyframes fm-toast-in { from { opacity: 0; transform: translateY(calc(var(--motion-dist) * 2)) scale(var(--motion-scale)); } }
+.toast { animation: fm-toast-in var(--motion-slow) var(--ease-spring); }
+
+@keyframes fm-tip-in { from { opacity: 0; transform: translateY(calc(var(--motion-dist) * -.4)); } }
+.aicode-tooltip { animation: fm-tip-in var(--motion) var(--ease-out); }
+
+/* Lists that just appeared. */
+@keyframes fm-row-in { from { opacity: 0; transform: translateX(calc(var(--motion-dist) * -1)); } }
+.row-enter { animation: fm-row-in var(--motion) var(--ease-out) both; }
+@keyframes fm-card-in { from { opacity: 0; transform: translateY(var(--motion-dist)) scale(var(--motion-scale)); } }
+.card-enter { animation: fm-card-in var(--motion-slow) var(--ease-out) both; }
+
+/* Settings and Markdown pages scroll smoothly (Monaco and the trees scroll themselves). */
+.settings-page, .decl-md, .markdown-body { scroll-behavior: smooth; }
+
+/* ---------- inside the editor (Monaco's own widgets) ---------- */
+@keyframes fm-widget-in { from { opacity: 0; transform: translateY(calc(var(--motion-dist) * -.5)); } }
+.monaco-editor .suggest-widget.visible,
+.monaco-editor .parameter-hints-widget.visible,
+.monaco-editor .monaco-hover:not(.hidden),
+.monaco-editor .rename-box,
+.monaco-editor .codicon-light-bulb,
+.monaco-editor .zone-widget { animation: fm-widget-in var(--motion) var(--ease-out); }
+.monaco-editor .suggest-widget .monaco-list-row { transition: background-color var(--motion-fast) var(--ease-out); }
+.monaco-editor .find-widget { transition: transform var(--motion-slow) var(--ease-out), opacity var(--motion) var(--ease-out) !important; }
+.monaco-editor .find-widget:not(.visible) { opacity: 0; }
+
+/* Inline (ghost text) completions fade in, so a suggestion from the Local Autocomplete mod — or
+   any inline provider — arrives softly instead of popping. */
+@keyframes fm-ghost-in { from { opacity: 0; } }
+.monaco-editor .ghost-text-decoration,
+.monaco-editor .ghost-text-decoration-preview,
+.monaco-editor .ghost-text { animation: fm-ghost-in var(--motion-slow) var(--ease-out); }
+
+/* Highlights of the word under the cursor and matching brackets settle in. */
+@keyframes fm-hl-in { from { opacity: 0; } }
+.monaco-editor .wordHighlight, .monaco-editor .wordHighlightStrong, .monaco-editor .bracket-match { animation: fm-hl-in var(--motion) var(--ease-out); }
+
+/* ---------- expressive extras ---------- */
+html[data-motion="expressive"] .btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 3px 10px var(--aicode-widget-shadow, rgba(0, 0, 0, .25)); }
+html[data-motion="expressive"] .btn:active:not(:disabled) { transform: translateY(0) scale(.97); box-shadow: none; }
+html[data-motion="expressive"] .mod-card:hover, html[data-motion="expressive"] .mod-tile:hover { transform: translateY(-2px); }
+html[data-motion="expressive"] .activity-item:hover .codicon { transform: scale(1.08); }
+
+.fm-ripple-host { position: relative; overflow: hidden; }
+.fm-ripple {
+  position: absolute; border-radius: 50%; pointer-events: none;
+  background: currentColor; opacity: .25; transform: scale(0);
+  animation: fm-ripple var(--motion-slow) var(--ease-out) forwards;
+}
+@keyframes fm-ripple { to { transform: scale(1); opacity: 0; } }

@@ -27,7 +27,8 @@ import { openWindow, resolveLayout, layouts, type WindowSpec, type WindowLayout 
 import type { ViewLocation, LayoutState, TitleHandle, StatusHandle } from "./core/workbench";
 
 // "mac", "windows" or "linux", for styles that differ (on macOS the title bar leaves room for the
-// window buttons; elsewhere the system draws its own title bar above it).
+// window buttons; elsewhere the window has no frame and the title bar draws the menus and the
+// window buttons itself, see titlebar.ts).
 const ua = navigator.userAgent.toLowerCase();
 document.documentElement.dataset.platform = navigator.platform.toLowerCase().includes("mac") ? "mac" : ua.includes("windows") ? "windows" : "linux";
 

@@ -1,0 +1,249 @@
+{
+  "id": "aicode.local-autocomplete",
+  "name": "Local Autocomplete",
+  "version": "1.3.0",
+  "description": "Code completion and commit messages from small models running inside AICode — nothing to install: the mod brings its own engine (llama.cpp) and picks what suits each machine (a dedicated GPU through Vulkan, Apple silicon through Metal, or the CPU) and the model size to match, downloading it the first time. Ghost text as you type in the editor (fill-in-the-middle, with the code around the cursor and your other open files); Tab accepts. Models: Qwen2.5-Coder (default), JetBrains Mellum, StarCoder2, CodeGemma, DeepSeek-Coder. With the Source Control (Git) mod on, also ghost text in its message box and a ✨ button that writes the whole commit message from the staged diff — without it, only code completion. Can also use an Ollama or OpenAI-compatible server you run. Nothing leaves your machine.",
+  "author": "AICode",
+  "icon": "sparkle",
+  "main": "main.js",
+  "api": 1,
+  "activation": [
+    "onStartup"
+  ],
+  "permissions": [
+    "network",
+    "process",
+    "fs:read",
+    "fs:write",
+    "open-external"
+  ],
+  "optionalDependencies": [
+    "aicode.git"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "autocomplete.toggle",
+        "title": "Toggle Inline Completions",
+        "category": "Autocomplete"
+      },
+      {
+        "id": "autocomplete.trigger",
+        "title": "Suggest Inline Completion",
+        "category": "Autocomplete",
+        "keybinding": "alt+\\"
+      },
+      {
+        "id": "autocomplete.generateCommit",
+        "title": "Generate Commit Message",
+        "category": "Autocomplete",
+        "keybinding": "mod+alt+m"
+      },
+      {
+        "id": "autocomplete.pickModel",
+        "title": "Choose Model…",
+        "category": "Autocomplete"
+      },
+      {
+        "id": "autocomplete.pullModels",
+        "title": "Download the Chosen Models",
+        "category": "Autocomplete"
+      },
+      {
+        "id": "autocomplete.stopEngine",
+        "title": "Stop the Built-in Engine",
+        "category": "Autocomplete"
+      },
+      {
+        "id": "autocomplete.openModelsFolder",
+        "title": "Show Models Folder",
+        "category": "Autocomplete"
+      },
+      {
+        "id": "autocomplete.menu",
+        "title": "Autocomplete Menu",
+        "category": "Autocomplete"
+      }
+    ],
+    "settings": {
+      "enabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Ghost text suggestions as you type in the editor."
+      },
+      "commitInline": {
+        "type": "boolean",
+        "default": true,
+        "description": "Ghost text suggestions in the Source Control message box (Tab accepts)."
+      },
+      "provider": {
+        "type": "string",
+        "enum": [
+          "builtin",
+          "ollama",
+          "openai"
+        ],
+        "default": "builtin",
+        "description": "builtin: llama.cpp run by this mod, with models it downloads itself (nothing to install). ollama: an Ollama server you run. openai: any OpenAI-compatible server (LM Studio, llama.cpp server, vLLM, Jan…)."
+      },
+      "builtinCodeModel": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "qwen2.5-coder-0.5b",
+          "qwen2.5-coder-1.5b",
+          "qwen2.5-coder-3b",
+          "qwen2.5-coder-7b",
+          "mellum-4b",
+          "starcoder2-3b",
+          "codegemma-2b",
+          "deepseek-coder-1.3b"
+        ],
+        "default": "auto",
+        "description": "Built-in engine: model for code completion and commit ghost text (fill-in-the-middle). auto: what suits this machine — Qwen2.5-Coder 7B on a GPU with 10 GB+, 3B with 6 GB+ or Apple silicon with 16 GB+, 1.5B on the CPU, 0.5B under 8 GB of RAM. Choices: qwen2.5-coder-0.5b (Alibaba, ~530 MB), qwen2.5-coder-1.5b (Alibaba, ~1.6 GB), qwen2.5-coder-3b (Alibaba, ~3.3 GB), qwen2.5-coder-7b (Alibaba, ~8.1 GB), mellum-4b (JetBrains, ~4.3 GB), starcoder2-3b (BigCode, ~1.9 GB), codegemma-2b (Google, ~1.6 GB), deepseek-coder-1.3b (DeepSeek, ~1.4 GB)."
+      },
+      "builtinCommitModel": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "qwen2.5-coder-0.5b-instruct",
+          "qwen2.5-coder-1.5b-instruct",
+          "qwen2.5-coder-3b-instruct",
+          "qwen2.5-coder-7b-instruct",
+          "llama-3.2-1b-instruct",
+          "llama-3.2-3b-instruct"
+        ],
+        "default": "auto",
+        "description": "Built-in engine: small instruction model that writes whole commit messages (downloaded the first time you generate one). auto: what suits this machine. Choices: qwen2.5-coder-0.5b-instruct (Alibaba, ~530 MB), qwen2.5-coder-1.5b-instruct (Alibaba, ~1.1 GB), qwen2.5-coder-3b-instruct (Alibaba, ~3.3 GB), qwen2.5-coder-7b-instruct (Alibaba, ~8.1 GB), llama-3.2-1b-instruct (Meta, ~1.3 GB), llama-3.2-3b-instruct (Meta, ~2.0 GB)."
+      },
+      "engineBackend": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "cpu",
+          "vulkan"
+        ],
+        "default": "auto",
+        "description": "Built-in engine on Windows and Linux. auto: the GPU (Vulkan: NVIDIA, AMD, Intel Arc) when the machine has a dedicated one, else the CPU; if the GPU build fails to start it falls back to the CPU by itself. macOS always uses Metal."
+      },
+      "engineVersion": {
+        "type": "string",
+        "default": "b12362",
+        "description": "llama.cpp release the built-in engine is downloaded from (github.com/ggml-org/llama.cpp/releases)."
+      },
+      "gpu": {
+        "type": "boolean",
+        "default": true,
+        "description": "Built-in engine: put the model on the GPU when the engine has one (Metal, Vulkan)."
+      },
+      "threads": {
+        "type": "number",
+        "default": 0,
+        "description": "Built-in engine: CPU threads (0: llama.cpp decides)."
+      },
+      "contextSize": {
+        "type": "number",
+        "default": 8192,
+        "description": "Built-in engine: context window in tokens."
+      },
+      "idleMinutes": {
+        "type": "number",
+        "default": 5,
+        "description": "Built-in engine: stop it after this many minutes without suggestions, to give its RAM / VRAM back (it starts again by itself, in a second or two). If AICode quits abruptly, the engine is stopped within 15 seconds."
+      },
+      "endpoint": {
+        "type": "string",
+        "default": "",
+        "description": "Ollama / OpenAI-compatible only. Empty: http://127.0.0.1:11434 for Ollama, http://127.0.0.1:1234/v1 for OpenAI-compatible (LM Studio)."
+      },
+      "codeModel": {
+        "type": "string",
+        "default": "qwen2.5-coder:1.5b-base",
+        "description": "Ollama / OpenAI-compatible only: model for code (a base / FIM model is best)."
+      },
+      "commitModel": {
+        "type": "string",
+        "default": "qwen2.5-coder:1.5b",
+        "description": "Ollama / OpenAI-compatible only: instruction model for whole commit messages."
+      },
+      "fimFormat": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "qwen",
+          "deepseek",
+          "codellama",
+          "starcoder",
+          "codegemma"
+        ],
+        "default": "auto",
+        "description": "Ollama / OpenAI-compatible only: fill-in-the-middle tokens of the code model. auto: guessed from its name."
+      },
+      "keepAlive": {
+        "type": "string",
+        "default": "30m",
+        "description": "Ollama only: how long it keeps the model loaded after the last request."
+      },
+      "debounceMs": {
+        "type": "number",
+        "default": 0,
+        "description": "Wait this long after the last keystroke before asking the model (ms). 0: automatic — 100 ms on a GPU, 250 ms on the CPU."
+      },
+      "maxTokens": {
+        "type": "number",
+        "default": 256,
+        "description": "Longest suggestion, in tokens. Long enough for whole blocks; the built-in engine also stops where the current block ends."
+      },
+      "multiline": {
+        "type": "boolean",
+        "default": true,
+        "description": "Allow suggestions over several lines (off: only the rest of the current line)."
+      },
+      "temperature": {
+        "type": "number",
+        "default": 0.1,
+        "description": "Lower is more predictable."
+      },
+      "maxPrefixChars": {
+        "type": "number",
+        "default": 8000,
+        "description": "Code before the cursor sent as context."
+      },
+      "maxSuffixChars": {
+        "type": "number",
+        "default": 2000,
+        "description": "Code after the cursor sent as context."
+      },
+      "extraContextChars": {
+        "type": "number",
+        "default": 6000,
+        "description": "Built-in engine: characters of the other open files sent as context (their imports, types and declarations), like Copilot's neighboring tabs. 0 turns it off."
+      },
+      "maxLatencyMs": {
+        "type": "number",
+        "default": 2500,
+        "description": "Built-in engine: a long suggestion is cut after this many milliseconds of generation, so the ghost text never keeps you waiting."
+      },
+      "disabledLanguages": {
+        "type": "string",
+        "default": "plaintext,log",
+        "description": "Comma-separated Monaco language ids where the editor gets no suggestions."
+      },
+      "commitStyle": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "conventional",
+          "plain"
+        ],
+        "default": "auto",
+        "description": "auto: follows the repository's recent commits. conventional: feat:, fix:, chore:… plain: a short imperative sentence."
+      },
+      "commitLanguage": {
+        "type": "string",
+        "default": "",
+        "description": "Language for generated commit messages (English, Español…). Empty: the one the recent commits use."
+      }
+    }
+  }
+}
