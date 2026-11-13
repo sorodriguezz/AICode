@@ -1200,7 +1200,15 @@ export async function activate(ctx) {
     clear(view);
     const folder = ctx.workspace.folder();
     if (!folder) {
-      view.append(h("div", { class: "pad stack" }, h("div", null, "Open a folder to use source control."), ctx.commands.exists("explorer.openFolder") ? h("button", { class: "btn block", onclick: () => ctx.commands.execute("explorer.openFolder") }, "Open Folder") : null));
+      view.append(
+        h(
+          "div",
+          { class: "pad stack" },
+          h("div", null, "In order to use Git features, you can open a folder containing a Git repository or clone from a URL."),
+          ctx.commands.exists("explorer.openFolder") ? h("button", { class: "btn block", onclick: () => ctx.commands.execute("explorer.openFolder") }, "Open Folder") : null,
+          h("button", { class: "btn block", disabled: !!busy, onclick: clone }, "Clone Repository"),
+        ),
+      );
       return;
     }
     if (!root || !status) {
