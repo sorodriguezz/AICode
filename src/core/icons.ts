@@ -12,6 +12,7 @@
 //
 // or in mod.json: "contributes": { "icons": { "files": "icons/files.svg", "docker": { "path": "…" } } }
 
+import { rankOf } from "./layers";
 import { type Disposable, toDisposable } from "./ui";
 
 export type IconSource =
@@ -65,8 +66,10 @@ function paint() {
     styleEl.dataset.owner = "icons";
     document.head.append(styleEl);
   }
-  // Later entries win: a mod enabled after another draws over it, and removing one shows the one below.
-  styleEl.textContent = entries.map((e) => e.css).join("\n");
+  // Later entries win, in layer order (layers.ts): a user's mod draws over a bundled one whatever
+  // loaded first; within a mod, the one set last. Removing one shows the one below.
+  const ordered = entries.map((e, i) => ({ e, i })).sort((a, b) => rankOf(a.e.owner) - rankOf(b.e.owner) || a.i - b.i);
+  styleEl.textContent = ordered.map(({ e }) => e.css).join("\n");
 }
 
 /** `resolve` turns a mod-relative `path` into a URL (the caller knows the mod). */

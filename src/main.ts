@@ -79,7 +79,10 @@ async function boot() {
   const placementFor = () => {
     const base = { ...(config.core<Record<string, any>>("workbench.viewPlacement", {}) ?? {}) };
     let order = 1;
-    for (const [id, place] of Object.entries(layoutViews)) if (place === "sidebar" || place === "secondary" || place === "panel") base[id] = { location: place, order: order++ * 10 };
+    for (const [id, place] of Object.entries(layoutViews)) {
+      if (place === "sidebar" || place === "secondary" || place === "panel") base[id] = { location: place, order: order++ * 10 };
+      else if (place === "floating") base[id] = { ...(base[id] ?? {}), float: base[id]?.float ?? true };
+    }
     return base;
   };
   const hiddenViews = () => [...(config.core<string[]>("workbench.hiddenViews", []) ?? []), ...layoutHidden];
@@ -96,6 +99,10 @@ async function boot() {
   wb.setHiddenViews(hiddenViews());
   // Theme first, so nothing flashes in the wrong colors.
   applyTheme(BUILTIN_DARK, await BUILTIN_DARK.load());
+  // Menu bar icons this window's mods set before a reload: they put back the ones they still want.
+  await invoke("app_tray_reset").catch(() => {});
+  // …and so do native contexts and global shortcuts.
+  await invoke("native_reset").catch(() => {});
   await host.load(modList);
   config.installJsonSchemas(modList.map((m) => m.id));
   const allThemes = (): ThemeEntry[] => [BUILTIN_DARK, BUILTIN_LIGHT, ...host.themes];
@@ -411,6 +418,8 @@ async function boot() {
   // The last window just closes: its session (unsaved text included) is kept, as on quit.
   await getCurrentWindow().onCloseRequested(async (event) => {
     const others = (await invoke<number>("window_count")) > 1;
+    // A mod can keep the window (and the app) running: it hides it instead (`ctx.window.onWillClose`).
+    if (!(await host.allowClose({ lastWindow: !others }))) return event.preventDefault();
     if (!others) {
       clearTimeout(timer);
       await invoke("session_save", { data: sessionData() });

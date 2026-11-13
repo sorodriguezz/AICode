@@ -66,7 +66,9 @@ they can reach is described in [CONFIGURATION.md](CONFIGURATION.md).
 
 - **Locations**: `sidebar` (primary side bar, with an activity bar icon), `secondary` (right side
   bar, tabs in its header), `panel` (bottom, tabs in its header). A part with no views is not shown.
-- **Keys**: `mod` is ⌘ on macOS and Ctrl elsewhere; chords are space separated (`mod+k mod+o`).
+- **Keys**: `mod` is ⌘ on macOS and Ctrl elsewhere; chords are space separated (`mod+k mod+o`). A
+  modifier alone is a key too, tapped (pressed and released with nothing else): `shift shift` is
+  Shift tapped twice quickly, like JetBrains' Search Everywhere; also `alt alt`, `cmd cmd`, `ctrl ctrl`.
 
 ### Activation events
 
@@ -92,12 +94,16 @@ Prefer the narrowest one. `onStartup` is for mods whose job is to be running (th
 | `open-external` | `ctx.external.open` — links, files, other apps |
 | `network` | `ctx.http` — HTTP requests to any address |
 | `secrets` | `ctx.secrets` — the macOS Keychain |
+| `app` | `ctx.app` — menu bar icons, the Dock, quitting, global shortcuts; `ctx.window.hide/onWillClose` — running in the background |
+| `native` | `ctx.native` — native macOS code written in JavaScript (JXA), inside AICode or in a helper process |
 
 They tell the user what a mod does: the Mods page shows them and the user confirms them when
 enabling the mod. **They do not limit it**: an enabled mod can call anything in `ctx`, declared or
-not (run `bash`, `curl`, any program; read and write any file). AICode is meant to be changed
-without limits, so declaring is for the user's information. Mods share the window's JavaScript
-realm: install mods you trust.
+not (run `bash`, `curl`, any program; read and write any file; run native code). The same goes for
+JSON mods: an action runs even when its permission is missing (the Mods page still lists what the
+actions use, and `pnpm check:mods` warns). AICode is meant to be changed without limits, so
+declaring is for the user's information. Mods share the window's JavaScript realm: install mods
+you trust.
 
 ## Where mods live
 
@@ -105,6 +111,21 @@ realm: install mods you trust.
 `AICode/profiles/<profile>/mods/<id>` (only that profile; exported with it). A later one replaces an
 earlier one with the same id. *Install from File/Folder* and *Create Mod* put mods in the current
 profile.
+
+## Who wins
+
+When two things set the same thing, the order is always
+
+```
+app base  →  bundled mods  →  the user's mods  →  the user's configuration
+```
+
+and the one on the right wins: settings (`configurationDefaults`), CSS (`styles`, `ctx.styles` — the
+stylesheets are placed in that order in the page), icons (`icons`, `ctx.icons.set`) and keyboard
+shortcuts (the user's `keybindings` beat every mod's, even one bound later). It does not depend on
+which mod loaded first; within one layer, mods go by id. So a user's mod can restyle or rebind
+anything a bundled mod did, and the user's own settings have the last word. See
+[CONFIGURATION.md](CONFIGURATION.md).
 
 ## Declarative mods
 
@@ -146,8 +167,12 @@ export async function activate(ctx) {
 | `ctx.commands` | `register(id, fn)`, `execute(id, ...args)`, `bind(key, id)`, `exists(id)`, `list()` |
 | `ctx.views` | `provide(id, provider)`, `reveal(id)`, `isVisible(id)`, `setBadge(id, n)`, `refreshActions()` |
 | `ctx.statusBar` | `add({ text, icon, tooltip, command, align, priority })` → `{ update, dispose }` |
+| `ctx.window` (this window) | `hide()` (it keeps running: mods, programs, terminals), `show()`, `isVisible()`, `minimize()`, `focus()`, `onWillClose(({ lastWindow }) => false \| …)` (return `false` to keep the window — hide it instead to keep working in the background) |
+| `ctx.app` | `tray({ id, icon, title, tooltip, template, menu: [{ id, label, run \| command, checked, enabled, accelerator, separator, submenu }], menuOnLeftClick, onClick(e), onDoubleClick(e) })` → `{ update(patch), dispose }` (an icon in the macOS menu bar; `icon` is a codicon name, SVG markup, a `.png`/`.svg` of the mod, an absolute path, a `data:` URL or `"app"`), `setDockVisible(bool)` (false: an app that lives in the menu bar), `setBadge(text \| number \| null)`, `quit()`, `onReopen(fn)` (the Dock icon was clicked; with no window on screen, hidden windows come back by themselves), `globalShortcut(key, fn, { onRelease })` → disposable (a shortcut for the whole system: it works with AICode in the background or hidden and needs no permission from macOS; `key` like `"mod+shift+space"`) |
+| `ctx.native` | `eval(source, { args })` → result, `open(source, { args, onEvent })` → `{ id, call(name, ...args), on(channel, fn), dispose() }`, `spawn(source, { args, onMessage, onStderr, onExit })` → `{ send(data), kill(), done }` — native macOS code written in JavaScript (see *Native code* below) |
+| `ctx.motion` | `enabled()`, `play(el, cls)`, `leave(el, cls, maxMs)`, `flip(target, mutate, { duration, easing, key })` (elements animate from where they were to where `mutate()` put them), `onDidChange(fn)` — all of them do nothing when the user turned animations off or macOS "Reduce motion" is on |
 | `ctx.window` | `showInfo/showWarning/showError(msg, ...actions)`, `showQuickPick(items, { placeholder, matchDescription, activeIndex, onActive(item), onButton(item, button) })` (an item's `buttons: [{ icon, title, id }]` show on its row; `onButton` returns `"remove"` to drop that row or `"close"`), `showInputBox(opts)`, `confirm(msg, detail?, primary?)`, `contextMenu(x, y, [{ label, run, keybinding, disabled, checked, icon, separator, submenu }], { menu, context })` (`menu`: an id other mods can add to), `pickFolder()`, `pickFiles()`, `copy(text)` |
-| `ctx.editor` | `active()`, `all()`, `getText(idOrPath?)`, `getSelection()`, `replaceSelection(text)`, `open(path, {line})`, `focus(id)`, `newUntitled(text, lang)`, `openCustom({ title, icon, render })`, `close(id)`, `save(id?)`, `proposeEdit(target, { newText } \| { edits }, { description })` → accepted?, `onDidChangeActive/onDidChangeEditors/onDidSave/onDidChangeContent(fn)`, `monacoEditor()`, `addTitleAction({ id, icon, title, order, when(info), run(info) })` (an icon in the tab bar, VS Code's editor/title), `refreshTitleActions()`, `registerEditorType({ id, label, default, hasText(info), when(info), open(info) })` ("Reopen Editor With…"; a tab opened with `openCustom({ forPath, editorType })` is that view of the file and comes back after a restart; `default: true` opens matching files straight in it, never as text first, as preview tabs on a single click; binary files go to the first matching type; `hasText` returning false leaves the text editor out of "Reopen Editor With…" — see `mods/aicode.image-preview`), `open(path, { asText: true })` (the text editor even so), `openSide({ title, icon, render, actions: [{ id, icon, title, run }], onDidChangeMaximized(on) })` / `closeSide()` (a pane beside the editor, with its own tab bar icons), `maximizeSide(on?)` / `isSideMaximized()` (that pane over the whole editor area — the Markdown preview's *Maximize*), `openPage(spec)` (the modal editor, or a tab when it is off), `registerBreadcrumbs({ languages, path(text, line, column) → [{ name, line, icon }] })` (the breadcrumbs after the file name: where the cursor is — the JSON & YAML mod's keys, the Markdown mod's headings) |
+| `ctx.editor` | `active()`, `all()`, `getText(idOrPath?)`, `getSelection()`, `replaceSelection(text)`, `open(path, {line})`, `focus(id)`, `newUntitled(text, lang)`, `openCustom({ title, icon, render })`, `close(id)`, `save(id?)`, `proposeEdit(target, { newText } \| { edits }, { description })` → accepted?, `onDidChangeActive/onDidChangeEditors/onDidSave/onDidChangeContent(fn)`, `monacoEditor()`, `addTitleAction({ id, icon, title, order, when(info), run(info) })` (an icon in the tab bar, VS Code's editor/title), `refreshTitleActions()`, `registerEditorType({ id, label, default, hasText(info), when(info), open(info) })` ("Reopen Editor With…"; a tab opened with `openCustom({ forPath, editorType })` is that view of the file and comes back after a restart; `default: true` opens matching files straight in it, never as text first, as preview tabs on a single click; binary files go to the first matching type; `hasText` returning false leaves the text editor out of "Reopen Editor With…" — see `mods/aicode.image-preview`), `open(path, { asText: true })` (the text editor even so), `openSide({ title, icon, render, actions: [{ id, icon, title, run }], onDidChangeMaximized(on) })` / `closeSide()` (a pane beside the editor, with its own tab bar icons), `maximizeSide(on?)` / `isSideMaximized()` (that pane over the whole editor area — the Markdown preview's *Maximize*), `openPage(spec)` (the modal editor, or a tab when it is off), `registerBreadcrumbs({ languages, path(text, line, column) → [{ name, line, icon }] })` (the breadcrumbs after the file name: where the cursor is — the JSON & YAML mod's keys, the Markdown mod's headings), `model(idOrPath)` (an open document's Monaco model), `createEditor(el, idOrPath?, options?)` (another Monaco editor with the main one's options, kept in step; on a document it shares its text, dirty state, saving and undo — splits, peeks, floating editors), `moveTab(id, beforeId \| null)`, `onDidMoveTab(fn)`, `onWillRenderTabs(fn)` / `onDidRenderTabs(fn)` (the tab bar is rebuilt: measure before, animate after) |
 | `ctx.fs` (binary) | `readDataUrl(path)` (any file as a `data:` URL for an `<img>`/`<video>`), `readBytes(path)` → `Uint8Array` (up to 40 MB) |
 | `ctx.workspace` | `folder()`, `setFolder(path)` (closes the previous folder's tabs first; resolves `false` if the user cancels a save prompt), `onDidChangeFolder(fn)`, `listFiles()` |
 | `ctx.fs` | `readText`, `writeText`, `readDir`, `stat`, `create(path, dir)`, `rename(from, to)` (open editors follow), `delete(path, { trash })` (to the Trash by default), `copy(from, to)`, `reveal(path)` (Finder / Explorer), `watch(dir, fn)` (changes directly inside `dir`), `listFiles(root)`, `search(root, query, opts)`, `home()` |
@@ -163,7 +188,7 @@ export async function activate(ctx) {
 | `ctx.settings` | `get(key, fallback)`, `getNow(key, fallback)`, `set(key, value)`, `all()`, `inspect(key)`, `onDidChange(fn)`: this mod's settings, by layers (the user's value, else a mod's default, else the declared default) |
 | `ctx.config` | `get(key)` (a core setting), `getFor(owner, key)`, `all(owner)`, `inspect(key, owner)`, `update(key, value, owner)`, `watch(keys, fn)`, `onDidChange(fn)`, `schema(owner)`: the whole configuration |
 | `ctx.styles` | `add(css)`, `addFile(path)`: CSS that stays while the mod runs |
-| `ctx.workbench` | `root()`, `part(name)`, `parts(name)`, `addTitleItem({ icon, text, title, command, run, align, order })`, `addActivityItem({ icon, title, command, run, position, order, badge, checked })` → `{ update, dispose }`, `setViewIcon(viewId, icon)`, `options()`, `setOptions(o)`, `toggle(loc)`, `isPartVisible(loc)`, `views()`, `moveView(id, loc)`, `setCenterView(id)`, `centerView()`, `drawIconThemeWith(themeId, targetId \| null)` (in this window, draw a file icon theme with another one while it stays the chosen one — the Auto pack) |
+| `ctx.workbench` | `root()`, `part(name)`, `parts(name)`, `addTitleItem({ icon, text, title, command, run, align, order })`, `addActivityItem({ icon, title, command, run, position, order, badge, checked })` → `{ update, dispose }`, `setViewIcon(viewId, icon)`, `options()`, `setOptions(o)`, `toggle(loc)`, `isPartVisible(loc)`, `views()`, `moveView(id, loc)`, `setCenterView(id)`, `centerView()`, `drawIconThemeWith(themeId, targetId \| null)` (in this window, draw a file icon theme with another one while it stays the chosen one — the Auto pack), `whereIs(viewId)` (`"sidebar"`, `"secondary"`, `"panel"`, `"center"`, `"floating"`, `"external"`, `"hidden"`), `floatView(id, { x, y, w, h })`, `dockView(id, to?)`, `closeFloating(id)`, `floatRect(id)`, `setFloatRect(id, rect)`, `hostView(id, el)` → disposable (the view shows inside the mod's own element until disposed), `addEdge({ side: "left" \| "right" \| "top" \| "bottom", order, id, class })` → `{ el, dispose }` (a strip of the mod's own at an edge of the window), `addDropTarget(el, { kinds: ["view", "tab"], over(item, e), drop(item, e), hoverClass })` → disposable (the element takes dragged views and tabs; `item` is `{ kind, id }`), `onDidMoveView(({ id, from, to }) => …)`, `onDidChangeLayout(fn)`, `onWillRender(fn)` / `onDidRender(fn)` (around each rebuild of the activity bar and part headers), `onDidStartDrag(fn)` / `onDidEndDrag(fn)` (`{ kind, id, ghost, dropped }`) |
 | `ctx.windows` | `open({ layout, view, title, width, height, alwaysOnTop, settings })`, `openView(id, opts)`, `layouts()`, `current()`, `setAlwaysOnTop(on)`, `isAlwaysOnTop()`, `reopen()`, `moveViewToNewWindow(id)` |
 | `ctx.mods` | `get(id)` (activates it, returns its exports), `isEnabled(id)`, `contributions(point)` (what enabled mods declare under `contributes.<point>`, each with `mod` = its id — how a mod offers an extension point of its own) |
 | `ctx.ui` | `h(tag, attrs, ...children)`, `icon(name)`, `iconButton(name, title, fn)`, `clear(el)`, `basename`, `dirname`, `joinPath`, `fileIcon`, `fileIconColor` (codicons), `fileIconEl(name)` (the icon theme's icon for a file, a codicon without one), `folderIconEl(name, expanded)` (a folder's, or null when the theme draws no folders) |
@@ -218,6 +243,140 @@ To change what is already there: `ctx.icons.set(name, …)` draws any icon diffe
 them are codicons: `files`, `search`, `source-control`, `gear`, `bell`…), `setViewIcon` changes one
 view's icon, and the `workbench.hide` setting hides parts and items (`"statusBar.item:<id>"`,
 `"css:<selector>"`). With `ctx.styles` a mod can restyle anything.
+
+## Shaping the app: background, panels, splits, animations
+
+AICode ships none of these; it gives the parts, and a mod puts them together.
+
+**Keep working when the window closes** (the menu bar, like Docker Desktop or Slack):
+
+```js
+ctx.window.onWillClose(async () => { await ctx.window.hide(); return false; }); // hide instead of close
+ctx.app.tray({
+  icon: "sparkle", tooltip: "AICode",
+  menu: [
+    { label: "Show AICode", run: () => ctx.window.show() },
+    { separator: true },
+    { label: "Quit", run: () => ctx.app.quit() },
+  ],
+});
+// ctx.app.setDockVisible(false) as well: an app that lives only in the menu bar.
+```
+
+A hidden window keeps everything running: its mods, programs (`ctx.process`), terminals, the MCP
+server. ⌘Q still quits; clicking the Dock icon brings hidden windows back.
+
+**A second activity bar on the right** (JetBrains' tool window stripe):
+
+```js
+const stripe = ctx.workbench.addEdge({ side: "right", class: "my-stripe" });
+for (const id of ["explorer", "search", "terminal"]) {
+  stripe.el.append(ctx.ui.iconButton(ctx.workbench.views().find((v) => v.id === id)?.icon ?? "circle", id, () => ctx.views.reveal(id)));
+}
+// A dock of its own that takes views dragged onto it:
+const dock = ctx.ui.h("div", { class: "my-dock" });
+stripe.el.append(dock);
+ctx.workbench.addDropTarget(dock, { kinds: ["view"], drop: ({ id }) => ctx.workbench.hostView(id, dock) });
+```
+
+**Floating panels**: `ctx.workbench.floatView("terminal", { x: 80, y: 60, w: 600, h: 320 })`, or as a
+default (the user can still change it): `"configurationDefaults": { "core": { "workbench.viewPlacement":
+{ "terminal": { "float": true } } } }`.
+
+**Split editor**: a second Monaco editor on the same document, in the pane beside the editor (or in
+a floating view, or in any element):
+
+```js
+ctx.editor.addTitleAction({ id: "split", icon: "split-horizontal", title: "Split Editor", when: (i) => !!i?.path, run: (info) =>
+  ctx.editor.openSide({ title: info.title, icon: "split-horizontal", render: (el) => { el.style.height = "100%"; ctx.editor.createEditor(el, info.id); } }),
+});
+```
+
+**Animations**: everything has a CSS class while it happens (`body.view-dragging`, `.view-drag-ghost`,
+`.drop-target`, `.drop-before/.drop-after`, `.floating-view`, `.tab-enter`, `.view-enter`…), so most
+animations are just `ctx.styles.add(…)`. For things that move (tabs reordering, icons moving), measure
+before the redraw and animate after:
+
+```js
+// Tabs slide to their new place when one is dragged: measure before the tab bar is rebuilt, animate after.
+const bar = () => [...document.querySelectorAll('[data-part="tab"]')];
+let rects = new Map();
+ctx.editor.onWillRenderTabs(() => (rects = new Map(bar().map((t) => [t.dataset.doc, t.getBoundingClientRect()]))));
+ctx.editor.onDidRenderTabs(() => {
+  if (!ctx.motion.enabled()) return;
+  for (const t of bar()) {
+    const r = rects.get(t.dataset.doc), now = t.getBoundingClientRect();
+    if (r && r.left !== now.left) t.animate([{ transform: `translateX(${r.left - now.left}px)` }, { transform: "none" }], { duration: 160, easing: "ease-out" });
+  }
+});
+// A change of your own: ctx.motion.flip(element, () => change()) does both steps.
+ctx.workbench.onDidStartDrag(({ ghost }) => ctx.motion.play(ghost, "my-lift"));
+```
+
+Everything in `ctx.motion` respects the user's choice (`animations`) and macOS "Reduce motion".
+
+## Native code, in JavaScript
+
+A mod never needs Rust or a compiler to reach macOS. `ctx.native` runs **JavaScript for Automation**
+(JXA, the JavaScript macOS ships with) with its bridge to Objective-C: every Cocoa class is on `$`
+(`$.NSApplication`, `$.NSWindow`, `$.NSStatusBar`, `$.NSEvent`, `$.NSWorkspace`…), `ObjC.import`
+loads any framework, a JS function works wherever a block is expected, and
+`ObjC.registerSubclass` makes delegates and targets.
+
+**Inside AICode** (`eval`, `open`): the code runs in AICode's own process, on the main thread, so
+`$.NSApplication.sharedApplication` *is* AICode and `.windows` are its windows.
+
+```js
+// Once: a function body; `args` is opts.args; return something JSON-able.
+const info = await ctx.native.eval(`
+  const w = $.NSApplication.sharedApplication.windows.objectAtIndex(0);
+  w.setAlphaValue(args.alpha);                      // the real NSWindow
+  return { title: ObjC.unwrap(w.title), screens: $.NSScreen.screens.count };
+`, { args: { alpha: 0.95 } });
+
+// A context that stays: its functions, state, observers and timers live until dispose().
+// emit(channel, data) inside reaches on(channel, fn) here.
+const nat = await ctx.native.open(`
+  let monitor = null;
+  function watchKeys() {                            // every key pressed in AICode, natively
+    monitor = $.NSEvent.addLocalMonitorForEventsMatchingMaskHandler($.NSEventMaskKeyDown, (ev) => {
+      emit("key", { code: ev.keyCode });
+      return ev;                                    // let it through
+    });
+  }
+  function dispose() { if (monitor) $.NSEvent.removeMonitor(monitor); }   // runs on dispose()
+`);
+nat.on("key", ({ code }) => console.log("key", code));
+await nat.call("watchKeys");
+```
+
+Code here holds up the window while it runs (AppKit lives on the main thread): keep it short, and
+let callbacks (timers, observers, monitors, delegates) do the waiting.
+
+**In a helper process** (`spawn`): `osascript -l JavaScript` with the same bridge, for code that
+loops, waits or uses the system rather than AICode. It gets `args`, `send(data)` (→ `onMessage`),
+`receive(fn)` (← `send()` from the mod) and `keepAlive()` (runs until `kill()` or the mod is off).
+
+```js
+// Tells the mod whenever macOS switches between light and dark.
+const helper = await ctx.native.spawn(`
+  const mode = () => ObjC.unwrap($.NSUserDefaults.standardUserDefaults.stringForKey("AppleInterfaceStyle")) || "Light";
+  send({ mode: mode() });
+  $.NSDistributedNotificationCenter.defaultCenter.addObserverForNameObjectQueueUsingBlock(
+    "AppleInterfaceThemeChangedNotification", $(), $.NSOperationQueue.mainQueue, () => send({ mode: mode() }));
+  receive(() => send({ mode: mode() }));            // and when the mod asks
+  keepAlive();
+`, { onMessage: (m) => ctx.window.showInfo(`macOS is in ${m.mode} mode`) });
+helper.send({});
+```
+
+**Global shortcuts** have their own call, which needs no macOS permission:
+`await ctx.app.globalShortcut("mod+shift+space", () => ctx.window.show())`. Watching every key in
+*other* apps (`addGlobalMonitorForEvents…`) works from `ctx.native` too, once the user allows AICode
+in System Settings › Privacy & Security › Accessibility — that is macOS's rule, not AICode's.
+
+Other languages work the same way through `ctx.process`: a Swift script (`swift file.swift`), Python
+with PyObjC, AppleScript (`osascript`), or any binary the mod ships in its folder.
 
 ## Tool mods: Docker, cloud CLIs, API clients, databases
 

@@ -37,6 +37,8 @@ pub const PERMISSIONS: &[(&str, &str)] = &[
     ("open-external", "Open links and other apps"),
     ("network", "Make HTTP requests to any address"),
     ("secrets", "Keep passwords and tokens in the macOS Keychain"),
+    ("app", "Keep running in the background: menu bar icons, the Dock, hiding windows, global shortcuts"),
+    ("native", "Run native macOS code (JavaScript for Automation) inside AICode"),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

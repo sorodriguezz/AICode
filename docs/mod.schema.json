@@ -434,7 +434,11 @@
           "process",
           "pty",
           "mcp-server",
-          "open-external"
+          "open-external",
+          "network",
+          "secrets",
+          "app",
+          "native"
         ]
       }
     },

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "mods");
-const PERMS = new Set(["fs:read", "fs:write", "process", "pty", "mcp-server", "open-external", "network", "secrets"]);
+const PERMS = new Set(["fs:read", "fs:write", "process", "pty", "mcp-server", "open-external", "network", "secrets", "app", "native"]);
 const LOCATIONS = new Set(["sidebar", "secondary", "panel"]);
 let problems = 0;
 const fail = (mod, msg) => {
@@ -26,6 +26,14 @@ for (const dir of ids) {
   if (m.id !== dir) fail(dir, `id ${m.id} does not match the folder`);
   for (const k of ["name", "version", "description"]) if (!m[k]) fail(dir, `missing ${k}`);
   for (const p of m.permissions ?? []) if (!PERMS.has(p)) fail(dir, `unknown permission ${p}`);
+  // Permissions do not block anything, but they are how the user learns what a mod does: a
+  // mod.json action that uses one should declare it.
+  const NEEDS = { shell: ["process"], openFile: ["fs:read"], writeFile: ["fs:write", "fs:read"], openUrl: ["open-external"] };
+  for (const cmd of m.contributes?.commands ?? []) {
+    for (const a of Array.isArray(cmd.run) ? cmd.run : cmd.run ? [cmd.run] : []) {
+      for (const p of NEEDS[a?.type] ?? []) if (!(m.permissions ?? []).includes(p)) console.warn(`! ${dir}: ${cmd.id} runs a ${a.type} action without declaring "${p}" (it runs anyway; declare it so the user knows)`);
+    }
+  }
   for (const d of [...(m.dependencies ?? []), ...(m.optionalDependencies ?? [])]) if (!ids.has(d)) fail(dir, `depends on missing ${d}`);
   const c = m.contributes ?? {};
   for (const v of c.views ?? []) {

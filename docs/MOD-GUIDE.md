@@ -64,8 +64,10 @@ into a new tab and runs **Mods: Install This File as Mod**), enables it and relo
 
 ## 3. Permissions
 
-The user sees and approves these when enabling the mod. An action that needs a permission the
-mod did not declare fails with an error.
+Permissions tell the user what the mod does: the Mods page lists them and asks before enabling the
+mod. **They do not block anything** — AICode lets mods do anything, so an action runs even if its
+permission is missing. Declare them anyway: an action that uses an undeclared permission is still
+shown to the user (the Mods page adds it), and `pnpm check:mods` warns about it.
 
 | Permission | Needed by |
 |---|---|
@@ -75,6 +77,10 @@ mod did not declare fails with an error.
 | `open-external` | `openUrl` actions |
 | `pty` | code mods that open terminals (not needed by JSON mods) |
 | `mcp-server` | code mods that serve MCP tools (not needed by JSON mods) |
+| `network` | code mods that make HTTP requests (`ctx.http`) |
+| `secrets` | code mods that keep tokens in the Keychain (`ctx.secrets`) |
+| `app` | code mods that run in the background: menu bar icons, the Dock, hiding the window, global shortcuts (`ctx.app`) |
+| `native` | code mods that run native macOS code written in JavaScript (`ctx.native`) |
 
 All other actions (`notify`, `insert`, `transform`, `replace`, `newFile`, `command`, `copy`,
 `ask`, `confirm`) need no permission.
@@ -562,7 +568,7 @@ so a setting can hold a whole command line. Only file, text and input variables 
 2. It has `id` (letters, digits, `.`, `-`, `_` only), `name` and `version`. No `main`, no `activation`.
 3. Every command has a unique `id`, a `title` and a `run`; every `run` uses only action types from §5 with their fields.
 4. Every command referenced by `keybindings`, `statusBar`, `views[].items` or `editorContextMenu` exists — in this mod or in §6.
-5. `permissions` lists exactly what the actions need: `shell` → `process`, `openFile` → `fs:read`, `writeFile` → `fs:write` and `fs:read`, `openUrl` → `open-external`.
+5. `permissions` lists what the actions use (it informs the user; nothing is blocked): `shell` → `process`, `openFile` → `fs:read`, `writeFile` → `fs:write` and `fs:read`, `openUrl` → `open-external`.
 6. Uses `ask` → `"dependencies": ["aicode.agents"]`. Uses `shell` with `"in": "terminal"` → it still works without the Terminal mod (it falls back), so no dependency is needed.
 7. Variables are written `${name}` from §7; inside `shell`, file/text/input variables are not wrapped in quotes.
 8. Keybindings use `mod` and do not clash with the ones listed in §7.

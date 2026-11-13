@@ -37,6 +37,65 @@ export interface ViewProvider {
   onHide?(): void;
 }
 
+/** A floating view's frame, in CSS pixels from the workbench's top left corner. */
+export interface FloatRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Where a view is: a part, in place of the editor, floating, in a mod's own element, or off the window. */
+export type ViewWhere = ViewLocation | "center" | "floating" | "external" | "hidden";
+
+export interface ViewMove {
+  id: string;
+  from: ViewWhere;
+  to: ViewWhere;
+}
+
+/** What is being dragged: a view (its icon, tab or title) or an editor tab. */
+export interface DragItem {
+  kind: "view" | "tab";
+  id: string;
+}
+
+export interface DragEvent extends DragItem {
+  ghost: HTMLElement;
+  /** On end: whether something took the drop. */
+  dropped?: boolean;
+}
+
+/** A mod's element that takes dragged views or tabs (`ctx.workbench.addDropTarget`). */
+export interface DropTargetSpec {
+  /** What it takes (default: both). */
+  kinds?: ("view" | "tab")[];
+  /** While dragged over it: return false to refuse. */
+  over?(item: DragItem, e: MouseEvent): boolean | void;
+  drop(item: DragItem, e: MouseEvent): void;
+  /** While over it, this class is on the element (default "drop-target"). */
+  hoverClass?: string;
+}
+
+export type EdgeSide = "left" | "right" | "top" | "bottom";
+
+/** A strip a mod owns at an edge of the window, between the title bar and the status bar. */
+export interface EdgeSpec {
+  id?: string;
+  side: EdgeSide;
+  order?: number;
+  class?: string;
+}
+
+/** Where a view was put; a floating one may leave `location` out (docking puts it back where its mod put it). */
+type Placement = { location?: ViewLocation; order?: number; float?: FloatRect & { open: boolean } };
+
+/** A view's descriptor with what its placement changes. */
+function placed(desc: ViewDescriptor, p: Placement | undefined): ViewDescriptor {
+  if (!p) return { ...desc };
+  return { ...desc, ...(p.location ? { location: p.location } : {}), ...(typeof p.order === "number" ? { order: p.order } : {}) };
+}
+
 interface ViewEntry {
   desc: ViewDescriptor;
   /** Where the mod put it, before the user moved it. */
@@ -46,6 +105,11 @@ interface ViewEntry {
   rendered: boolean;
   badge: number;
   disposable?: Disposable | void;
+  /** Floating over the workbench, in its own frame (open: shown). */
+  float?: FloatRect & { open: boolean };
+  frame?: { el: HTMLElement; header: HTMLElement; body: HTMLElement };
+  /** Shown in a mod's own element (`ctx.workbench.hostView`). */
+  external?: HTMLElement;
 }
 
 interface PartState {
@@ -133,9 +197,11 @@ export interface TitleHandle {
 }
 
 /** A view placed by a window layout: in a part, in place of the editor, or off the window. */
-export type ViewPlace = ViewLocation | "center" | "hidden";
+export type ViewPlace = ViewLocation | "center" | "hidden" | "floating";
 
 const MIN = { sidebar: 170, secondary: 220, panel: 100 };
+/** The data-part names of the three parts. */
+const partName = { sidebar: "sideBar", secondary: "secondarySideBar", panel: "panel" } as const;
 
 export class Workbench {
   readonly root: HTMLElement;
@@ -178,8 +244,20 @@ export class Workbench {
   detachView: ((viewId: string) => void) | null = null;
   readonly onDidChangeLayout = new Emitter<void>();
   /** Where the user dragged views to: kept by the profile. */
-  private placement: Record<string, { location: ViewLocation; order: number }> = {};
-  readonly onDidChangePlacement = new Emitter<Record<string, { location: ViewLocation; order: number }>>();
+  private placement: Record<string, Placement> = {};
+  readonly onDidChangePlacement = new Emitter<Record<string, Placement>>();
+  /** A view went somewhere else: another part, floating, a mod's element, or back. */
+  readonly onDidMoveView = new Emitter<ViewMove>();
+  /** Around every redraw of the bars and part headers (they are rebuilt): a mod can measure before and animate after (`ctx.motion.flip`). */
+  readonly onWillRenderChrome = new Emitter<void>();
+  readonly onDidRenderChrome = new Emitter<void>();
+  /** A view or a tab started or stopped being dragged. */
+  readonly onDidStartDrag = new Emitter<DragEvent>();
+  readonly onDidEndDrag = new Emitter<DragEvent>();
+  private dropTargets = new Map<HTMLElement, DropTargetSpec>();
+  private edges!: Record<EdgeSide, HTMLElement>;
+  private floatLayer!: HTMLElement;
+  private floatZ = 1;
   private dropZones!: HTMLElement;
   /** Asked before a view with no provider is shown; the mod host activates its owner. */
   viewActivator: (viewId: string) => Promise<void> = async () => {};
@@ -242,7 +320,6 @@ export class Workbench {
     this.activityBottom = h("div", { class: "group bottom" });
     this.activitybar = h("div", { class: "activitybar", dataset: { drop: "sidebar", part: "activityBar" }, oncontextmenu: (e: MouseEvent) => this.activityMenu(e) }, this.activityTop, this.activityBottom);
 
-    const partName = { sidebar: "sideBar", secondary: "secondarySideBar", panel: "panel" } as const;
     const makePart = (loc: ViewLocation) => {
       const header = h("div", { class: "part-header", dataset: { part: `${partName[loc]}.header` } });
       const body = h("div", { class: "part-body" });
@@ -269,6 +346,7 @@ export class Workbench {
       h("div", { class: "zone left", dataset: { drop: "sidebar", zone: "1" } }, h("span", null, "Primary Side Bar")),
       h("div", { class: "zone bottom", dataset: { drop: "panel", zone: "1" } }, h("span", null, "Panel")),
       h("div", { class: "zone right", dataset: { drop: "secondary", zone: "1" } }, h("span", null, "Secondary Side Bar")),
+      h("div", { class: "zone float", dataset: { drop: "floating", zone: "1" } }, h("span", null, "Float")),
     );
     // A pane beside the editor (a Markdown preview "to the side"), with its own header and a sash.
     this.editorSide = h("div", { class: "editor-side", dataset: { part: "editorSide" }, style: { display: "none" } });
@@ -303,9 +381,26 @@ export class Workbench {
       this.parts.secondary.el,
     );
     this.mainEl = main;
-    this.root = h("div", { class: "workbench" }, titlebar, main, statusbar);
+    // Strips mods own at the window's edges (`ctx.workbench.addEdge`): empty ones take no room.
+    const edge = (side: EdgeSide) => h("div", { class: `workbench-edge ${side}`, dataset: { part: `edge.${side}` } });
+    this.edges = { left: edge("left"), right: edge("right"), top: edge("top"), bottom: edge("bottom") };
+    // Floating views sit over everything but menus and dialogs.
+    this.floatLayer = h("div", { class: "floating-layer", dataset: { part: "floatingLayer" } });
+    this.root = h(
+      "div",
+      { class: "workbench" },
+      titlebar,
+      this.edges.top,
+      h("div", { class: "main-row" }, this.edges.left, main, this.edges.right),
+      this.edges.bottom,
+      statusbar,
+      this.floatLayer,
+    );
     mount.append(this.root);
-    window.addEventListener("resize", () => this.applyLayout());
+    window.addEventListener("resize", () => {
+      this.applyLayout();
+      for (const entry of this.views.values()) if (entry.frame && entry.float) this.placeFrame(entry);
+    });
     // With no mods there are no views: hide the empty parts (and the activity bar) right away.
     this.renderChrome();
   }
@@ -318,10 +413,12 @@ export class Workbench {
 
   registerView(desc: ViewDescriptor): Disposable {
     const moved = this.placement[desc.id];
-    this.views.set(desc.id, { desc: moved ? { ...desc, ...moved } : { ...desc }, original: desc, rendered: false, badge: 0 });
+    this.views.set(desc.id, { desc: placed(desc, moved), original: desc, rendered: false, badge: 0, float: moved?.float ? { ...moved.float } : undefined });
     this.renderChrome();
     return toDisposable(() => {
-      this.views.get(desc.id)?.host?.remove();
+      const entry = this.views.get(desc.id);
+      entry?.host?.remove();
+      entry?.frame?.el.remove();
       this.views.delete(desc.id);
       this.renderChrome();
     });
@@ -340,6 +437,7 @@ export class Workbench {
 
   viewsAt(loc: ViewLocation): ViewDescriptor[] {
     return [...this.views.values()]
+      .filter((v) => !v.float && !v.external)
       .map((v) => v.desc)
       .filter((d) => d.location === loc && !this.hiddenViews.has(d.id) && d.id !== this.centerView)
       .sort((a, b) => a.order - b.order || a.title.localeCompare(b.title));
@@ -396,6 +494,8 @@ export class Workbench {
     if (!entry) return false;
     if (id === this.centerView) return true;
     if (this.hiddenViews.has(id)) return false;
+    if (entry.external) return entry.external.isConnected;
+    if (entry.float) return entry.float.open;
     const part = this.state[entry.desc.location];
     return part.visible && this.activeAt(entry.desc.location) === id;
   }
@@ -418,6 +518,20 @@ export class Workbench {
       return;
     }
     if (this.hiddenViews.has(id)) return;
+    if (entry.float || entry.external) {
+      if (entry.float) {
+        entry.float.open = true;
+        this.ensureFrame(entry).el.style.display = "";
+        this.raiseFrame(entry);
+      }
+      if (!entry.provider) await this.viewActivator(id);
+      this.mountView(entry);
+      entry.provider?.onShow?.();
+      if (focus) (entry.host?.querySelector("input, textarea, [tabindex]") as HTMLElement | null)?.focus?.();
+      this.renderChrome();
+      this.onDidChangeLayout.fire();
+      return;
+    }
     const loc = entry.desc.location;
     const previous = this.activeAt(loc);
     this.state[loc].active = id;
@@ -460,12 +574,15 @@ export class Workbench {
   }
 
   private mountView(entry: ViewEntry) {
-    const body = entry.desc.id === this.centerView ? this.centerHost : this.parts[entry.desc.location].body;
+    // A part or the center shows one view at a time; a frame or a mod's element holds only this one.
+    const own = entry.external ?? (entry.float ? this.ensureFrame(entry).body : null);
+    const body = own ?? (entry.desc.id === this.centerView ? this.centerHost : this.parts[entry.desc.location].body);
     if (!entry.host) entry.host = h("div", { class: "view-host", dataset: { view: entry.desc.id } });
     // A view dragged to another part takes its content along (nothing re-renders).
     if (entry.host.parentElement !== body) body.append(entry.host);
     const wasHidden = entry.host.style.display === "none" || !entry.host.isConnected;
-    for (const child of Array.from(body.children) as HTMLElement[]) child.style.display = child === entry.host ? "" : "none";
+    if (own) entry.host.style.display = "";
+    else for (const child of Array.from(body.children) as HTMLElement[]) child.style.display = child === entry.host ? "" : "none";
     if (wasHidden && this.motionReady) play(entry.host, "view-enter");
     if (!entry.rendered && entry.provider) {
       entry.rendered = true;
@@ -480,6 +597,7 @@ export class Workbench {
   }
 
   private renderChrome() {
+    this.onWillRenderChrome.fire();
     // Activity bar: one icon per primary side bar view.
     clear(this.activityTop);
     const sidebarViews = this.viewsAt("sidebar");
@@ -498,7 +616,7 @@ export class Workbench {
           {
             class: `activity-item${activeNow === d.id ? " active" : ""}${activeNow === d.id && activityChanged && this.motionReady ? " just-active" : ""}`,
             title: d.title + (kb ? ` (${commands.prettyKey(kb).join(" ")})` : ""),
-            dataset: { drop: "sidebar", before: d.id },
+            dataset: { drop: "sidebar", before: d.id, view: d.id, part: "activityBar.view" },
             onclick: () => (this.state.sidebar.visible && activeSidebar === d.id ? this.toggle("sidebar") : this.showView(d.id)),
             onmousedown: (e: MouseEvent) => this.dragView(e, d.id),
             oncontextmenu: (e: MouseEvent) => this.activityMenu(e, d.id),
@@ -565,7 +683,7 @@ export class Workbench {
               "div",
               {
                 class: `part-tab${d.id === activeId ? " active" : ""}`,
-                dataset: { drop: loc, before: d.id },
+                dataset: { drop: loc, before: d.id, view: d.id, part: `${partName[loc]}.tab` },
                 onclick: () => this.showView(d.id),
                 onmousedown: (e: MouseEvent) => this.dragView(e, d.id),
                 oncontextmenu: (e: MouseEvent) => this.viewMenu(e, d.id),
@@ -587,28 +705,70 @@ export class Workbench {
         part.header.append(tabs, actions);
       }
     }
+    for (const entry of this.views.values()) if (entry.frame) this.paintFrameHeader(entry);
     this.applyLayout();
+    this.onDidRenderChrome.fire();
   }
 
   // ---------- moving views (drag and drop, or the right-click menu) ----------
 
   /** Where views were moved to, as the profile saved it. Call before mods register views. */
-  setPlacement(placement: Record<string, { location: ViewLocation; order: number }> | null | undefined) {
+  setPlacement(placement: Record<string, Omit<Partial<Placement>, "float"> & { float?: boolean | Partial<FloatRect & { open: boolean }> }> | null | undefined) {
     this.placement = {};
+    const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
     for (const [id, p] of Object.entries(placement ?? {})) {
-      if (p && ["sidebar", "secondary", "panel"].includes(p.location) && typeof p.order === "number") this.placement[id] = { location: p.location, order: p.order };
+      if (!p || typeof p !== "object") continue;
+      // `float: true`, or a frame with some of x, y, w, h (the rest centered): from a mod's
+      // configurationDefaults, a window layout, or the user's own settings.
+      const f = p.float === true ? {} : p.float && typeof p.float === "object" ? p.float : null;
+      let float: (FloatRect & { open: boolean }) | undefined;
+      if (f) {
+        const w = num(f.w) ? f.w : Math.min(520, Math.round(window.innerWidth * 0.45));
+        const hh = num(f.h) ? f.h : Math.min(420, Math.round(window.innerHeight * 0.5));
+        float = { w, h: hh, x: num(f.x) ? f.x : Math.round((window.innerWidth - w) / 2), y: num(f.y) ? f.y : Math.round((window.innerHeight - hh) / 3), open: f.open !== false };
+      }
+      // A floating view may leave out where it docks (then where its mod put it).
+      const location = p.location && ["sidebar", "secondary", "panel"].includes(p.location) ? p.location : undefined;
+      if (!location && !float) continue;
+      this.placement[id] = { ...(location ? { location } : {}), ...(num(p.order) ? { order: p.order } : location ? { order: 1000 } : {}), ...(float ? { float } : {}) };
     }
     for (const entry of this.views.values()) {
       const moved = this.placement[entry.desc.id];
-      entry.desc = moved ? { ...entry.original, ...moved } : { ...entry.original };
+      const float = moved?.float;
+      entry.desc = placed(entry.original, moved);
+      const wasFloating = !!entry.float;
+      entry.float = float ? { ...float } : undefined;
+      if (wasFloating && !entry.float) this.removeFrame(entry);
+      else if (entry.frame && entry.float) this.placeFrame(entry);
     }
     this.renderChrome();
+  }
+
+  /** Where a view is now. */
+  whereIs(id: string): ViewWhere | null {
+    const entry = this.views.get(id);
+    if (!entry) return null;
+    if (this.hiddenViews.has(id)) return "hidden";
+    if (id === this.centerView) return "center";
+    if (entry.external) return "external";
+    if (entry.float) return "floating";
+    return entry.desc.location;
   }
 
   /** Moves a view to a part, before another view there (or last). */
   moveView(id: string, to: ViewLocation, beforeId?: string) {
     const entry = this.views.get(id);
     if (!entry || beforeId === id) return;
+    const where = this.whereIs(id)!;
+    // Out of a frame or a mod's element, back into a part.
+    if (entry.float) {
+      entry.float = undefined;
+      this.removeFrame(entry);
+    }
+    if (entry.external) {
+      entry.external = undefined;
+      entry.host?.remove();
+    }
     const from = entry.desc.location;
     const wasActiveThere = this.activeAt(from) === id;
     const list = this.viewsAt(to).filter((d) => d.id !== id);
@@ -623,13 +783,289 @@ export class Workbench {
     if (from !== to && wasActiveThere) this.state[from].active = this.viewsAt(from)[0]?.id ?? null;
     if (previousAtTarget && previousAtTarget !== id) this.views.get(previousAtTarget)?.provider?.onHide?.();
     this.onDidChangePlacement.fire({ ...this.placement });
-    this.showView(id, false);
+    void this.showView(id, false);
+    if (where !== to) this.onDidMoveView.fire({ id, from: where, to });
+  }
+
+  // ---------- floating views ----------
+
+  /** Takes a view out of its part into a frame over the workbench (where `rect` says, or centered). */
+  floatView(id: string, rect?: Partial<FloatRect>) {
+    const entry = this.views.get(id);
+    if (!entry || this.hiddenViews.has(id) || id === this.centerView) return;
+    const where = this.whereIs(id)!;
+    if (entry.external) {
+      entry.external = undefined;
+      entry.host?.remove();
+    }
+    const loc = entry.desc.location;
+    const wasActive = !entry.float && this.state[loc].visible && this.activeAt(loc) === id;
+    const box = this.root.getBoundingClientRect();
+    const w = rect?.w ?? entry.float?.w ?? Math.min(520, Math.round(box.width * 0.45));
+    const hgt = rect?.h ?? entry.float?.h ?? Math.min(420, Math.round(box.height * 0.5));
+    const x = rect?.x ?? entry.float?.x ?? Math.round((box.width - w) / 2);
+    const y = rect?.y ?? entry.float?.y ?? Math.round((box.height - hgt) / 3);
+    entry.float = { x, y, w, h: hgt, open: true };
+    if (wasActive) {
+      // The part shows its next view, or closes.
+      const next = this.viewsAt(loc)[0]?.id ?? null;
+      this.state[loc].active = next;
+      if (next) void this.showView(next, false);
+    }
+    this.savePlacement(entry);
+    this.placeFrame(entry);
+    void this.showView(id, true);
+    if (where !== "floating") this.onDidMoveView.fire({ id, from: where, to: "floating" });
+  }
+
+  /** A floating view back into a part (its own, or `to`). */
+  dockView(id: string, to?: ViewLocation) {
+    const entry = this.views.get(id);
+    if (!entry) return;
+    this.moveView(id, to ?? entry.desc.location);
+  }
+
+  /** Hides a floating view's frame (it stays floating: showing the view opens it again). */
+  closeFloating(id: string) {
+    const entry = this.views.get(id);
+    if (!entry?.float || !entry.float.open) return;
+    entry.float.open = false;
+    if (entry.frame) entry.frame.el.style.display = "none";
+    entry.provider?.onHide?.();
+    this.savePlacement(entry);
+    this.onDidChangeLayout.fire();
+  }
+
+  /** Moves or resizes a floating view. */
+  setFloatRect(id: string, rect: Partial<FloatRect>) {
+    const entry = this.views.get(id);
+    if (!entry?.float) return;
+    Object.assign(entry.float, rect);
+    this.placeFrame(entry);
+    this.savePlacement(entry);
+  }
+
+  floatRect(id: string): (FloatRect & { open: boolean }) | null {
+    const f = this.views.get(id)?.float;
+    return f ? { ...f } : null;
+  }
+
+  private savePlacement(entry: ViewEntry) {
+    const id = entry.desc.id;
+    if (entry.float) this.placement[id] = { location: entry.desc.location, order: entry.desc.order, float: { ...entry.float } };
+    else if (this.placement[id]) {
+      const { float: _f, ...rest } = this.placement[id];
+      this.placement[id] = rest;
+    }
+    this.onDidChangePlacement.fire({ ...this.placement });
+  }
+
+  private ensureFrame(entry: ViewEntry) {
+    if (entry.frame) return entry.frame;
+    const id = entry.desc.id;
+    const header = h("div", { class: "floating-header", dataset: { part: "floatingView.header" } });
+    const body = h("div", { class: "floating-body", dataset: { part: "floatingView.body" } });
+    const handles = (["e", "s", "w", "n", "se", "sw", "ne", "nw"] as const).map((dir) =>
+      h("div", { class: `floating-resize ${dir}`, onmousedown: (e: MouseEvent) => this.dragFrame(e, entry, dir) }),
+    );
+    const el = h(
+      "div",
+      { class: "floating-view", dataset: { part: "floatingView", view: id }, onmousedown: () => this.raiseFrame(entry) },
+      header,
+      body,
+      ...handles,
+    );
+    entry.frame = { el, header, body };
+    this.floatLayer.append(el);
+    this.paintFrameHeader(entry);
+    this.placeFrame(entry);
+    if (this.motionReady) play(el, "floating-enter");
+    return entry.frame;
+  }
+
+  private removeFrame(entry: ViewEntry) {
+    if (!entry.frame) return;
+    entry.host?.remove();
+    entry.frame.el.remove();
+    entry.frame = undefined;
+  }
+
+  private raiseFrame(entry: ViewEntry) {
+    if (entry.frame) entry.frame.el.style.zIndex = String(++this.floatZ);
+  }
+
+  /** Keeps the frame inside the window (at least its title bar). */
+  private placeFrame(entry: ViewEntry) {
+    if (!entry.frame || !entry.float) return;
+    const f = entry.float;
+    const W = this.root.clientWidth || window.innerWidth;
+    const H = this.root.clientHeight || window.innerHeight;
+    f.w = Math.max(200, Math.min(f.w, W));
+    f.h = Math.max(120, Math.min(f.h, H));
+    f.x = Math.max(-f.w + 80, Math.min(f.x, W - 80));
+    f.y = Math.max(0, Math.min(f.y, H - 32));
+    Object.assign(entry.frame.el.style, { left: `${f.x}px`, top: `${f.y}px`, width: `${f.w}px`, height: `${f.h}px`, display: f.open ? "" : "none" });
+  }
+
+  private paintFrameHeader(entry: ViewEntry) {
+    if (!entry.frame) return;
+    const id = entry.desc.id;
+    const header = entry.frame.header;
+    clear(header);
+    header.append(
+      h(
+        "div",
+        { class: "floating-title", title: "Drag to move", onmousedown: (e: MouseEvent) => this.dragFrame(e, entry, "move"), ondblclick: () => this.dockView(id), oncontextmenu: (e: MouseEvent) => this.viewMenu(e, id) },
+        icon(entry.desc.icon),
+        h("span", null, entry.desc.title),
+        entry.badge ? h("span", { class: "badge" }, String(entry.badge)) : null,
+      ),
+      h(
+        "div",
+        { class: "part-actions" },
+        (entry.provider?.actions ?? []).map((a) => iconButton(a.icon, a.title, (e) => a.run(e))),
+        h("span", { class: "action-divider" }),
+        iconButton("pinned", "Dock", () => this.dockView(id)),
+        iconButton("close", "Close", () => this.closeFloating(id)),
+      ),
+    );
+  }
+
+  /** Moves the frame by its title, or resizes it by an edge or a corner. */
+  private dragFrame(down: MouseEvent, entry: ViewEntry, dir: "move" | "e" | "s" | "w" | "n" | "se" | "sw" | "ne" | "nw") {
+    if (down.button !== 0 || !entry.float) return;
+    down.preventDefault();
+    down.stopPropagation();
+    this.raiseFrame(entry);
+    const start = { ...entry.float };
+    const sx = down.clientX;
+    const sy = down.clientY;
+    document.body.classList.add(dir === "move" ? "floating-moving" : "resizing");
+    const move = (e: MouseEvent) => {
+      const dx = e.clientX - sx;
+      const dy = e.clientY - sy;
+      const f = entry.float!;
+      if (dir === "move") {
+        f.x = start.x + dx;
+        f.y = start.y + dy;
+      } else {
+        if (dir.includes("e")) f.w = start.w + dx;
+        if (dir.includes("s")) f.h = start.h + dy;
+        if (dir.includes("w")) {
+          f.w = Math.max(200, start.w - dx);
+          f.x = start.x + (start.w - f.w);
+        }
+        if (dir.includes("n")) {
+          f.h = Math.max(120, start.h - dy);
+          f.y = start.y + (start.h - f.h);
+        }
+      }
+      this.placeFrame(entry);
+    };
+    const up = () => {
+      window.removeEventListener("mousemove", move, true);
+      window.removeEventListener("mouseup", up, true);
+      document.body.classList.remove("floating-moving", "resizing");
+      this.savePlacement(entry);
+      this.onDidChangeLayout.fire();
+    };
+    window.addEventListener("mousemove", move, true);
+    window.addEventListener("mouseup", up, true);
+  }
+
+  // ---------- views in a mod's own element ----------
+
+  /**
+   * Shows a view inside `el` (a mod's dock, tab strip, split, card…) until disposed: it leaves its
+   * part (or frame) and comes back when the handle is disposed. The view keeps its content.
+   */
+  hostView(id: string, el: HTMLElement): Disposable {
+    const entry = this.views.get(id);
+    if (!entry) throw new Error(`no view ${id}`);
+    const where = this.whereIs(id)!;
+    if (entry.float) {
+      entry.float = undefined;
+      this.removeFrame(entry);
+      this.savePlacement(entry);
+    }
+    const loc = entry.desc.location;
+    if (!entry.external && this.activeAt(loc) === id) this.state[loc].active = null;
+    entry.external = el;
+    this.renderChrome();
+    void this.showView(id, false);
+    this.onDidMoveView.fire({ id, from: where, to: "external" });
+    return toDisposable(() => {
+      if (entry.external !== el) return;
+      entry.external = undefined;
+      entry.host?.remove();
+      entry.provider?.onHide?.();
+      this.renderChrome();
+      if (this.state[loc].visible && this.activeAt(loc) === id) void this.showView(id, false);
+      this.onDidMoveView.fire({ id, from: "external", to: this.whereIs(id) ?? loc });
+    });
+  }
+
+  // ---------- drop targets of mods ----------
+
+  /** Makes `el` take dragged views and/or tabs (a mod's dock, its own tab strip). */
+  addDropTarget(el: HTMLElement, spec: DropTargetSpec): Disposable {
+    this.dropTargets.set(el, spec);
+    return toDisposable(() => {
+      if (this.dropTargets.get(el) === spec) this.dropTargets.delete(el);
+    });
+  }
+
+  /** The mod drop target under the pointer that takes this item, if any. */
+  dropTargetAt(e: MouseEvent, item: DragItem): { el: HTMLElement; spec: DropTargetSpec } | null {
+    if (!this.dropTargets.size) return null;
+    let node = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+    while (node) {
+      const spec = this.dropTargets.get(node);
+      if (spec && (!spec.kinds || spec.kinds.includes(item.kind)) && spec.over?.(item, e) !== false) return { el: node, spec };
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  private hoveredTarget: { el: HTMLElement; cls: string } | null = null;
+  /** Marks the mod drop target under the pointer (or clears it). */
+  markDropTarget(t: { el: HTMLElement; spec: DropTargetSpec } | null) {
+    const cls = t?.spec.hoverClass ?? "drop-target";
+    if (this.hoveredTarget && (this.hoveredTarget.el !== t?.el || this.hoveredTarget.cls !== cls)) this.hoveredTarget.el.classList.remove(this.hoveredTarget.cls);
+    this.hoveredTarget = t ? { el: t.el, cls } : null;
+    t?.el.classList.add(cls);
+  }
+
+  // ---------- strips at the window's edges ----------
+
+  /** A strip of the mod's own at an edge (a second activity bar, a tool window stripe, a ruler…). */
+  addEdge(spec: EdgeSpec): { el: HTMLElement; dispose(): void } {
+    const host = this.edges[spec.side];
+    if (!host) throw new Error(`no edge ${spec.side}: use left, right, top or bottom`);
+    const el = h("div", { class: `edge-item${spec.class ? ` ${spec.class}` : ""}`, dataset: { part: "edge.item", ...(spec.id ? { id: spec.id } : {}), order: String(spec.order ?? 0) } });
+    const order = spec.order ?? 0;
+    const after = Array.from(host.children).find((c) => Number((c as HTMLElement).dataset.order ?? 0) > order);
+    host.insertBefore(el, after ?? null);
+    this.applyLayout();
+    return {
+      el,
+      dispose: () => {
+        el.remove();
+        this.applyLayout();
+      },
+    };
   }
 
   /** Puts every view back where its mod put it. */
   resetPlacement() {
     this.placement = {};
-    for (const entry of this.views.values()) entry.desc = { ...entry.original };
+    for (const entry of this.views.values()) {
+      entry.desc = { ...entry.original };
+      if (entry.float) {
+        entry.float = undefined;
+        this.removeFrame(entry);
+      }
+    }
     for (const entry of this.views.values()) if (this.isVisible(entry.desc.id)) this.mountView(entry);
     this.onDidChangePlacement.fire({});
     this.renderChrome();
@@ -643,9 +1079,10 @@ export class Workbench {
     const names: Record<ViewLocation, string> = { sidebar: "Primary Side Bar", secondary: "Secondary Side Bar", panel: "Panel" };
     const moved = entry.desc.location !== entry.original.location;
     contextMenu(e.clientX, e.clientY, [
-      ...(["sidebar", "secondary", "panel"] as ViewLocation[]).filter((l) => l !== entry.desc.location).map((l) => ({ label: `Move to ${names[l]}`, run: () => this.moveView(id, l) })),
+      ...(["sidebar", "secondary", "panel"] as ViewLocation[]).filter((l) => !!entry.float || l !== entry.desc.location).map((l) => ({ label: `Move to ${names[l]}`, run: () => this.moveView(id, l) })),
+      ...(entry.float ? [] : [{ label: "Float", run: () => this.floatView(id) }]),
       ...(this.detachView ? [{ label: "Move to New Window", run: () => this.detachView!(id) }] : []),
-      ...(moved ? [{ separator: true, label: "" }, { label: "Reset Location", run: () => this.moveView(id, entry.original.location) }] : []),
+      ...(moved || entry.float ? [{ separator: true, label: "" }, { label: "Reset Location", run: () => this.moveView(id, entry.original.location) }] : []),
       { separator: true, label: "" },
       { label: "Reset All View Locations", run: () => this.resetPlacement() },
     ], { menu: "view/title", context: { viewId: id } });
@@ -703,7 +1140,10 @@ export class Workbench {
     const startX = down.clientX;
     const startY = down.clientY;
     let ghost: HTMLElement | null = null;
-    let target: { el: HTMLElement; loc: ViewLocation; before?: string } | null = null;
+    let target: { el: HTMLElement; loc: ViewLocation | "floating"; before?: string } | null = null;
+    const item: DragItem = { kind: "view", id };
+    let custom: { el: HTMLElement; spec: DropTargetSpec } | null = null;
+    let last: MouseEvent | null = null;
     const mark = (t: typeof target, after = false) => {
       document.querySelectorAll(".drop-target, .drop-before, .drop-after").forEach((el) => el.classList.remove("drop-target", "drop-before", "drop-after"));
       if (!t) return;
@@ -711,20 +1151,33 @@ export class Workbench {
       else t.el.classList.add("drop-target");
     };
     const move = (e: MouseEvent) => {
+      last = e;
       if (!ghost) {
         if (Math.hypot(e.clientX - startX, e.clientY - startY) < 6) return;
-        ghost = h("div", { class: "view-drag-ghost" }, icon(entry.desc.icon), h("span", null, entry.desc.title));
+        ghost = h("div", { class: "view-drag-ghost", dataset: { view: id } }, icon(entry.desc.icon), h("span", null, entry.desc.title));
         document.body.append(ghost);
         document.body.classList.add("view-dragging");
+        this.onDidStartDrag.fire({ ...item, ghost });
       }
       ghost.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 10}px)`;
+      // A mod's own drop target comes first.
+      custom = this.dropTargetAt(e, item);
+      this.markDropTarget(custom);
+      if (custom) {
+        target = null;
+        return mark(null);
+      }
       const under = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
       const el = under?.closest("[data-drop]") as HTMLElement | null;
       if (!el) {
         target = null;
         return mark(null);
       }
-      const loc = el.dataset.drop as ViewLocation;
+      const loc = el.dataset.drop as ViewLocation | "floating";
+      if (loc === "floating") {
+        target = { el, loc };
+        return mark(target);
+      }
       let before = el.dataset.before;
       let after = false;
       if (before) {
@@ -750,16 +1203,36 @@ export class Workbench {
       window.removeEventListener("mouseup", up, true);
       window.removeEventListener("keydown", key, true);
       mark(null);
+      const droppedOn = custom;
+      this.markDropTarget(null);
+      custom = null;
       if (!ghost) return;
+      const g = ghost;
       ghost.remove();
       document.body.classList.remove("view-dragging");
       // The click that ends a drag (if any) is not a click on the icon.
       const swallow = (e: MouseEvent) => e.stopPropagation();
       window.addEventListener("click", swallow, true);
       setTimeout(() => window.removeEventListener("click", swallow, true), 0);
-      if (commit && target) this.moveView(id, target.loc, target.before);
+      let dropped = false;
+      if (commit && droppedOn && last) {
+        dropped = true;
+        try {
+          droppedOn.spec.drop(item, last);
+        } catch (err) {
+          console.error(err);
+        }
+      } else if (commit && target) {
+        dropped = true;
+        if (target.loc === "floating") this.floatView(id, last ? { x: last.clientX - 60, y: last.clientY - 14 - this.root.getBoundingClientRect().top } : undefined);
+        else this.moveView(id, target.loc, target.before);
+      }
+      this.onDidEndDrag.fire({ ...item, ghost: g, dropped });
     };
-    const up = () => end(true);
+    const up = (e: MouseEvent) => {
+      last = e;
+      end(true);
+    };
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -1204,5 +1677,7 @@ export class Workbench {
       const id = this.activeAt(loc);
       if (id) await this.showView(id, false);
     }
+    // Floating views that were open come back in their frames.
+    for (const entry of this.views.values()) if (entry.float?.open && !this.hiddenViews.has(entry.desc.id)) await this.showView(entry.desc.id, false);
   }
 }

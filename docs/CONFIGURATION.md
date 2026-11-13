@@ -8,11 +8,23 @@ or by writing a mod), or install mods that others shared.
 ## The layers
 
 ```
-schema default  ←  enabled mods (contributes.configurationDefaults, in load order)  ←  you (profile.json)  ←  this window (its layout)
+app base  →  bundled mods  →  your mods  →  your configuration (profile.json)  →  this window (its layout)
 ```
 
-The value of a setting is the last layer that sets it. **Your values always win over mods**, and
-turning a mod off removes its layer, so nothing it set stays behind.
+Each layer can override anything to its left; the rightmost one that sets something wins. **Your
+values always win over mods, and your mods always win over the bundled ones**, whatever order they
+happened to load in. Turning a mod off removes its layer, so nothing it set stays behind.
+
+The same order decides everything that can collide, not only settings:
+
+| What | How the order applies |
+|---|---|
+| Settings (`configurationDefaults`) | bundled mods' defaults, then your mods' (the shared ones in `AICode/mods`, then the profile's own), then `profile.json` |
+| CSS (`styles`, `ctx.styles`, `workbench.customCSS`) | the stylesheets go in that order in the page, so at equal specificity the later layer wins |
+| Icons (`icons`, `ctx.icons.set`) | your mod's drawing of an icon goes over a bundled mod's |
+| Keyboard shortcuts | your `keybindings` beat every mod (even one bound later); your mods' beat the bundled ones |
+
+Within one layer, mods go by id.
 
 - **Objects merge key by key.** If a mod sets `workbench.colorCustomizations` with one color and you
   set another, both apply. To remove a key a lower layer set, set it to `null`.
@@ -132,7 +144,25 @@ preset. Its commands cycle the material and the strength.
 `titleBar.layoutControls`, `titleBar.pin`, `activityBar`, `activityBar.badge`,
 `sideBar`, `sideBar.header`, `secondarySideBar`, `secondarySideBar.header`, `panel`, `panel.header`,
 `editor`, `tabs`, `tab`, `tab.icon`, `tab.close`, `tab.actions`, `breadcrumbs`, `editorSide`,
-`centerView`, `watermark`, `statusBar`, `statusBar.item`, `sash`, `tooltip`, `windowBackground`.
+`centerView`, `watermark`, `statusBar`, `statusBar.item`, `sash`, `tooltip`, `windowBackground`,
+`activityBar.view` (a view's icon), `secondarySideBar.tab`, `panel.tab`, `floatingLayer`,
+`floatingView`, `floatingView.header`, `floatingView.body`, `edge.left`, `edge.right`, `edge.top`,
+`edge.bottom`, `edge.item` (strips mods add at the window's edges).
+
+**Where views go.** `workbench.viewPlacement` keeps where views were dragged to, and it is a setting
+like any other: a mod can give defaults (`configurationDefaults`) and your `profile.json` wins over them.
+
+```jsonc
+"workbench.viewPlacement": {
+  "terminal": { "location": "secondary", "order": 10 },
+  "search": { "float": { "x": 120, "y": 80, "w": 520, "h": 420 } }, // a floating panel
+  "scm": { "float": true }                                          // floating, centered
+}
+```
+
+Any view can float: drag its icon or tab onto **Float** in the middle of the editor, or right click
+it › **Float**. A floating view is moved by its title and resized by its edges; **Dock** (or a double
+click on its title) puts it back.
 
 ```css
 [data-part="tab"].active { font-weight: 600; }
@@ -151,7 +181,7 @@ with a `{ "type": "window", "layout": "<name>" }` action, or with the MCP `open_
     "width": 1320, "height": 860,
     "alwaysOnTop": false,
     "center": "agents.chat",                     // a view in place of the editor
-    "views": { "explorer": "secondary", "scm": "secondary", "terminal": "panel", "search": "hidden" },
+    "views": { "explorer": "secondary", "scm": "secondary", "terminal": "panel", "search": "hidden" }, // or "floating"
     "options": { "activityBar": false },         // Customize Layout choices for this window
     "parts": { "sidebar": false, "secondary": true, "panel": false },
     "sizes": { "secondary": 340 },

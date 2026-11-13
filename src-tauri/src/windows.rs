@@ -409,6 +409,9 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         }
         tauri::WindowEvent::Destroyed => {
             let label = window.label().to_string();
+            // Its mods' icons in the menu bar go with it.
+            crate::background::drop_owned_by(app, &label);
+            crate::native::drop_owned_by(app, &label);
             if state.reopening.lock().unwrap().contains(&label) {
                 // Closed only to be created again: its programs end, its session stays.
                 crate::procs::kill_owned_by(app, &label);

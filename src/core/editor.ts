@@ -231,6 +231,11 @@ export class EditorService {
   readonly onDidChangeDocs = new Emitter<void>();
   readonly onDidSave = new Emitter<EditorInfo>();
   readonly onDidChangeContent = new Emitter<EditorInfo>();
+  /** Around every redraw of the tab bar (it is rebuilt): measure before, animate after (`ctx.motion.flip`). */
+  readonly onWillRenderTabs = new Emitter<void>();
+  readonly onDidRenderTabs = new Emitter<void>();
+  /** A tab moved along the tab bar (dragged, or `moveTab`). */
+  readonly onDidMoveTab = new Emitter<{ id: string; from: number; to: number }>();
   /** ⌘+ / ⌘- on the editor font: the profile keeps the size. */
   readonly onDidChangeFontSize = new Emitter<number>();
   /** Custom tabs the session knows how to reopen, by `restore` key. */
@@ -324,11 +329,55 @@ export class EditorService {
 
     wb.editorTabsActions.append(
       this.titleActionsHost,
-      h("button", { class: "icon-button", title: "Split Editor (coming soon)", disabled: true }, icon("split-horizontal")),
       h("button", { class: "icon-button", title: "Views and More Actions…", onclick: (e: MouseEvent) => this.moreMenu(e) }, icon("ellipsis")),
     );
+    // A document edited in another editor (a mod's split, a second view of the same file) while it
+    // is not the active one: its tab, dirty state and auto save follow as they would here.
+    monaco.editor.onDidCreateModel((model) => {
+      model.onDidChangeContent(() => {
+        const doc = this.docs.find((d): d is TextDoc => d.kind === "text" && d.model === model);
+        if (!doc || doc === this.active) return;
+        if (doc.preview) doc.preview = false;
+        this.renderTabs();
+        this.onDidChangeContent.fire(this.info(doc));
+        this.scheduleAutoSave(doc);
+      });
+    });
     this.registerCommands();
     this.show(null);
+  }
+
+  // ---------- more editors for mods ----------
+
+  /** A document's Monaco model (open it first with openFile), for a second editor on the same text. */
+  modelOf(idOrPath: string): monaco.editor.ITextModel | null {
+    return this.find(idOrPath)?.model ?? null;
+  }
+
+  /**
+   * A Monaco editor in `el` with the main editor's options (font, minimap, theme…), kept in step
+   * when they change. Give it a document's model (`modelOf`) to edit the same text side by side:
+   * dirty state, saving and undo are the document's.
+   */
+  createEditor(el: HTMLElement, model: monaco.editor.ITextModel | null, options: monaco.editor.IStandaloneEditorConstructionOptions = {}): monaco.editor.IStandaloneCodeEditor {
+    const own = { ...options };
+    const ed = monaco.editor.create(el, { ...this.editor.getRawOptions(), automaticLayout: true, ...own, model });
+    const sub = this.editor.onDidChangeConfiguration(() => ed.updateOptions({ ...this.editor.getRawOptions(), automaticLayout: true, ...own }));
+    ed.onDidDispose(() => sub.dispose());
+    return ed;
+  }
+
+  /** Moves a tab before another one (or to the end). */
+  moveTab(id: string, beforeId: string | null) {
+    const doc = this.docs.find((d) => d.id === id);
+    if (!doc || beforeId === id) return;
+    const from = this.docs.indexOf(doc);
+    this.docs.splice(from, 1);
+    const at = beforeId === null ? this.docs.length : this.docs.findIndex((d) => d.id === beforeId);
+    const to = at < 0 ? this.docs.length : at;
+    this.docs.splice(to, 0, doc);
+    this.renderTabs();
+    if (from !== to) this.onDidMoveTab.fire({ id, from, to });
   }
 
   // ---------- queries ----------
@@ -932,6 +981,8 @@ export class EditorService {
     let ghost: HTMLElement | null = null;
     let before: string | null | undefined;
     const bar = this.wb.editorTabs;
+    const item = { kind: "tab" as const, id: doc.id };
+    let custom: ReturnType<Workbench["dropTargetAt"]> = null;
     const outside = (e: MouseEvent) => e.clientX < 0 || e.clientY < 0 || e.clientX > window.innerWidth || e.clientY > window.innerHeight;
     const mark = (el: Element | null, after = false) => {
       bar.querySelectorAll(".drop-before, .drop-after").forEach((x) => x.classList.remove("drop-before", "drop-after"));
@@ -940,12 +991,21 @@ export class EditorService {
     const move = (e: MouseEvent) => {
       if (!ghost) {
         if (Math.hypot(e.clientX - startX, e.clientY - startY) < 6) return;
-        ghost = h("div", { class: "view-drag-ghost tab-drag-ghost" }, h("span", null, doc.title));
+        ghost = h("div", { class: "view-drag-ghost tab-drag-ghost", dataset: { doc: doc.id } }, h("span", null, doc.title));
         document.body.append(ghost);
         document.body.classList.add("view-dragging");
+        this.wb.onDidStartDrag.fire({ ...item, ghost });
       }
       ghost.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 10}px)`;
       const out = outside(e);
+      // A mod's own drop target comes first.
+      custom = out ? null : this.wb.dropTargetAt(e, item);
+      this.wb.markDropTarget(custom);
+      if (custom) {
+        before = undefined;
+        mark(null);
+        return;
+      }
       ghost.classList.toggle("detaching", out && this.dragTabsToWindow && doc.kind === "text");
       const under = out ? null : (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null);
       const tab = under?.closest(".tab[data-doc]") as HTMLElement | null;
@@ -969,20 +1029,30 @@ export class EditorService {
       window.removeEventListener("mouseup", up, true);
       window.removeEventListener("keydown", key, true);
       mark(null);
+      const droppedOn = custom;
+      this.wb.markDropTarget(null);
+      custom = null;
       if (!ghost) return;
+      const g = ghost;
       ghost.remove();
       document.body.classList.remove("view-dragging");
-      if (!e) return;
+      const finish = (dropped: boolean) => this.wb.onDidEndDrag.fire({ ...item, ghost: g, dropped });
+      if (!e) return finish(false);
+      if (droppedOn) {
+        try {
+          droppedOn.spec.drop(item, e);
+        } catch (err) {
+          console.error(err);
+        }
+        return finish(true);
+      }
       if (outside(e) && this.dragTabsToWindow && doc.kind === "text") {
         void this.detach(doc, { x: e.screenX, y: e.screenY });
-        return;
+        return finish(true);
       }
-      if (before === undefined || before === doc.id) return;
-      const from = this.docs.indexOf(doc);
-      this.docs.splice(from, 1);
-      const to = before === null ? this.docs.length : this.docs.findIndex((d) => d.id === before);
-      this.docs.splice(to < 0 ? this.docs.length : to, 0, doc);
-      this.renderTabs();
+      if (before === undefined || before === doc.id) return finish(false);
+      this.moveTab(doc.id, before);
+      finish(true);
     };
     const up = (e: MouseEvent) => end(e);
     const key = (e: KeyboardEvent) => {
@@ -1145,6 +1215,7 @@ export class EditorService {
   }
 
   private renderTabs() {
+    this.onWillRenderTabs.fire();
     const host = this.wb.editorTabs;
     // Like VS Code: an empty editor area has no tab bar, only the watermark.
     const bar = host.parentElement;
@@ -1211,6 +1282,7 @@ export class EditorService {
       host.append(tab);
       if (doc === this.active) requestAnimationFrame(() => tab.scrollIntoView({ block: "nearest", inline: "nearest" }));
     }
+    this.onDidRenderTabs.fire();
     this.onDidChangeDocs.fire();
   }
 

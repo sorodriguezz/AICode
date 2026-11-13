@@ -4,6 +4,7 @@
 // (macOS material, always on top, shadow). Every part of the window carries `data-part="<name>"`
 // (see PART_NAMES), which is what hiding, opacity and custom CSS target.
 
+import { insertStyle } from "./layers";
 import { getCurrentWindow, Effect, EffectState } from "@tauri-apps/api/window";
 import type * as monaco from "monaco-editor";
 import { invoke } from "./ipc";
@@ -87,8 +88,9 @@ export class Appearance {
     this.userStyle.id = "aicode-user-css";
     this.background.className = "app-background";
     this.background.dataset.part = "windowBackground";
-    document.head.append(this.style);
-    document.head.append(this.userStyle);
+    // The user's configuration is the last layer (layers.ts): after every mod's stylesheet.
+    insertStyle(this.style, "user");
+    insertStyle(this.userStyle, "user");
     document.body.prepend(this.background);
     this.tooltip = new Tooltips();
     this.transparentAtStart = createdTransparent;
@@ -206,8 +208,9 @@ export class Appearance {
       }
     }
     this.userStyle.textContent = parts.join("\n\n");
-    // After every mod's stylesheet, so the user's rules win.
-    document.head.append(this.style, this.userStyle);
+    // After every mod's stylesheet, so the user's rules win (layers.ts).
+    insertStyle(this.style, "user");
+    insertStyle(this.userStyle, "user");
   }
 
   private home = "";

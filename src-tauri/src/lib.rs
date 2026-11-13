@@ -2,6 +2,7 @@
 //! registry, and the `aimod://` protocol their code is loaded from. Everything a user sees beyond
 //! a single text editor comes from a mod.
 
+mod background;
 mod bundle;
 #[cfg(target_os = "macos")]
 mod dock;
@@ -9,6 +10,7 @@ mod fsops;
 mod http;
 mod mcp;
 mod menu;
+mod native;
 mod mods;
 mod paths;
 mod procs;
@@ -70,6 +72,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(mods::ModsState::load())
         .manage(procs::ProcState::default())
         .manage(http::HttpState::default())
@@ -77,6 +80,8 @@ pub fn run() {
         .manage(windows::WindowsState::default())
         .manage(fsops::WatchState::default())
         .manage(updater::UpdateState::default())
+        .manage(background::BgState::default())
+        .manage(native::NativeState::default())
         .on_window_event(windows::on_window_event)
         // Served off the main thread: a mod's files are read from disk while the window keeps
         // handling its own requests (IPC included) during startup.
@@ -126,6 +131,7 @@ pub fn run() {
             wins.started.store(true, std::sync::atomic::Ordering::SeqCst);
             #[cfg(target_os = "macos")]
             dock::install(app.handle());
+            native::install(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -181,6 +187,19 @@ pub fn run() {
             procs::proc_kill,
             procs::proc_write,
             menu::menu_set_extra,
+            background::app_tray_set,
+            background::app_tray_remove,
+            background::app_tray_reset,
+            background::app_set_dock_visible,
+            background::app_set_badge,
+            background::app_quit,
+            native::native_eval,
+            native::native_open,
+            native::native_call,
+            native::native_close,
+            native::native_reset,
+            native::app_shortcut_register,
+            native::app_shortcut_unregister,
             http::http_request,
             http::http_cancel,
             secrets::secret_get,
@@ -227,6 +246,9 @@ pub fn run() {
                 }
             }
             tauri::RunEvent::Exit => procs::kill_all(app),
+            // The Dock icon clicked: hidden windows come back (a mod may have hidden them).
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { has_visible_windows, .. } => background::on_reopen(app, has_visible_windows),
             // A file or folder dropped on the Dock icon, "Open With" in Finder, `open -a AICode x`.
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Opened { urls } => {

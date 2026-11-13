@@ -403,7 +403,7 @@ const layoutJson = {
       parts: { type: "object", properties: { sidebar: { type: "boolean" }, secondary: { type: "boolean" }, panel: { type: "boolean" } }, description: "Which parts are open when the window opens." },
       sizes: { type: "object", properties: { sidebar: { type: "number" }, secondary: { type: "number" }, panel: { type: "number" } } },
       center: { type: "string", description: "A view shown in place of the editor (e.g. \"agents.chat\")." },
-      views: { type: "object", additionalProperties: { enum: ["sidebar", "secondary", "panel", "center", "hidden"] }, description: "Where each view goes in this window." },
+      views: { type: "object", additionalProperties: { enum: ["sidebar", "secondary", "panel", "center", "hidden", "floating"] }, description: "Where each view goes in this window." },
       hide: { type: "array", items: { type: "string" }, description: "Parts hidden in this window (see workbench.hide)." },
       settings: { type: "object", description: "Core settings for this window only (they go over yours)." },
     },
@@ -613,7 +613,13 @@ export const CORE_SCHEMA: Record<string, SettingSchema> = {
 
   // ----- kept by the workbench itself -----
   "workbench.layout": { type: "object", default: {}, hidden: true, title: "Layout", description: "Customize Layout's choices (written by the workbench)." },
-  "workbench.viewPlacement": { type: "object", default: {}, hidden: true, title: "View Placement", description: "Where you dragged views to (written by the workbench)." },
+  "workbench.viewPlacement": {
+    type: "object",
+    default: {},
+    hidden: true,
+    title: "View Placement",
+    description: 'Where views go: { "<view id>": { "location": "sidebar" | "secondary" | "panel", "order": 10, "float": true | { "x", "y", "w", "h", "open" } } }. Written by the workbench when you drag views; a mod can set defaults with configurationDefaults.',
+  },
 };
 
 config.registerSchema("core", CORE_SCHEMA);

@@ -341,6 +341,11 @@ pub fn refresh(app: &AppHandle) {
 /// A menu item was picked.
 pub fn on_event(app: &AppHandle, event: MenuEvent) {
     let id = event.id().0.as_str();
+    // A mod's icon in the menu bar: to the window that set it.
+    if let Some(rest) = id.strip_prefix(crate::background::TRAY_PREFIX) {
+        crate::background::on_menu(app, rest);
+        return;
+    }
     if let Some(path) = id.strip_prefix(RECENT) {
         // Like a path dropped on the Dock icon: a folder goes to the window in front if it has
         // none (else to a window of its own), a file opens in it.

@@ -5,6 +5,7 @@ import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialo
 import { invoke, ModInfo } from "./ipc";
 import { h, icon, iconButton, clear, append, toDisposable, Child } from "./ui";
 import { ModHost } from "./mods";
+import { undeclaredPermissions } from "./declarative";
 import { EditorService } from "./editor";
 import { notify, inputBox, confirm, contextMenu } from "./widgets";
 import * as commands from "./commands";
@@ -27,7 +28,10 @@ const SOURCE_LABEL: Record<ModInfo["source"], string> = {
   profile: "Installed only in this profile (exported with it)",
 };
 
-const permIcon = (p: string) => (p.startsWith("fs") ? "file" : p === "pty" ? "terminal" : p === "process" ? "play" : p === "mcp-server" ? "mcp" : "link-external");
+const PERM_ICONS: Record<string, string> = { pty: "terminal", process: "play", "mcp-server": "mcp", network: "globe", secrets: "key", app: "layers", native: "symbol-namespace", "open-external": "link-external" };
+const permIcon = (p: string) => (p.startsWith("fs") ? "file" : PERM_ICONS[p] ?? "shield");
+/** What the mod declares, plus what its mod.json actions use without declaring it: the user sees all of it. */
+const permsOf = (mod: ModInfo) => [...new Set([...mod.permissions, ...undeclaredPermissions(mod)])];
 const mb = (kb: number | null | undefined) => (kb ? `${(kb / 1024).toFixed(0)} MB` : "—");
 const byName = (a: ModInfo, b: ModInfo) => a.name.localeCompare(b.name);
 
@@ -86,8 +90,8 @@ export function openModManager(host: ModHost, editors: EditorService, query = ""
       };
 
       const toggle = async (mod: ModInfo) => {
-        if (!mod.enabled && mod.permissions.length) {
-          const asks = mod.permissions.map((p) => `• ${permissions.get(p) ?? p}`).join("\n");
+        if (!mod.enabled && permsOf(mod).length) {
+          const asks = permsOf(mod).map((p) => `• ${permissions.get(p) ?? p}`).join("\n");
           const ok = await confirm(`Enable ${mod.name}?`, `It will be able to:\n${asks}`, "Enable");
           if (!ok) return;
         }
@@ -193,7 +197,7 @@ export function openModManager(host: ModHost, editors: EditorService, query = ""
               "div",
               { class: "mod-tile-badges" },
               mod.source !== "bundled" ? h("span", { class: "chip outline", title: SOURCE_LABEL[mod.source] }, mod.source === "profile" ? "profile" : "shared") : null,
-              mod.permissions.map((p) => h("span", { class: "perm-badge", title: `${p} — ${permissions.get(p) ?? p}` }, icon(permIcon(p)))),
+              permsOf(mod).map((p) => h("span", { class: "perm-badge", title: `${p} — ${permissions.get(p) ?? p}` }, icon(permIcon(p)))),
             ),
           ),
         );
@@ -233,8 +237,8 @@ export function openModManager(host: ModHost, editors: EditorService, query = ""
           h("p", { class: "mod-details-desc selectable" }, mod.description),
           section(
             "Permissions",
-            mod.permissions.length
-              ? h("ul", { class: "perm-list" }, mod.permissions.map((p) => h("li", null, h("span", { class: "perm-badge" }, icon(permIcon(p))), h("div", null, h("code", null, p), h("div", { class: "muted" }, permissions.get(p) ?? "")))))
+            permsOf(mod).length
+              ? h("ul", { class: "perm-list" }, permsOf(mod).map((p) => h("li", null, h("span", { class: "perm-badge" }, icon(permIcon(p))), h("div", null, h("code", null, p), h("div", { class: "muted" }, permissions.get(p) ?? "")))))
               : h("div", { class: "muted" }, "Asks for no permissions."),
           ),
           adds.length ? section("Adds", h("ul", { class: "plain-list" }, adds.map((a) => h("li", null, a)))) : null,

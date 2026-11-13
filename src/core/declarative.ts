@@ -2,8 +2,9 @@
 // *actions*; views list launchers and notes; status bar items, editor right-click items and
 // settings come straight from the manifest.
 //
-// The core runs the actions on the mod's behalf, so they go through the same permission check a
-// code mod's calls do: every Rust call carries the mod's id.
+// The core runs the actions on the mod's behalf, the same way a code mod's calls run: every Rust
+// call carries the mod's id. Permissions describe what a mod does, for the user (the Mods page
+// shows them and asks before enabling it); they do not block anything, as with code mods.
 
 import * as monaco from "monaco-editor";
 import { invoke, ModInfo } from "./ipc";
@@ -32,6 +33,20 @@ export interface DeclarativeDeps {
   isEnabled: (id: string) => boolean;
 }
 
+/**
+ * Permissions a mod.json's actions use but do not declare. Nothing is blocked; the author should
+ * declare them so the user knows what the mod does (pnpm check:mods reports them).
+ */
+export function undeclaredPermissions(info: ModInfo): string[] {
+  const out = new Set<string>();
+  for (const cmd of info.contributes?.commands ?? []) {
+    for (const a of Array.isArray(cmd.run) ? cmd.run : cmd.run ? [cmd.run] : []) {
+      for (const p of NEEDS[a?.type] ?? []) if (!info.permissions.includes(p)) out.add(p);
+    }
+  }
+  return [...out];
+}
+
 /** Problems a mod.json's actions have, for the Mods page and a warning on load. */
 export function checkActions(info: ModInfo): string[] {
   const problems: string[] = [];
@@ -39,7 +54,7 @@ export function checkActions(info: ModInfo): string[] {
     if (cmd.run === undefined) continue;
     for (const a of Array.isArray(cmd.run) ? cmd.run : [cmd.run]) {
       if (!a || typeof a !== "object" || !ACTION_TYPES.includes(a.type)) problems.push(`${cmd.id}: unknown action type ${JSON.stringify(a?.type)}`);
-      else for (const p of NEEDS[a.type] ?? []) if (!info.permissions.includes(p)) problems.push(`${cmd.id}: a ${a.type} action needs the "${p}" permission`);
+      // Permissions are not checked here: they only tell the user (see `undeclaredPermissions`).
     }
   }
   return problems;
@@ -122,7 +137,6 @@ export class Declarative {
 
   private async step(info: ModInfo, a: any, title: string, vars: Vars) {
     if (!a || typeof a !== "object") throw new Error("an action must be an object");
-    for (const need of NEEDS[a.type] ?? []) if (!info.permissions.includes(need)) throw new Error(`${info.name} did not declare the "${need}" permission`);
     const { editors, workspace } = this.d;
     const text = (s: unknown, mode: Mode = "plain") => vars.expand(String(s ?? ""), mode);
     const resolvePath = (p: string) => (p.startsWith("/") || p.startsWith("~") || !workspace.folder ? p.replace(/^~(?=\/|$)/, vars.home) : `${workspace.folder}/${p}`);

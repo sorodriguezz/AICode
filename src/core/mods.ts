@@ -15,7 +15,9 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { invoke, listen, onStream, ModInfo } from "./ipc";
 import * as commands from "./commands";
-import { Workbench, ViewProvider, StatusItem, TitleItem, ViewLocation, LayoutOptions, type ActivityItem } from "./workbench";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { Workbench, ViewProvider, StatusItem, TitleItem, ViewLocation, LayoutOptions, type ActivityItem, type FloatRect, type EdgeSpec, type DropTargetSpec, type DragEvent, type ViewMove } from "./workbench";
+import { motionEnabled, play, leave, flip, onDidChangeMotion } from "./motion";
 import { addMenuItem, menuContributions, prepareMenuBarItem, type MenuContribution } from "./menus";
 import { setIcon, iconOverrides, type IconSource } from "./icons";
 import { EditorService, EditProposal, CustomTabSpec, TitleAction, EditorType, SidePaneSpec, BreadcrumbProvider } from "./editor";
@@ -25,6 +27,7 @@ import { h, icon, iconButton, clear, basename, dirname, joinPath, fileIcon, file
 import { ThemeEntry, VsTheme } from "./theme";
 import type { GrammarSource } from "./textmate";
 import { Emitter } from "./events";
+import { byLayer, insertStyle, setModSources } from "./layers";
 import { Declarative, checkActions } from "./declarative";
 import { fileIconEl, folderIconEl, registerIconTheme, drawIconThemeWith } from "./fileIcons";
 import { config, type SettingSchema, type Values, type Change } from "./config";
@@ -150,8 +153,77 @@ export class ModHost {
   readonly declarative: Declarative;
   /** Set by main.ts once the window knows what it is. */
   windowServices: WindowServices | null = null;
+  /** Mods asked before this window closes (`ctx.window.onWillClose`). */
+  private closeHooks = new Set<(info: { lastWindow: boolean }) => unknown>();
+  /** Menu bar icons of this window's mods, by "<mod id>:<id>". */
+  private trays = new Map<string, { onClick?: (e: TrayClick) => void; onDoubleClick?: (e: TrayClick) => void; items: Map<string, TrayMenuItem> }>();
+  private trayListening: Promise<unknown> | null = null;
+  readonly onDidReopen = new Emitter<{ hasVisibleWindows: boolean }>();
+  /** `emit(channel, data)` of native contexts, by context id. */
+  private nativeHandlers = new Map<number, (channel: string, data: unknown) => void>();
+  private nativeListening: Promise<unknown> | null = null;
+  /** Global shortcuts of this window's mods, by accelerator. */
+  private shortcuts = new Map<string, { pressed?: () => void; released?: () => void }>();
+  private shortcutListening: Promise<unknown> | null = null;
+
+  private listenNative() {
+    this.nativeListening ??= listen<{ id: number; channel: string; data: unknown }>("native://event", (e) => {
+      const fn = this.nativeHandlers.get(e.payload.id);
+      if (fn) {
+        try {
+          fn(e.payload.channel, e.payload.data);
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    });
+    return this.nativeListening;
+  }
+
+  private listenShortcuts() {
+    this.shortcutListening ??= listen<{ accelerator: string; state: "pressed" | "released" }>("shortcut://event", (e) => {
+      const s = this.shortcuts.get(e.payload.accelerator);
+      try {
+        s?.[e.payload.state]?.();
+      } catch (err) {
+        console.error(err);
+      }
+    });
+    return this.shortcutListening;
+  }
+
+  /**
+   * Whether the window may close: every mod's onWillClose is asked, and one returning false keeps
+   * it open (it may have hidden it instead, to keep working in the background).
+   */
+  async allowClose(info: { lastWindow: boolean }): Promise<boolean> {
+    for (const hook of [...this.closeHooks]) {
+      try {
+        if ((await hook(info)) === false) return false;
+      } catch (e) {
+        console.error("onWillClose", e);
+      }
+    }
+    return true;
+  }
+
+  private listenTray() {
+    this.trayListening ??= listen<{ key: string; kind: string; item?: string; button?: string; x?: number; y?: number }>("tray://event", (e) => {
+      const t = this.trays.get(e.payload.key);
+      if (!t) return;
+      const p = e.payload;
+      if (p.kind === "menu" && p.item) {
+        const item = t.items.get(p.item);
+        if (item?.run) Promise.resolve(item.run()).catch((err) => console.error(err));
+        else if (item?.command) commands.execute(item.command, ...(item.args ?? [])).catch((err) => console.error(err));
+      } else if (p.kind === "click") t.onClick?.({ button: p.button as TrayClick["button"], x: p.x ?? 0, y: p.y ?? 0 });
+      else if (p.kind === "doubleClick") t.onDoubleClick?.({ button: p.button as TrayClick["button"], x: p.x ?? 0, y: p.y ?? 0 });
+    });
+    return this.trayListening;
+  }
 
   constructor(private wb: Workbench, private editors: EditorService, private workspace: Workspace) {
+    listen<{ hasVisibleWindows: boolean }>("app://reopen", (e) => this.onDidReopen.fire(e.payload)).catch(() => {});
     this.declarative = new Declarative({
       wb,
       editors,
@@ -198,7 +270,9 @@ export class ModHost {
   /** Reads manifests and lays out every enabled mod's declarations. Loads no mod code. */
   async load(list?: ModInfo[]): Promise<ModInfo[]> {
     const all = list ?? (await invoke<ModInfo[]>("mods_list"));
-    for (const info of all.filter((m) => m.enabled && !m.problems.length)) {
+    setModSources(all);
+    // Declarations go on screen in layer order (layers.ts), so a user's mod lands over a bundled one.
+    for (const info of byLayer(all.filter((m) => m.enabled && !m.problems.length), (m) => m.id)) {
       const loaded: Loaded = { info, state: "idle", subscriptions: [] };
       this.mods.set(info.id, loaded);
       this.contribute(loaded);
@@ -216,7 +290,9 @@ export class ModHost {
   /** The configuration layers of the enabled mods (their configurationDefaults), in load order. */
   static configurationLayers(all: ModInfo[]): { mod: string; values: Values }[] {
     const owners = new Set(all.map((m) => m.id));
-    return all.filter((m) => m.enabled && !m.problems.length).map((m) => ({ mod: m.id, values: modDefaults(m, owners) })).filter((l) => Object.keys(l.values).length);
+    setModSources(all);
+    // In layer order (layers.ts): bundled mods, then the user's; the user's configuration goes over all of them.
+    return byLayer(all.filter((m) => m.enabled && !m.problems.length), (m) => m.id).map((m) => ({ mod: m.id, values: modDefaults(m, owners) })).filter((l) => Object.keys(l.values).length);
   }
 
   private contribute(m: Loaded) {
@@ -475,6 +551,49 @@ export class ModHost {
     const wb = this.wb;
     const workspace = this.workspace;
 
+    /** Runs a program; output streams to onData, the end to onExit (ctx.process.spawn). */
+    const spawnProc = async (
+      program: string,
+      args: string[],
+      opts: {
+        cwd?: string;
+        stdin?: string;
+        env?: Record<string, string>;
+        /** Keep the input open: write to the program while it runs with `write()`, close it with `end()`. */
+        keepStdin?: boolean;
+        /** "base64": `onData` gets the raw bytes (a Uint8Array), for programs that print binary. */
+        encoding?: "utf8" | "base64";
+        onData?: (data: any, stream: "stdout" | "stderr") => void;
+        onExit?: (code: number | null) => void;
+      } = {},
+    ) => {
+      const id = await call<number>("proc_spawn", { program, args, cwd: opts.cwd ?? workspace.folder ?? undefined, stdin: opts.stdin, env: opts.env, keepStdin: !!opts.keepStdin, encoding: opts.encoding });
+      let resolveDone: (code: number | null) => void;
+      const done = new Promise<number | null>((r) => (resolveDone = r));
+      // A quick program may have exited already: its buffered exit then arrives inside onStream,
+      // before offExit is assigned — so the cleanup must not need it yet.
+      let offExit: (() => void) | null = null;
+      let exited = false;
+      const offData = onStream("proc://data", id, (p) => opts.onData?.(p.base64 ? fromBase64(p.data) : p.data, p.stream));
+      offExit = onStream("proc://exit", id, (p) => {
+        exited = true;
+        offData();
+        offExit?.();
+        opts.onExit?.(p.code);
+        resolveDone(p.code);
+      });
+      if (exited) offExit();
+      return {
+        id,
+        done,
+        kill: () => invoke("proc_kill", { id }),
+        /** Text, or bytes (Uint8Array). Needs `keepStdin`. */
+        write: (data: string | Uint8Array) => (typeof data === "string" ? invoke<void>("proc_write", { id, data }) : invoke<void>("proc_write", { id, data: toBase64(data), base64: true })),
+        /** Closes the input (the program reads end-of-file). */
+        end: () => invoke<void>("proc_end", { id }),
+      };
+    };
+
     return Object.freeze({
       id: modId,
       apiVersion: 1,
@@ -529,6 +648,187 @@ export class ModHost {
           return Array.isArray(r) ? r : r ? [r] : [];
         },
         copy: (text: string) => invoke<void>("clipboard_write", { text }),
+        /** Hides this window: it keeps running (its mods, programs and terminals). `show()` brings it back. */
+        hide: () => getCurrentWindow().hide(),
+        show: async () => {
+          const w = getCurrentWindow();
+          await w.show();
+          await w.unminimize().catch(() => {});
+          await w.setFocus().catch(() => {});
+        },
+        isVisible: () => getCurrentWindow().isVisible(),
+        minimize: () => getCurrentWindow().minimize(),
+        focus: () => getCurrentWindow().setFocus(),
+        /**
+         * Asked before this window closes (the red button, ⌘⇧W, Close Window): return false to keep
+         * it open — hide it instead and the app keeps working, with the Dock icon or a menu bar
+         * icon (`ctx.app.tray`) to bring it back. `lastWindow`: no other window is open.
+         */
+        onWillClose: (fn: (info: { lastWindow: boolean }) => boolean | void | Promise<boolean | void>) => {
+          host.closeHooks.add(fn);
+          return track(toDisposable(() => host.closeHooks.delete(fn)));
+        },
+      },
+
+      /** The app beyond this window: menu bar icons, the Dock, quitting. */
+      app: {
+        /**
+         * An icon in the macOS menu bar (a status item) with an optional menu. `icon`: a codicon name,
+         * SVG markup, a .png/.svg in the mod's folder, an absolute path, a data: URL, or "app".
+         * Menu items: `{ id, label, run | command, checked, enabled, accelerator, separator, submenu }`.
+         * Returns `{ update(patch), dispose() }`.
+         */
+        tray: (spec: TraySpec) => {
+          const id = spec.id ?? "main";
+          const key = `${modId}:${id}`;
+          let current: TraySpec = { ...spec };
+          void host.listenTray();
+          const send = async () => {
+            const items = new Map<string, TrayMenuItem>();
+            const flatten = (list: TrayMenuItem[] | undefined, prefix: string): any[] | undefined =>
+              list?.map((it, i) => {
+                const itemId = it.id ?? `${prefix}${i}`;
+                if (!it.separator) items.set(itemId, it);
+                return { id: itemId, label: it.label, enabled: it.enabled, checked: it.checked, separator: it.separator, accelerator: it.accelerator, submenu: flatten(it.submenu, `${itemId}.`) };
+              });
+            const menu = flatten(current.menu, "");
+            host.trays.set(key, { onClick: current.onClick, onDoubleClick: current.onDoubleClick, items });
+            const icon = await trayIcon(current.icon, (p) => host.url(modId, p), m.info.dir);
+            await call<void>("app_tray_set", { id, spec: { icon, template: current.template, title: current.title, tooltip: current.tooltip, menu, menuOnLeftClick: current.menuOnLeftClick } });
+          };
+          let ready = send().catch((e) => console.error(`tray ${id}:`, e));
+          const dispose = () => {
+            host.trays.delete(key);
+            void ready.then(() => invoke("app_tray_remove", { modId, id }));
+          };
+          track(toDisposable(dispose));
+          return {
+            update: (patch: Partial<TraySpec>) => {
+              current = { ...current, ...patch };
+              ready = ready.then(send).catch((e) => console.error(`tray ${id}:`, e));
+              return ready;
+            },
+            dispose,
+          };
+        },
+        /** The Dock icon (and ⌘Tab): false makes AICode an app that lives in the menu bar. */
+        setDockVisible: (visible: boolean) => call<void>("app_set_dock_visible", { visible }),
+        /** A badge on the Dock icon (a count, a word); null removes it. */
+        setBadge: (text: string | number | null) => invoke<void>("app_set_badge", { text: text == null ? null : String(text) }),
+        /** Quits AICode (sessions are kept, as with ⌘Q). */
+        quit: () => invoke<void>("app_quit"),
+        /** The Dock icon was clicked; with no window on screen, hidden windows come back by themselves. */
+        onReopen: (fn: (info: { hasVisibleWindows: boolean }) => void) => track(host.onDidReopen.event(fn)),
+        /**
+         * A shortcut for the whole system: it works while AICode is in the background or hidden, and
+         * needs no permission. `key` like the window's ("mod+shift+space", "alt+f1"); `fn` runs when it
+         * is pressed (`onRelease` when it is let go). Resolves to a disposable.
+         */
+        globalShortcut: async (key: string, fn: () => void, opts: { onRelease?: () => void } = {}) => {
+          const accelerator = toAccelerator(key);
+          await host.listenShortcuts();
+          host.shortcuts.set(accelerator, { pressed: fn, released: opts.onRelease });
+          try {
+            await call<void>("app_shortcut_register", { accelerator });
+          } catch (e) {
+            host.shortcuts.delete(accelerator);
+            throw e;
+          }
+          return track(toDisposable(() => {
+            host.shortcuts.delete(accelerator);
+            invoke("app_shortcut_unregister", { accelerator }).catch(() => {});
+          }));
+        },
+      },
+
+      /**
+       * Native macOS code in JavaScript (JavaScript for Automation): the whole Cocoa API through
+       * `$` (`$.NSApplication.sharedApplication` is AICode itself), JS functions as blocks,
+       * `ObjC.registerSubclass` for delegates and targets. No Rust, no compiling. See docs/MODS.md.
+       */
+      native: {
+        /** Runs `source` (a function body: `return` a JSON-able value) inside AICode, on the main thread. `opts.args` is `args` there. */
+        eval: (source: string, opts: { args?: unknown } = {}) => call<unknown>("native_eval", { source, args: opts.args ?? null }),
+        /**
+         * A native context that stays: its top-level functions and state live until `dispose()`
+         * (a `dispose()` function of its own runs first). `call(name, ...args)` runs one of its
+         * functions; `emit(channel, data)` in it reaches `on(channel, fn)` / `opts.onEvent`.
+         */
+        open: async (source: string, opts: { args?: unknown; onEvent?: (channel: string, data: unknown) => void } = {}) => {
+          await host.listenNative();
+          const listeners = new Map<string, Set<(data: unknown) => void>>();
+          let id = -1;
+          const route = (channel: string, data: unknown) => {
+            opts.onEvent?.(channel, data);
+            listeners.get(channel)?.forEach((f) => f(data));
+            listeners.get("*")?.forEach((f) => f({ channel, data }));
+          };
+          id = await call<number>("native_open", { source, args: opts.args ?? null });
+          host.nativeHandlers.set(id, route);
+          let closed = false;
+          const dispose = async () => {
+            if (closed) return;
+            closed = true;
+            host.nativeHandlers.delete(id);
+            await invoke("native_close", { id }).catch(() => {});
+          };
+          track(toDisposable(() => void dispose()));
+          return {
+            id,
+            call: <T = unknown>(name: string, ...args: unknown[]) => invoke<T>("native_call", { id, name, args }),
+            on: (channel: string, fn: (data: unknown) => void) => {
+              if (!listeners.has(channel)) listeners.set(channel, new Set());
+              listeners.get(channel)!.add(fn);
+              return toDisposable(() => listeners.get(channel)?.delete(fn));
+            },
+            dispose,
+          };
+        },
+        /**
+         * Native JavaScript in a process of its own (`osascript -l JavaScript`): for code that loops,
+         * waits or should not hold up the window. In it: `args`, `send(data)` (→ `onMessage`),
+         * `receive(fn)` (← `send()` here) and `keepAlive()` (runs until killed or stdin closes).
+         */
+        spawn: async (source: string, opts: { args?: unknown; onMessage?: (data: unknown) => void; onStderr?: (text: string) => void; onExit?: (code: number | null) => void } = {}) => {
+          let buf = "";
+          const proc = await spawnProc("/usr/bin/osascript", ["-l", "JavaScript", "-e", JXA_HELPER_PRELUDE + `var args = ${JSON.stringify(opts.args ?? null)};
+` + source], {
+            keepStdin: true,
+            onData: (data: string, stream: "stdout" | "stderr") => {
+              if (stream === "stderr") return opts.onStderr?.(data);
+              buf += data;
+              const lines = buf.split("\n");
+              buf = lines.pop() ?? "";
+              for (const line of lines) {
+                if (!line.trim()) continue;
+                let msg: unknown = line;
+                try {
+                  msg = JSON.parse(line);
+                } catch {}
+                opts.onMessage?.(msg);
+              }
+            },
+            onExit: opts.onExit,
+          });
+          track(toDisposable(() => void proc.kill()));
+          return {
+            send: (data: unknown) => proc.write(JSON.stringify(data) + "\n"),
+            kill: () => proc.kill(),
+            done: proc.done,
+          };
+        },
+      },
+
+      /** Animations that follow the user's choice and macOS "Reduce motion". */
+      motion: {
+        enabled: () => motionEnabled(),
+        /** Plays a CSS animation class once. */
+        play: (el: Element, cls: string) => play(el, cls),
+        /** Adds a leaving class and waits for its animation. */
+        leave: (el: Element, cls: string, maxMs?: number) => leave(el, cls, maxMs),
+        /** Animates elements from where they were to where `mutate()` puts them (reordering, moving). */
+        flip: (target: Element | Element[] | (() => Element[]), mutate: () => void | Promise<void>, opts?: Parameters<typeof flip>[2]) => flip(target, mutate, opts),
+        onDidChange: (fn: (enabled: boolean) => void) => track(onDidChangeMotion.event(fn)),
       },
 
       editor: {
@@ -574,6 +874,24 @@ export class ModHost {
         isSideMaximized: () => editors.isSideMaximized(),
         /** A page over the workbench (VS Code's modal editor); a tab when the modal is turned off. */
         openPage: (spec: CustomTabSpec) => editors.openPage(spec),
+        /** An open document's Monaco model (`editor.open(path, { background: true })` opens one without showing it). */
+        model: (idOrPath: string) => editors.modelOf(idOrPath),
+        /**
+         * Another Monaco editor in `el` (a split, a peek, a floating editor) with the main one's
+         * options, kept in step. With a document (id or path) it edits that document: dirty state,
+         * saving and undo are shared. Disposed with the mod.
+         */
+        createEditor: (el: HTMLElement, idOrPath?: string | null, options?: Parameters<EditorService["createEditor"]>[2]) => {
+          const ed = editors.createEditor(el, idOrPath ? editors.modelOf(idOrPath) : null, options);
+          track({ dispose: () => ed.dispose() });
+          return ed;
+        },
+        /** Moves a tab before another (null: to the end). */
+        moveTab: (id: string, beforeId: string | null) => editors.moveTab(id, beforeId),
+        onDidMoveTab: (fn: (e: { id: string; from: number; to: number }) => void) => track(editors.onDidMoveTab.event(fn)),
+        /** Around each redraw of the tab bar (measure before, animate after). */
+        onWillRenderTabs: (fn: () => void) => track(editors.onWillRenderTabs.event(fn)),
+        onDidRenderTabs: (fn: () => void) => track(editors.onDidRenderTabs.event(fn)),
       },
 
       workspace: {
@@ -634,47 +952,7 @@ export class ModHost {
       process: {
         which: (program: string) => call<string | null>("proc_which", { program }),
         /** Runs a program; output streams to onData, the end to onExit. */
-        spawn: async (
-          program: string,
-          args: string[],
-          opts: {
-            cwd?: string;
-            stdin?: string;
-            env?: Record<string, string>;
-            /** Keep the input open: write to the program while it runs with `write()`, close it with `end()`. */
-            keepStdin?: boolean;
-            /** "base64": `onData` gets the raw bytes (a Uint8Array), for programs that print binary. */
-            encoding?: "utf8" | "base64";
-            onData?: (data: any, stream: "stdout" | "stderr") => void;
-            onExit?: (code: number | null) => void;
-          } = {},
-        ) => {
-          const id = await call<number>("proc_spawn", { program, args, cwd: opts.cwd ?? workspace.folder ?? undefined, stdin: opts.stdin, env: opts.env, keepStdin: !!opts.keepStdin, encoding: opts.encoding });
-          let resolveDone: (code: number | null) => void;
-          const done = new Promise<number | null>((r) => (resolveDone = r));
-          // A quick program may have exited already: its buffered exit then arrives inside onStream,
-          // before offExit is assigned — so the cleanup must not need it yet.
-          let offExit: (() => void) | null = null;
-          let exited = false;
-          const offData = onStream("proc://data", id, (p) => opts.onData?.(p.base64 ? fromBase64(p.data) : p.data, p.stream));
-          offExit = onStream("proc://exit", id, (p) => {
-            exited = true;
-            offData();
-            offExit?.();
-            opts.onExit?.(p.code);
-            resolveDone(p.code);
-          });
-          if (exited) offExit();
-          return {
-            id,
-            done,
-            kill: () => invoke("proc_kill", { id }),
-            /** Text, or bytes (Uint8Array). Needs `keepStdin`. */
-            write: (data: string | Uint8Array) => (typeof data === "string" ? invoke<void>("proc_write", { id, data }) : invoke<void>("proc_write", { id, data: toBase64(data), base64: true })),
-            /** Closes the input (the program reads end-of-file). */
-            end: () => invoke<void>("proc_end", { id }),
-          };
-        },
+        spawn: spawnProc,
       },
 
       pty: {
@@ -794,9 +1072,35 @@ export class ModHost {
         toggle: (loc: ViewLocation) => wb.toggle(loc),
         isPartVisible: (loc: ViewLocation) => wb.viewsAt(loc).length > 0 && wb.state[loc].visible,
         views: () => wb.allViews(),
-        moveView: (id: string, to: ViewLocation) => wb.moveView(id, to),
+        moveView: (id: string, to: ViewLocation, beforeId?: string) => wb.moveView(id, to, beforeId),
         setCenterView: (id: string | null) => wb.setCenterView(id),
         centerView: () => wb.centerViewId(),
+        /** Where a view is: "sidebar", "secondary", "panel", "center", "floating", "external" or "hidden". */
+        whereIs: (id: string) => wb.whereIs(id),
+        /** A view in a frame over the workbench, moved and resized by the user (and kept by the profile). */
+        floatView: (id: string, rect?: Partial<FloatRect>) => wb.floatView(id, rect),
+        dockView: (id: string, to?: ViewLocation) => wb.dockView(id, to),
+        closeFloating: (id: string) => wb.closeFloating(id),
+        floatRect: (id: string) => wb.floatRect(id),
+        setFloatRect: (id: string, rect: Partial<FloatRect>) => wb.setFloatRect(id, rect),
+        /** Shows a view inside the mod's own element until disposed (a dock, a split, a card). */
+        hostView: (id: string, el: HTMLElement) => track(wb.hostView(id, el)),
+        /** A strip of the mod's own at an edge of the window: `{ side: "left" | "right" | "top" | "bottom", order }` → `{ el, dispose }`. */
+        addEdge: (spec: EdgeSpec) => {
+          const edge = wb.addEdge(spec);
+          track({ dispose: edge.dispose });
+          return edge;
+        },
+        /** Makes an element take dragged views and tabs: `{ kinds, over(item, e), drop(item, e), hoverClass }`. */
+        addDropTarget: (el: HTMLElement, spec: DropTargetSpec) => track(wb.addDropTarget(el, spec)),
+        onDidMoveView: (fn: (e: ViewMove) => void) => track(wb.onDidMoveView.event(fn)),
+        onDidChangeLayout: (fn: () => void) => track(wb.onDidChangeLayout.event(fn)),
+        /** Around each redraw of the activity bar and part headers (measure before, animate after). */
+        onWillRender: (fn: () => void) => track(wb.onWillRenderChrome.event(fn)),
+        onDidRender: (fn: () => void) => track(wb.onDidRenderChrome.event(fn)),
+        /** A view or a tab started or stopped being dragged (with its ghost element). */
+        onDidStartDrag: (fn: (e: DragEvent) => void) => track(wb.onDidStartDrag.event(fn)),
+        onDidEndDrag: (fn: (e: DragEvent) => void) => track(wb.onDidEndDrag.event(fn)),
       },
 
       /** Windows: open one with a layout or a single view, keep this one on top, and so on. */
@@ -871,7 +1175,7 @@ export function addStyle(css: string, owner: string): Disposable {
   const el = document.createElement("style");
   el.dataset.owner = owner;
   el.textContent = css;
-  document.head.append(el);
+  insertStyle(el, owner);
   return toDisposable(() => el.remove());
 }
 
@@ -881,7 +1185,7 @@ export function addStylesheetLink(href: string, owner: string): Disposable {
   el.rel = "stylesheet";
   el.href = href;
   el.dataset.owner = owner;
-  document.head.append(el);
+  insertStyle(el, owner);
   return toDisposable(() => el.remove());
 }
 
@@ -1064,4 +1368,133 @@ function addContributedMenuItem(menu: string, item: MenuContribution): Disposabl
     added.dispose();
     prepared.dispose();
   });
+}
+
+
+// ---------- menu bar icons (ctx.app.tray) ----------
+
+export interface TrayClick {
+  button: "left" | "right" | "middle";
+  x: number;
+  y: number;
+}
+
+export interface TrayMenuItem {
+  id?: string;
+  label?: string;
+  run?: () => unknown;
+  command?: string;
+  args?: unknown[];
+  enabled?: boolean;
+  /** A check mark (the item is a toggle). */
+  checked?: boolean;
+  separator?: boolean;
+  accelerator?: string;
+  submenu?: TrayMenuItem[];
+}
+
+export interface TraySpec {
+  /** Several icons per mod: give each an id (default "main"). */
+  id?: string;
+  icon?: string;
+  /** Drawn in the menu bar's color (default true for an icon of the mod's). */
+  template?: boolean;
+  title?: string;
+  tooltip?: string;
+  menu?: TrayMenuItem[];
+  menuOnLeftClick?: boolean;
+  onClick?: (e: TrayClick) => void;
+  onDoubleClick?: (e: TrayClick) => void;
+}
+
+/** What Rust takes for a tray icon: "app", a PNG data: URL, or an absolute PNG path. SVGs and codicons are drawn into a PNG here. */
+async function trayIcon(icon: string | undefined, url: (path: string) => string, dir: string): Promise<string> {
+  const src = icon?.trim();
+  if (!src || src === "app") return "app";
+  if (src.startsWith("data:image/png")) return src;
+  if (src.startsWith("<")) return rasterize(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(src)}`);
+  if (src.startsWith("data:")) return rasterize(src);
+  if (/\.png$/i.test(src)) return src.startsWith("/") ? src : `${dir}/${normalizePath(src)}`;
+  if (/\.(svg|jpe?g|gif|webp)$/i.test(src)) return rasterize(src.startsWith("/") ? convertFileSrc(src) : url(src));
+  return codiconPng(src);
+}
+
+/** Menu bar icons are 22pt high: drawn at 2x. */
+const TRAY_PX = 44;
+
+function rasterize(href: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = c.height = TRAY_PX;
+      const g = c.getContext("2d")!;
+      const r = Math.min(TRAY_PX / (img.naturalWidth || TRAY_PX), TRAY_PX / (img.naturalHeight || TRAY_PX));
+      const w = (img.naturalWidth || TRAY_PX) * r;
+      const hh = (img.naturalHeight || TRAY_PX) * r;
+      g.drawImage(img, (TRAY_PX - w) / 2, (TRAY_PX - hh) / 2, w, hh);
+      resolve(c.toDataURL("image/png"));
+    };
+    img.onerror = () => reject(new Error(`could not load the icon ${href.slice(0, 80)}`));
+    img.src = href;
+  });
+}
+
+/** A codicon (or an icon a mod drew over one with ctx.icons — its glyph only) as a PNG. */
+async function codiconPng(name: string): Promise<string> {
+  const el = document.createElement("i");
+  el.className = `codicon codicon-${name}`;
+  el.style.cssText = "position: fixed; left: -9999px; top: 0;";
+  document.body.append(el);
+  try {
+    const before = getComputedStyle(el, "::before");
+    const content = before.content.replace(/^["']|["']$/g, "");
+    if (!content || content === "none" || content === "normal") throw new Error(`no icon named ${name}`);
+    await document.fonts.load(`${TRAY_PX}px ${before.fontFamily}`, content).catch(() => {});
+    const c = document.createElement("canvas");
+    c.width = c.height = TRAY_PX;
+    const g = c.getContext("2d")!;
+    g.font = `${Math.round(TRAY_PX * 0.8)}px ${before.fontFamily}`;
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillStyle = "#000";
+    g.fillText(content, TRAY_PX / 2, TRAY_PX / 2);
+    return c.toDataURL("image/png");
+  } finally {
+    el.remove();
+  }
+}
+
+
+// ---------- native code (ctx.native, ctx.app.globalShortcut) ----------
+
+/** What `ctx.native.spawn` scripts get: `send`, `receive`, `keepAlive`. */
+const JXA_HELPER_PRELUDE = `ObjC.import('Foundation'); ObjC.import('stdlib');
+var __out = $.NSFileHandle.fileHandleWithStandardOutput;
+function send(data) { __out.writeData($(JSON.stringify(data === undefined ? null : data) + "\\n").dataUsingEncoding($.NSUTF8StringEncoding)); }
+function receive(fn) {
+  var fh = $.NSFileHandle.fileHandleWithStandardInput, buf = "";
+  $.NSNotificationCenter.defaultCenter.addObserverForNameObjectQueueUsingBlock($.NSFileHandleDataAvailableNotification, fh, $.NSOperationQueue.mainQueue, function () {
+    var d = fh.availableData;
+    if (d.length == 0) $.exit(0);
+    buf += ObjC.unwrap($.NSString.alloc.initWithDataEncoding(d, $.NSUTF8StringEncoding));
+    var lines = buf.split("\\n"); buf = lines.pop();
+    lines.forEach(function (l) { if (l) { try { fn(JSON.parse(l)); } catch (e) { send({ error: String(e) }); } } });
+    fh.waitForDataInBackgroundAndNotify;
+  });
+  fh.waitForDataInBackgroundAndNotify;
+}
+function keepAlive() { $.NSRunLoop.currentRunLoop.run; }
+`;
+
+/** "mod+shift+space" → "CmdOrCtrl+Shift+Space" (what the global shortcut service reads). */
+export function toAccelerator(key: string): string {
+  const symbols: Record<string, string> = { "`": "Backquote", "\\": "Backslash", "[": "BracketLeft", "]": "BracketRight", ",": "Comma", "=": "Equal", "-": "Minus", ".": "Period", "'": "Quote", ";": "Semicolon", "/": "Slash" };
+  const mods: Record<string, string> = { mod: "CmdOrCtrl", cmd: "Cmd", meta: "Cmd", command: "Cmd", ctrl: "Ctrl", control: "Ctrl", alt: "Alt", option: "Alt", shift: "Shift" };
+  const parts = key.trim().split("+").map((p) => p.trim()).filter(Boolean);
+  if (!parts.length || /\s/.test(key.trim())) throw new Error(`a global shortcut is one keystroke with modifiers ("mod+shift+space"), not ${JSON.stringify(key)}`);
+  const last = parts.pop()!;
+  const k = symbols[last] ?? (last.length === 1 ? last.toUpperCase() : last[0].toUpperCase() + last.slice(1).toLowerCase());
+  return [...parts.map((m) => mods[m.toLowerCase()] ?? m), k].join("+");
 }
