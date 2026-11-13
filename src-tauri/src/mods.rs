@@ -36,9 +36,9 @@ pub const PERMISSIONS: &[(&str, &str)] = &[
     ("mcp-server", "Serve AICode's tools to agents on 127.0.0.1"),
     ("open-external", "Open links and other apps"),
     ("network", "Make HTTP requests to any address"),
-    ("secrets", "Keep passwords and tokens in the macOS Keychain"),
+    ("secrets", "Keep passwords and tokens in the system's password store (Keychain, Credential Manager, Secret Service)"),
     ("app", "Keep running in the background: menu bar icons, the Dock, hiding windows, global shortcuts"),
-    ("native", "Run native macOS code (JavaScript for Automation) inside AICode"),
+    ("native", "Run native code: JavaScript for Automation inside AICode on macOS, PowerShell on Windows, Python 3 on Linux"),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -277,7 +277,7 @@ fn scan_dir(dir: &Path, source: &'static str, out: &mut BTreeMap<String, ModInfo
             Ok(manifest) => {
                 out.insert(
                     manifest.id.clone(),
-                    ModInfo { manifest, source, dir: path.to_string_lossy().into(), enabled: false, problems: vec![] },
+                    ModInfo { manifest, source, dir: crate::paths::ui(&path), enabled: false, problems: vec![] },
                 );
             }
             Err(e) => eprintln!("[aicode] skipping mod at {}: {e}", path.display()),
@@ -486,7 +486,7 @@ pub fn mod_install_folder(app: AppHandle, state: State<'_, ModsState>, path: Str
     }
     copy_dir(&src, &dest).map_err(|e| e.to_string())?;
     refresh(&app, &state);
-    Ok(Installed { id: manifest.id, dir: dest.to_string_lossy().into(), permissions: manifest.permissions })
+    Ok(Installed { id: manifest.id, dir: crate::paths::ui(&dest), permissions: manifest.permissions })
 }
 
 /// Removes an installed mod (never a bundled one) and turns it off.
@@ -511,7 +511,7 @@ pub fn mod_uninstall(app: AppHandle, state: State<'_, ModsState>, id: String) ->
 pub fn mods_folder(state: State<'_, ModsState>, scope: Option<String>) -> String {
     let dir = install_root(&state, scope.as_deref());
     let _ = std::fs::create_dir_all(&dir);
-    dir.to_string_lossy().into()
+    crate::paths::ui(&dir)
 }
 
 pub fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {

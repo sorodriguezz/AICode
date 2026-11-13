@@ -78,7 +78,7 @@ shown to the user (the Mods page adds it), and `pnpm check:mods` warns about it.
 | `pty` | code mods that open terminals (not needed by JSON mods) |
 | `mcp-server` | code mods that serve MCP tools (not needed by JSON mods) |
 | `network` | code mods that make HTTP requests (`ctx.http`) |
-| `secrets` | code mods that keep tokens in the Keychain (`ctx.secrets`) |
+| `secrets` | code mods that keep tokens in the system's password store (`ctx.secrets`) |
 | `app` | code mods that run in the background: menu bar icons, the Dock, hiding the window, global shortcuts (`ctx.app`) |
 | `native` | code mods that run native macOS code written in JavaScript (`ctx.native`) |
 

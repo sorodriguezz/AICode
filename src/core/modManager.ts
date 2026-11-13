@@ -1,7 +1,7 @@
 // The Mods page: what is installed, what is on in this profile, what each mod may do, and what is
 // actually running right now and what it costs. It is a core page, so it works with no mod enabled.
 
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "./dialog";
 import { invoke, ModInfo } from "./ipc";
 import { h, icon, iconButton, clear, append, toDisposable, Child } from "./ui";
 import { ModHost } from "./mods";

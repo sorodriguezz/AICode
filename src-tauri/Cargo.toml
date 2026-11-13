@@ -42,3 +42,16 @@ security-framework = "3"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSURL"] }
 objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSResponder", "NSDocumentController", "NSMenu", "NSMenuItem"] }
+
+# Secrets (keystore.rs): the Credential Manager on Windows, the Secret Service on Linux (zbus,
+# pure Rust: nothing to install to build).
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["async-secret-service", "tokio", "crypto-rust"] }
+
+# One AICode per user on Windows and Linux: opening a file from Explorer or the file manager
+# starts a second one, which hands its paths to the first and quits (macOS does this itself).
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2"

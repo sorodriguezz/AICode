@@ -6,8 +6,13 @@
 //
 //   node scripts/updater-manifest.mjs --version 1.2.3 --repo owner/name --dir <folder> [--notes notes.md] [--out latest.json]
 //
-// <folder> holds the updater archives' signatures, named AICode_<version>_<arch>.app.tar.gz.sig
-// (arch: aarch64 or x64), as the release workflow names them.
+// <folder> holds the update packages' signatures, as the release workflow names them (arch:
+// aarch64 or x64):
+//   macOS    AICode_<version>_<arch>.app.tar.gz.sig
+//   Windows  AICode_<version>_<arch>-setup.exe.sig   (the NSIS installer is the update)
+//   Linux    AICode_<version>_<arch>.AppImage.sig   and, when the bundler signed them,
+//            AICode_<version>_<arch>.deb.sig / .rpm.sig  (an app installed from a .deb or .rpm asks
+//            for linux-<arch>-deb / -rpm first, and could not install an AppImage in their place)
 
 import { readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -26,28 +31,34 @@ if (!version || !repo || !dir) {
   process.exit(1);
 }
 
-// Tauri's updater platform keys, by the arch in our file names.
-const PLATFORMS = {
-  aarch64: "darwin-aarch64",
-  x64: "darwin-x86_64",
-};
+// The update package of each platform, and Tauri's updater key for it by the arch in our names.
+const KINDS = [
+  { suffix: ".app.tar.gz", os: "darwin" },
+  { suffix: "-setup.exe", os: "windows" },
+  { suffix: ".AppImage", os: "linux" },
+  { suffix: ".deb", os: "linux", installer: "deb" },
+  { suffix: ".rpm", os: "linux", installer: "rpm" },
+];
+const ARCH = { aarch64: "aarch64", x64: "x86_64" };
 
 const platforms = {};
 for (const name of readdirSync(dir)) {
-  const m = name.match(/^AICode_(.+)_(aarch64|x64)\.app\.tar\.gz\.sig$/);
+  if (!name.startsWith("AICode_") || !name.endsWith(".sig")) continue;
+  const archive = name.slice(0, -".sig".length);
+  const kind = KINDS.find((k) => archive.endsWith(k.suffix));
+  const m = kind && archive.slice(0, -kind.suffix.length).match(/^AICode_(.+)_(aarch64|x64)$/);
   if (!m) continue;
   if (m[1] !== version) {
     console.error(`updater-manifest: ${name} is not for version ${version}`);
     process.exit(1);
   }
-  const archive = name.replace(/\.sig$/, "");
-  platforms[PLATFORMS[m[2]]] = {
+  platforms[`${kind.os}-${ARCH[m[2]]}${kind.installer ? `-${kind.installer}` : ""}`] = {
     signature: readFileSync(join(dir, name), "utf8").trim(),
     url: `https://github.com/${repo}/releases/download/v${version}/${archive}`,
   };
 }
 if (!Object.keys(platforms).length) {
-  console.error(`updater-manifest: no AICode_${version}_<arch>.app.tar.gz.sig in ${dir}`);
+  console.error(`updater-manifest: no update signatures for ${version} in ${dir}`);
   process.exit(1);
 }
 

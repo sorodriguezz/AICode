@@ -8,6 +8,7 @@ mod bundle;
 mod dock;
 mod fsops;
 mod http;
+mod keystore;
 mod mcp;
 mod menu;
 mod native;
@@ -60,7 +61,7 @@ fn core_info() -> serde_json::Value {
         "version": env!("CARGO_PKG_VERSION"),
         "modApi": mods::API_VERSION,
         "platform": std::env::consts::OS,
-        "dataDir": paths::root(),
+        "dataDir": paths::ui(paths::root()),
         "diag": std::env::var_os("AICODE_DIAG").is_some(),
         // AICODE_DIAG_RUN="cmd.a,cmd.b": commands the diagnostics run, for checks without a screen.
         "diagRun": std::env::var("AICODE_DIAG_RUN").unwrap_or_default(),
@@ -69,7 +70,11 @@ fn core_info() -> serde_json::Value {
 
 pub fn run() {
     paths::ensure();
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // The first plugin: a second AICode hands its paths to this one and quits before anything starts.
+    #[cfg(any(windows, target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| windows::second_instance(app, argv, cwd)));
+    builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -112,10 +117,7 @@ pub fn run() {
             // A menu command is for the window in front (Open Recent and the profiles are handled in Rust).
             app.on_menu_event(menu::on_event);
             // Paths given on the command line open in the first window.
-            let args: Vec<String> = std::env::args().skip(1).filter(|a| !a.starts_with('-')).collect();
-            let mut initial = windows::to_paths(args.into_iter().map(|a| {
-                if a.starts_with('/') { a } else { std::env::current_dir().map(|d| d.join(&a).to_string_lossy().into_owned()).unwrap_or(a) }
-            }));
+            let mut initial = windows::launch_args(std::env::args().skip(1), &std::env::current_dir().unwrap_or_default());
             // A launch by dropping something on the Dock icon delivers it before setup runs: it
             // waited in `launch_paths` and opens in the first window, like the command line.
             let wins = app.state::<windows::WindowsState>();

@@ -63,8 +63,8 @@ function headingPath(text, line) {
   }
   return stack.map((s) => s.crumb);
 }
-const base = (p) => p.split("/").pop();
-const dir = (p) => p.slice(0, p.lastIndexOf("/"));
+const base = (p) => p.split(/[\\/]/).pop();
+const dir = (p) => p.slice(0, Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\")));
 
 export async function activate(ctx) {
   const style = document.createElement("style");
@@ -98,7 +98,7 @@ export async function activate(ctx) {
         ctx.external.open(href).catch((err) => ctx.window.showError(String(err)));
       } else if (source.path) {
         const [file, line] = href.split("#");
-        const target = file.startsWith("/") ? file : normalize(`${dir(source.path)}/${decodeURIComponent(file)}`);
+        const target = ctx.ui.isAbsolute(file) ? file : normalize(`${dir(source.path)}/${decodeURIComponent(file)}`, ctx.ui.pathRoot(source.path));
         const m = line?.match(/^L(\d+)/);
         ctx.editor.open(target, m ? { line: Number(m[1]) } : {});
       }
@@ -186,11 +186,12 @@ export async function activate(ctx) {
   ctx.editor.registerEditorType({ id: "markdown.preview", label: "Markdown Preview", when: (info) => isMd(info), open: (info) => asTab(info) });
 }
 
-function normalize(path) {
+/** `..` and `.` resolved; `root` (`/`, `C:/`) is kept however many `..` there are. */
+function normalize(path, root = "/") {
   const out = [];
-  for (const part of path.split("/")) {
+  for (const part of path.slice(path.startsWith(root) ? root.length : 0).split("/")) {
     if (part === "..") out.pop();
-    else if (part !== ".") out.push(part);
+    else if (part && part !== ".") out.push(part);
   }
-  return out.join("/") || "/";
+  return root + out.join("/");
 }

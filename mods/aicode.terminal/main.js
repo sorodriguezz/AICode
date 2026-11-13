@@ -99,19 +99,22 @@ export async function activate(ctx) {
   // ---------- links: ⌘-click (Ctrl-click) on URLs and file paths ----------
 
   const URL_RE = /\bhttps?:\/\/[^\s"'<>()\[\]{}]+[^\s"'<>()\[\]{}.,;:!?]/g;
-  const PATH_RE = /(?:^|[\s('"`=:])((?:~|\.{1,2})?\/?(?:[\w@.+-]+\/)*[\w@+-][\w@.+-]*\.[A-Za-z0-9]{1,12})(?::(\d+)(?::(\d+))?|\((\d+)(?:,\s?(\d+))?\))?/g;
+  // Paths with `/` or `\` (Windows tools print `src\a.ts(10,5)` and `C:\x\a.ts:3`).
+  const PATH_RE = /(?:^|[\s('"`=:])((?:[A-Za-z]:[\\/]|~|\.{1,2})?[\\/]?(?:[\w@.+-]+[\\/])*[\w@+-][\w@.+-]*\.[A-Za-z0-9]{1,12})(?::(\d+)(?::(\d+))?|\((\d+)(?:,\s?(\d+))?\))?/g;
   const resolvePath = (t, p) => {
-    if (p.startsWith("/")) return p;
+    p = p.replace(/\\/g, "/");
     if (p.startsWith("~/")) return null;
-    const base = t.cwd ?? ctx.workspace.folder();
-    if (!base) return null;
-    const parts = [...base.split("/"), ...p.split("/")];
+    const absolute = ctx.ui.isAbsolute(p);
+    const base = absolute ? "" : t.cwd ?? ctx.workspace.folder();
+    if (!absolute && !base) return null;
+    const full = absolute ? p : `${base}/${p}`;
+    const root = ctx.ui.pathRoot(full) || "/";
     const out = [];
-    for (const part of parts) {
+    for (const part of full.slice(root.length).split("/")) {
       if (part === "..") out.pop();
       else if (part && part !== ".") out.push(part);
     }
-    return "/" + out.join("/");
+    return root + out.join("/");
   };
   const followKey = (e) => (isMac ? e.metaKey : e.ctrlKey);
   const linkProvider = (t) => ({
@@ -173,7 +176,7 @@ export async function activate(ctx) {
     const fit = new FitAddon();
     term.loadAddon(fit);
     const shellName = opts.command ? basename(opts.command) : basename(shells.default ?? "zsh");
-    const isShell = (c) => /(?:^|\/)(?:zsh|bash|fish|sh|ksh|tcsh|nu|pwsh|powershell|cmd)(?:\.exe)?$/.test(c ?? "");
+    const isShell = (c) => /(?:^|[\\/])(?:zsh|bash|fish|sh|ksh|tcsh|nu|pwsh|powershell|cmd)(?:\.exe)?$/.test(c ?? "");
     const t = { id: ++counter, shellCommand: opts.shellCommand ?? (isShell(opts.command) ? opts.command : undefined), name: opts.name ?? shellName, title: null, term, fit, el, pane, pty: null, exited: false, cwd: opts.cwd ?? ctx.workspace.folder() ?? null, group };
     pane.addEventListener("mousedown", () => focusTerm(t), true);
     pane.addEventListener("contextmenu", (e) => termMenu(e, t));

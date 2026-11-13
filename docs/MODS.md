@@ -93,9 +93,9 @@ Prefer the narrowest one. `onStartup` is for mods whose job is to be running (th
 | `mcp-server` | `ctx.mcp.start` — serve tools on 127.0.0.1 |
 | `open-external` | `ctx.external.open` — links, files, other apps |
 | `network` | `ctx.http` — HTTP requests to any address |
-| `secrets` | `ctx.secrets` — the macOS Keychain |
+| `secrets` | `ctx.secrets` — the system's password store (macOS Keychain, Windows Credential Manager, Linux Secret Service) |
 | `app` | `ctx.app` — menu bar icons, the Dock, quitting, global shortcuts; `ctx.window.hide/onWillClose` — running in the background |
-| `native` | `ctx.native` — native macOS code written in JavaScript (JXA), inside AICode or in a helper process |
+| `native` | `ctx.native` — native code: JavaScript for Automation on macOS (inside AICode or in a helper process), PowerShell on Windows, Python 3 on Linux |
 
 They tell the user what a mod does: the Mods page shows them and the user confirms them when
 enabling the mod. **They do not limit it**: an enabled mod can call anything in `ctx`, declared or
@@ -169,7 +169,7 @@ export async function activate(ctx) {
 | `ctx.statusBar` | `add({ text, icon, tooltip, command, align, priority })` → `{ update, dispose }` |
 | `ctx.window` (this window) | `hide()` (it keeps running: mods, programs, terminals), `show()`, `isVisible()`, `minimize()`, `focus()`, `onWillClose(({ lastWindow }) => false \| …)` (return `false` to keep the window — hide it instead to keep working in the background) |
 | `ctx.app` | `tray({ id, icon, title, tooltip, template, menu: [{ id, label, run \| command, checked, enabled, accelerator, separator, submenu }], menuOnLeftClick, onClick(e), onDoubleClick(e) })` → `{ update(patch), dispose }` (an icon in the macOS menu bar; `icon` is a codicon name, SVG markup, a `.png`/`.svg` of the mod, an absolute path, a `data:` URL or `"app"`), `setDockVisible(bool)` (false: an app that lives in the menu bar), `setBadge(text \| number \| null)`, `quit()`, `onReopen(fn)` (the Dock icon was clicked; with no window on screen, hidden windows come back by themselves), `globalShortcut(key, fn, { onRelease })` → disposable (a shortcut for the whole system: it works with AICode in the background or hidden and needs no permission from macOS; `key` like `"mod+shift+space"`) |
-| `ctx.native` | `eval(source, { args })` → result, `open(source, { args, onEvent })` → `{ id, call(name, ...args), on(channel, fn), dispose() }`, `spawn(source, { args, onMessage, onStderr, onExit })` → `{ send(data), kill(), done }` — native macOS code written in JavaScript (see *Native code* below) |
+| `ctx.native` | `eval(source, { args })` → result, `open(source, { args, onEvent })` → `{ id, call(name, ...args), on(channel, fn), dispose() }`, `spawn(source, { args, onMessage, onStderr, onExit })` → `{ send(data), kill(), done }`, `language` (`"jxa"`, `"powershell"` or `"python"`) — native code (see *Native code* below) |
 | `ctx.motion` | `enabled()`, `play(el, cls)`, `leave(el, cls, maxMs)`, `flip(target, mutate, { duration, easing, key })` (elements animate from where they were to where `mutate()` put them), `onDidChange(fn)` — all of them do nothing when the user turned animations off or macOS "Reduce motion" is on |
 | `ctx.window` | `showInfo/showWarning/showError(msg, ...actions)`, `showQuickPick(items, { placeholder, matchDescription, activeIndex, onActive(item), onButton(item, button) })` (an item's `buttons: [{ icon, title, id }]` show on its row; `onButton` returns `"remove"` to drop that row or `"close"`), `showInputBox(opts)`, `confirm(msg, detail?, primary?)`, `contextMenu(x, y, [{ label, run, keybinding, disabled, checked, icon, separator, submenu }], { menu, context })` (`menu`: an id other mods can add to), `pickFolder()`, `pickFiles()`, `copy(text)` |
 | `ctx.editor` | `active()`, `all()`, `getText(idOrPath?)`, `getSelection()`, `replaceSelection(text)`, `open(path, {line})`, `focus(id)`, `newUntitled(text, lang)`, `openCustom({ title, icon, render })`, `close(id)`, `save(id?)`, `proposeEdit(target, { newText } \| { edits }, { description })` → accepted?, `onDidChangeActive/onDidChangeEditors/onDidSave/onDidChangeContent(fn)`, `monacoEditor()`, `addTitleAction({ id, icon, title, order, when(info), run(info) })` (an icon in the tab bar, VS Code's editor/title), `refreshTitleActions()`, `registerEditorType({ id, label, default, hasText(info), when(info), open(info) })` ("Reopen Editor With…"; a tab opened with `openCustom({ forPath, editorType })` is that view of the file and comes back after a restart; `default: true` opens matching files straight in it, never as text first, as preview tabs on a single click; binary files go to the first matching type; `hasText` returning false leaves the text editor out of "Reopen Editor With…" — see `mods/aicode.image-preview`), `open(path, { asText: true })` (the text editor even so), `openSide({ title, icon, render, actions: [{ id, icon, title, run }], onDidChangeMaximized(on) })` / `closeSide()` (a pane beside the editor, with its own tab bar icons), `maximizeSide(on?)` / `isSideMaximized()` (that pane over the whole editor area — the Markdown preview's *Maximize*), `openPage(spec)` (the modal editor, or a tab when it is off), `registerBreadcrumbs({ languages, path(text, line, column) → [{ name, line, icon }] })` (the breadcrumbs after the file name: where the cursor is — the JSON & YAML mod's keys, the Markdown mod's headings), `model(idOrPath)` (an open document's Monaco model), `createEditor(el, idOrPath?, options?)` (another Monaco editor with the main one's options, kept in step; on a document it shares its text, dirty state, saving and undo — splits, peeks, floating editors), `moveTab(id, beforeId \| null)`, `onDidMoveTab(fn)`, `onWillRenderTabs(fn)` / `onDidRenderTabs(fn)` (the tab bar is rebuilt: measure before, animate after) |
@@ -179,7 +179,7 @@ export async function activate(ctx) {
 | `ctx.decorations` | `register(path => ({ badge, color, tooltip, faded }))` → `{ fire, dispose }`, `get(path)`, `onDidChange(fn)` — how files show in the explorer (the Git mod's colors) |
 | `ctx.process` | `which(program)`, `spawn(program, args, { cwd, stdin, env, keepStdin, encoding, onData, onExit })` → `{ id, done, kill, write(text \| bytes), end() }` — `keepStdin` keeps the input open so you can talk to a REPL, a database client or a helper script over stdio; `encoding: "base64"` gives `onData` the raw bytes |
 | `ctx.http` | `request({ url, method, headers, body, timeoutMs, followRedirects, insecure, onHead, onChunk })` → `{ status, statusText, ok, headers, header(name), body, text(), json(), timings: { ttfbMs, totalMs }, size }` (the promise also has `cancel()`); `get(url, opts)`, `post(url, body, opts)`. Sent from Rust: any address, no CORS or CSP, binary bodies, streaming. A non-string `body` goes as JSON |
-| `ctx.secrets` | `get(key)`, `set(key, value)`, `delete(key)` (`{ service }` to use another Keychain service) — passwords, tokens, connection strings in the macOS Keychain |
+| `ctx.secrets` | `get(key)`, `set(key, value)`, `delete(key)` (`{ service }` to use another service) — passwords, tokens, connection strings in the system's password store: the macOS Keychain, the Windows Credential Manager, or the Secret Service on Linux (GNOME Keyring, KWallet) |
 | `ctx.menus` | `add(menuId, { id, label, icon, keybinding, command, args, run(context), when(context), checked, disabled, order, separatorBefore })` → disposable; `items(menuId)`. Menu ids below |
 | `ctx.icons` | `set(name, source)` → disposable (see `icons` above: change any icon, or add one), `list()` |
 | `ctx.pty` | `spawn({ cwd, command, args, cols, rows, onData, onExit })` → `{ write, resize, kill }`, `shells()` → `{ default, shells }` |
@@ -191,7 +191,7 @@ export async function activate(ctx) {
 | `ctx.workbench` | `root()`, `part(name)`, `parts(name)`, `addTitleItem({ icon, text, title, command, run, align, order })`, `addActivityItem({ icon, title, command, run, position, order, badge, checked })` → `{ update, dispose }`, `setViewIcon(viewId, icon)`, `options()`, `setOptions(o)`, `toggle(loc)`, `isPartVisible(loc)`, `views()`, `moveView(id, loc)`, `setCenterView(id)`, `centerView()`, `drawIconThemeWith(themeId, targetId \| null)` (in this window, draw a file icon theme with another one while it stays the chosen one — the Auto pack), `whereIs(viewId)` (`"sidebar"`, `"secondary"`, `"panel"`, `"center"`, `"floating"`, `"external"`, `"hidden"`), `floatView(id, { x, y, w, h })`, `dockView(id, to?)`, `closeFloating(id)`, `floatRect(id)`, `setFloatRect(id, rect)`, `hostView(id, el)` → disposable (the view shows inside the mod's own element until disposed), `addEdge({ side: "left" \| "right" \| "top" \| "bottom", order, id, class })` → `{ el, dispose }` (a strip of the mod's own at an edge of the window), `addDropTarget(el, { kinds: ["view", "tab"], over(item, e), drop(item, e), hoverClass })` → disposable (the element takes dragged views and tabs; `item` is `{ kind, id }`), `onDidMoveView(({ id, from, to }) => …)`, `onDidChangeLayout(fn)`, `onWillRender(fn)` / `onDidRender(fn)` (around each rebuild of the activity bar and part headers), `onDidStartDrag(fn)` / `onDidEndDrag(fn)` (`{ kind, id, ghost, dropped }`) |
 | `ctx.windows` | `open({ layout, view, title, width, height, alwaysOnTop, settings })`, `openView(id, opts)`, `layouts()`, `current()`, `setAlwaysOnTop(on)`, `isAlwaysOnTop()`, `reopen()`, `moveViewToNewWindow(id)` |
 | `ctx.mods` | `get(id)` (activates it, returns its exports), `isEnabled(id)`, `contributions(point)` (what enabled mods declare under `contributes.<point>`, each with `mod` = its id — how a mod offers an extension point of its own) |
-| `ctx.ui` | `h(tag, attrs, ...children)`, `icon(name)`, `iconButton(name, title, fn)`, `clear(el)`, `basename`, `dirname`, `joinPath`, `fileIcon`, `fileIconColor` (codicons), `fileIconEl(name)` (the icon theme's icon for a file, a codicon without one), `folderIconEl(name, expanded)` (a folder's, or null when the theme draws no folders) |
+| `ctx.ui` | `h(tag, attrs, ...children)`, `icon(name)`, `iconButton(name, title, fn)`, `clear(el)`, `basename`, `dirname`, `joinPath`, `isAbsolute(path)` (`/x`, `C:/x`), `pathRoot(path)` (`/`, `C:/`), `uiPath(path)` (a path from elsewhere in AICode's form: on Windows `C:\x` → `C:/x`; every path AICode gives a mod already is), `fileIcon`, `fileIconColor` (codicons), `fileIconEl(name)` (the icon theme's icon for a file, a codicon without one), `folderIconEl(name, expanded)` (a folder's, or null when the theme draws no folders) |
 | `ctx.monaco` | the Monaco API (languages, providers, decorations) |
 | `ctx.asset(path)` | URL of a file in the mod (stylesheets, images, workers) |
 
@@ -378,6 +378,40 @@ in System Settings › Privacy & Security › Accessibility — that is macOS's 
 Other languages work the same way through `ctx.process`: a Swift script (`swift file.swift`), Python
 with PyObjC, AppleScript (`osascript`), or any binary the mod ships in its folder.
 
+### On Windows and Linux
+
+There is no JavaScript bridge to the system there, so `ctx.native` runs the system's own scripting
+language, always in a helper process (`ctx.native.language` says which; branch on it to support
+several systems):
+
+| | Language | Reaches |
+|---|---|---|
+| Windows | PowerShell (`powershell.exe`, always installed) | .NET, COM, and any Win32 API through `Add-Type` |
+| Linux | Python 3 (`python3`) | D-Bus, GTK (`gi`), `ctypes`, the desktop's tools |
+
+The API is the same: `eval` (a function body that `return`s a value), `open` (functions that stay,
+`call(name, ...args)`, `emit(channel, data)`, a `dispose` function that runs on `dispose()`) and
+`spawn` (`send`, `receive`, `keepAlive`). The arguments are `args` in Python and `$Arguments` in
+PowerShell; values cross as JSON. Since the code runs out of AICode's process, it cannot touch
+AICode's own windows the way JXA does — use `ctx.window` and `ctx.app` for those.
+
+```js
+if (ctx.native.language === "powershell") {
+  const battery = await ctx.native.eval(`
+    $b = Get-CimInstance Win32_Battery | Select-Object -First 1
+    return @{ percent = $b.EstimatedChargeRemaining; pluggedIn = $b.BatteryStatus -eq 2 }
+  `);
+} else if (ctx.native.language === "python") {
+  const nat = await ctx.native.open(`
+import subprocess
+def theme():
+    out = subprocess.run(["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"], capture_output=True, text=True)
+    return out.stdout.strip().strip("'")
+`);
+  console.log(await nat.call("theme"));            // "prefer-dark"
+}
+```
+
 ## Tool mods: Docker, cloud CLIs, API clients, databases
 
 Everything a tool mod needs is in `ctx`. Some shapes:
@@ -458,7 +492,7 @@ export async function activate(ctx) {
   (a command or URL offered when the CLI is missing), `interactive(model)` (for *Open Agent in Terminal*).
 - **api** (an API key): `request(...)` returns the HTTP request, `stream(out)` returns a handler for
   each event (`format`: `"sse"`, `"ndjson"` or `"json"`); call `out.text`, `out.result({ tokens, model,
-  cost })`, `out.error(message)`. The key is kept in the macOS Keychain (*Configure …*), or read from one
+  cost })`, `out.error(message)`. The key is kept in the system's password store (*Configure …*), or read from one
   of `envVars` in the user's login shell; `noKey: true` for a local server. Requests run through
   `/usr/bin/curl` with the agent mod's `process` permission, so the key is never on a command line.
 - The kit adds the *Configure …* menu (CLI or API, set/remove the key, install the CLI) and the status

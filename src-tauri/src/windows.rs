@@ -174,6 +174,14 @@ fn create_with(app: &AppHandle, label: &str, spec: Option<&Value>) -> tauri::Res
         .or_else(|| crate::mods::effective_core_setting(&mods, "window.transparent"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    // Linux cannot blur what is behind a window: with a material (window.vibrancy) the window
+    // stays opaque, as glass is never see-through without the blur (appearance.ts does the same).
+    #[cfg(target_os = "linux")]
+    let transparent = transparent
+        && window_setting("window.vibrancy")
+            .or_else(|| crate::mods::effective_core_setting(&mods, "window.vibrancy"))
+            .and_then(|v| v.as_str().map(String::from))
+            .is_none_or(|m| m.is_empty() || m == "none");
     if transparent {
         config.transparent = true;
         config.background_color = None;
@@ -383,6 +391,7 @@ pub fn open_in_front(app: &AppHandle, paths_to_open: Vec<String>) {
         Some(label) if state.ready.lock().unwrap().contains(&label) => {
             let _ = app.emit_to(label.as_str(), "open-paths", json!(paths_to_open));
             if let Some(w) = app.get_webview_window(&label) {
+                let _ = w.unminimize();
                 let _ = w.set_focus();
             }
         }
@@ -432,21 +441,64 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     }
 }
 
+/// The paths in a command line (options left out), relative ones from `cwd`.
+pub fn launch_args(args: impl IntoIterator<Item = String>, cwd: &std::path::Path) -> Vec<String> {
+    to_paths(args.into_iter().filter(|a| !a.starts_with('-')).map(|a| {
+        if std::path::Path::new(&a).is_absolute() || a.starts_with("file://") { a } else { crate::paths::ui(cwd.join(&a)) }
+    }))
+}
+
+/// Another AICode was started (Windows, Linux: a file opened from Explorer or the file manager,
+/// `aicode x` in a terminal). It quit at once and handed over its command line: its paths open here,
+/// in the window in front, as files dropped on the Dock icon do on macOS. With no path AICode comes
+/// to the front, hidden windows included.
+#[cfg(any(windows, target_os = "linux"))]
+pub fn second_instance(app: &AppHandle, argv: Vec<String>, cwd: String) {
+    let paths = launch_args(argv.into_iter().skip(1), std::path::Path::new(&cwd));
+    let state = app.state::<WindowsState>();
+    if !state.started.load(Ordering::SeqCst) {
+        // Still starting: setup opens these with the rest.
+        state.launch_paths.lock().unwrap().extend(paths);
+        return;
+    }
+    if !paths.is_empty() {
+        return open_in_front(app, paths);
+    }
+    let visible = app.webview_windows().values().any(|w| w.is_visible().unwrap_or(false));
+    crate::background::on_reopen(app, visible);
+    match front_label(app).and_then(|l| app.get_webview_window(&l)) {
+        Some(w) => {
+            let _ = w.unminimize();
+            let _ = w.set_focus();
+        }
+        None => {
+            let _ = open_new(app, vec![]);
+        }
+    }
+}
+
 /// Turns `file://` URLs and plain paths into paths.
 pub fn to_paths(items: impl IntoIterator<Item = String>) -> Vec<String> {
     items
         .into_iter()
         .filter_map(|s| {
             if let Some(rest) = s.strip_prefix("file://") {
-                let path = rest.strip_prefix("localhost").unwrap_or(rest);
-                Some(percent_decode(path))
-            } else if s.starts_with('/') || (s.len() > 2 && s.as_bytes()[1] == b':') {
+                let path = percent_decode(rest.strip_prefix("localhost").unwrap_or(rest));
+                // file:///C:/x is the path C:/x.
+                let drive = path.len() > 2 && path.starts_with('/') && path.as_bytes()[2] == b':';
+                Some(if drive { path[1..].to_string() } else { path })
+            } else if s.starts_with('/') || s.starts_with(r"\\") || (s.len() > 2 && s.as_bytes()[1] == b':') {
                 Some(s)
             } else {
                 None
             }
         })
-        .map(|p| if p.len() > 1 { p.trim_end_matches('/').to_string() } else { p })
+        .map(crate::paths::ui)
+        // No trailing `/`, except for a root (`/`, `C:/`).
+        .map(|p| {
+            let trimmed = p.trim_end_matches('/');
+            if trimmed.is_empty() || trimmed.ends_with(':') { p } else { trimmed.to_string() }
+        })
         .collect()
 }
 
@@ -551,5 +603,12 @@ mod tests {
             "https://example.com".to_string(),
         ]);
         assert_eq!(got, vec!["/Users/me/My Project", "/tmp/a.txt", "/plain/path"]);
+        assert_eq!(to_paths(vec!["file:///C:/Users/me/".to_string(), "C:/".to_string(), "/".to_string()]), vec!["C:/Users/me", "C:/", "/"]);
+    }
+
+    #[test]
+    fn command_lines_become_paths() {
+        let args = ["--flag", "notes.md", "/abs/dir/", "file:///tmp/x.txt"].map(String::from);
+        assert_eq!(launch_args(args, std::path::Path::new("/home/me")), vec!["/home/me/notes.md", "/abs/dir", "/tmp/x.txt"]);
     }
 }

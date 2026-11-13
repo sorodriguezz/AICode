@@ -154,7 +154,7 @@ pub fn fs_read_dir(state: State<'_, ModsState>, mod_id: String, path: String) ->
         let is_symlink = file_type.map(|t| t.is_symlink()).unwrap_or(false);
         // A symlink to a folder opens like a folder.
         let is_dir = std::fs::metadata(entry.path()).map(|m| m.is_dir()).unwrap_or(false);
-        out.push(DirEntry { name, path: entry.path().to_string_lossy().into(), is_dir, is_symlink });
+        out.push(DirEntry { name, path: crate::paths::ui(entry.path()), is_dir, is_symlink });
     }
     out.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
     Ok(out)
@@ -281,8 +281,10 @@ pub fn fs_reveal(state: State<'_, ModsState>, mod_id: String, path: String) -> R
     }
     #[cfg(target_os = "windows")]
     {
+        // Explorer reads `/` as the start of an option: the path goes with `\`.
+        use std::os::windows::process::CommandExt;
         cmd = std::process::Command::new("explorer");
-        cmd.arg(format!("/select,{path}"));
+        cmd.raw_arg(format!("/select,\"{}\"", path.replace('/', "\\")));
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -322,7 +324,7 @@ pub fn fs_watch(app: tauri::AppHandle, state: State<'_, ModsState>, watch: State
             let dirs: Vec<PathBuf> = flush.lock().unwrap().drain().collect();
             for dir in dirs {
                 use tauri::Emitter;
-                let _ = emitter.emit("fs://change", serde_json::json!({ "dir": dir.to_string_lossy() }));
+                let _ = emitter.emit("fs://change", serde_json::json!({ "dir": crate::paths::ui(&dir) }));
             }
         });
         let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
@@ -545,7 +547,7 @@ pub async fn fs_search(
                     let column = line[..m.start()].chars().count();
                     let preview: String = line.chars().take(400).collect();
                     hits.push(SearchHit {
-                        path: path.to_string_lossy().into(),
+                        path: crate::paths::ui(&path),
                         line: i + 1,
                         column: column + 1,
                         length: m.as_str().chars().count(),
@@ -566,7 +568,7 @@ pub async fn fs_search(
 
 #[tauri::command]
 pub fn home_dir() -> String {
-    dirs::home_dir().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default()
+    dirs::home_dir().map(crate::paths::ui).unwrap_or_default()
 }
 
 #[cfg(test)]

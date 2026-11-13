@@ -13,7 +13,7 @@ import type { Workbench } from "./workbench";
 import type { EditorService } from "./editor";
 import type { Workspace } from "./workspace";
 import { notify, inputBox, pick, confirm } from "./widgets";
-import { h, icon, basename, dirname, Disposable } from "./ui";
+import { h, icon, basename, dirname, isAbsolute, Disposable } from "./ui";
 import { onStream } from "./ipc";
 import { config } from "./config";
 import { openWindow } from "./windows";
@@ -139,7 +139,7 @@ export class Declarative {
     if (!a || typeof a !== "object") throw new Error("an action must be an object");
     const { editors, workspace } = this.d;
     const text = (s: unknown, mode: Mode = "plain") => vars.expand(String(s ?? ""), mode);
-    const resolvePath = (p: string) => (p.startsWith("/") || p.startsWith("~") || !workspace.folder ? p.replace(/^~(?=\/|$)/, vars.home) : `${workspace.folder}/${p}`);
+    const resolvePath = (p: string) => (isAbsolute(p) || p.startsWith("~") || !workspace.folder ? p.replace(/^~(?=\/|$)/, vars.home) : `${workspace.folder}/${p}`);
     switch (a.type) {
       case "notify": {
         const level = a.level === "warning" || a.level === "error" ? a.level : "info";

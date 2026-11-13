@@ -17,6 +17,20 @@ use crate::mods::{require, ModsState};
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(1);
 
+/// A `Command` for a program that prints to pipes. On Windows a GUI app's console child would
+/// otherwise open a console window of its own (a flash for every `git status`).
+pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 struct Pty {
     owner: String,
     window: String,
@@ -91,7 +105,7 @@ pub fn which(program: &str) -> Option<String> {
         for ext in exts {
             let candidate = dir.join(format!("{program}{ext}"));
             if candidate.is_file() {
-                return Some(candidate.to_string_lossy().into_owned());
+                return Some(crate::paths::ui(&candidate));
             }
         }
     }
@@ -152,7 +166,7 @@ pub fn proc_spawn(
     let keep_stdin = keep_stdin.unwrap_or(false);
     let base64_out = encoding.as_deref() == Some("base64");
     let resolved = which(&program).ok_or_else(|| format!("{program} was not found on this machine"))?;
-    let mut cmd = Command::new(&resolved);
+    let mut cmd = command(&resolved);
     cmd.args(&args)
         .current_dir(default_cwd(cwd))
         .env("PATH", login_path())
@@ -391,11 +405,14 @@ pub fn open_external(mods: State<'_, ModsState>, mod_id: String, target: String,
         c.arg(&target);
         c
     };
+    // Not `cmd /C start`: cmd would read `&`, `|` and `^` in a link as its own syntax.
     #[cfg(windows)]
     let mut cmd = {
         let _ = &app;
-        let mut c = Command::new("cmd");
-        c.args(["/C", "start", "", &target]);
+        let mut c = command("rundll32.exe");
+        // A path (C:/x, //server/x) in Windows' own form; a link as it is.
+        let local = target.as_bytes().get(1) == Some(&b':') || target.starts_with("//");
+        c.args(["url.dll,FileProtocolHandler", &if local { target.replace('/', "\\") } else { target.clone() }]);
         c
     };
     let status = cmd.status().map_err(|e| e.to_string())?;
@@ -413,11 +430,16 @@ pub fn clipboard_write(text: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let mut cmd = Command::new("pbcopy");
     #[cfg(windows)]
-    let mut cmd = Command::new("clip");
+    let mut cmd = command("clip");
     #[cfg(target_os = "linux")]
     let mut cmd = if which("wl-copy").is_some() { Command::new("wl-copy") } else { let mut c = Command::new("xclip"); c.args(["-selection", "clipboard"]); c };
     let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
-    child.stdin.take().ok_or("no stdin")?.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    // clip.exe reads its input in the console code page unless it is UTF-16 with a byte-order mark.
+    #[cfg(windows)]
+    let bytes: Vec<u8> = [0xFF, 0xFE].into_iter().chain(text.encode_utf16().flat_map(u16::to_le_bytes)).collect();
+    #[cfg(not(windows))]
+    let bytes = text.into_bytes();
+    child.stdin.take().ok_or("no stdin")?.write_all(&bytes).map_err(|e| e.to_string())?;
     child.wait().map_err(|e| e.to_string())?;
     Ok(())
 }

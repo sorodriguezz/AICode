@@ -46,6 +46,31 @@ export function clear(el: Element) {
   while (el.firstChild) el.firstChild.remove();
 }
 
+/** Paths in the window always use `/`. On Windows they look like `C:/Users/me/a.txt` (Windows takes
+ *  `/` as well as `\`); the core gives them that way, and paths from elsewhere (a dialog, a drop)
+ *  go through `uiPath`. */
+export const IS_WINDOWS = /windows/i.test(navigator.userAgent);
+
+/** A path in the window's form: on Windows `\` → `/`, the drive letter in capitals, no `\\?\`. */
+export function uiPath(path: string): string;
+export function uiPath(path: string | null): string | null;
+export function uiPath(path: string | null): string | null {
+  if (path == null || !IS_WINDOWS) return path;
+  const p = path.replace(/^\\\\\?\\UNC\\/, "\\\\").replace(/^\\\\\?\\/, "").replace(/\\/g, "/");
+  return /^[a-z]:/.test(p) ? p[0].toUpperCase() + p.slice(1) : p;
+}
+
+/** `/x`, `C:/x`, `C:\x` or `//server/share`: a full path, not one relative to a folder. */
+export function isAbsolute(path: string): boolean {
+  return /^([\\/]|[A-Za-z]:([\\/]|$))/.test(path);
+}
+
+/** The root a full path starts with: `/`, `C:/` or `//server/share/`. */
+export function pathRoot(path: string): string {
+  const m = /^(\/\/[^/]+\/[^/]+\/?|[A-Za-z]:\/?|\/)/.exec(uiPath(path));
+  return m ? (m[1].endsWith("/") ? m[1] : m[1] + "/") : "";
+}
+
 export function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] ?? path;
@@ -53,6 +78,8 @@ export function basename(path: string): string {
 
 export function dirname(path: string): string {
   const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  // The parent of C:/x is the drive's root, C:/.
+  if (i === 2 && path[1] === ":") return path.slice(0, 3);
   return i <= 0 ? (i === 0 ? "/" : "") : path.slice(0, i);
 }
 

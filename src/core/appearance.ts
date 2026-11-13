@@ -1,7 +1,7 @@
 // Appearance: turns the configuration into what the window looks like, live. Colors over the theme
 // (colorCustomizations, syntax rules, the cursor), see-through parts and background images, the tab
 // bar's shape, tooltips, hidden parts, CSS variables, the user's own CSS, and the window itself
-// (macOS material, always on top, shadow). Every part of the window carries `data-part="<name>"`
+// (the system's material: macOS vibrancy, Windows Acrylic/Mica; always on top, shadow). Every part of the window carries `data-part="<name>"`
 // (see PART_NAMES), which is what hiding, opacity and custom CSS target.
 
 import { insertStyle } from "./layers";
@@ -11,6 +11,33 @@ import { invoke } from "./ipc";
 import { config, SURFACE_PARTS } from "./config";
 import { setThemeCustomizations, type ThemeCustomizations, type VsTheme } from "./theme";
 import { notify } from "./widgets";
+import { IS_WINDOWS } from "./ui";
+
+const IS_MAC = navigator.platform.toLowerCase().includes("mac");
+/** Windows' own materials (Tauri's Effect names); the rest of window.vibrancy's values are macOS's. */
+export const WINDOWS_MATERIALS = ["acrylic", "mica", "micaDark", "micaLight", "tabbed", "tabbedDark", "tabbedLight", "blur"];
+/** A macOS material on Windows: the window-wide ones are Mica, the title bar ones Tabbed, the rest Acrylic. */
+const MAC_ON_WINDOWS: Record<string, string> = {
+  windowBackground: "mica", underWindowBackground: "mica", contentBackground: "mica", underPageBackground: "mica",
+  titlebar: "tabbed", headerView: "tabbed",
+};
+
+/** The window effect a `window.vibrancy` material is on this system ("" = none). Linux has none. */
+export function windowEffect(material: string | null | undefined): string {
+  if (!material || material === "none") return "";
+  if (IS_MAC) return WINDOWS_MATERIALS.includes(material) ? "sidebar" : material;
+  if (IS_WINDOWS) return WINDOWS_MATERIALS.includes(material) ? material : MAC_ON_WINDOWS[material] ?? "acrylic";
+  return "";
+}
+
+/** Whether windows are created transparent. Linux cannot blur what is behind a window, so a
+ *  material there keeps it opaque: glass is never see-through without the blur (windows.rs too). */
+export function transparencyWanted(): boolean {
+  if (!config.core("window.transparent", false)) return false;
+  if (IS_MAC || IS_WINDOWS) return true;
+  const material = config.core<string>("window.vibrancy", "none");
+  return !material || material === "none";
+}
 
 type Surface = (typeof SURFACE_PARTS)[number];
 
@@ -118,12 +145,12 @@ export class Appearance {
     if (has("window.*")) await this.applyWindow();
     if (has("window.background", "workbench.partBackgrounds")) await this.applyBackgrounds();
     if (has("workbench.colorCustomizations", "editor.tokenColorCustomizations", "editor.cursorColor", "workbench.opacity", "workbench.partOpacity", "workbench.partBackgrounds", "window.background")) this.repaintTheme();
-    if (keys.includes("window.transparent")) this.checkTransparency();
+    if (keys.includes("window.transparent") || keys.includes("window.vibrancy")) this.checkTransparency();
   }
 
   /** Says so when window.transparent differs from how this window was created. */
   checkTransparency() {
-    if (!!config.core("window.transparent", false) === this.transparentAtStart) return;
+    if (transparencyWanted() === this.transparentAtStart) return;
     notify("info", this.transparentAtStart ? "This window was created transparent. Reopen it to make it opaque." : "Transparency is set when a window is created. Reopen this window to make it transparent.", [
       { label: "Reopen Window", run: () => import("./commands").then((c) => c.execute("window.reopen")) },
     ]);
@@ -230,8 +257,7 @@ export class Appearance {
   // ---------- the window ----------
 
   private async applyWindow() {
-    const vibrancy = config.core<string>("window.vibrancy", "none");
-    const effects = vibrancy && vibrancy !== "none" ? vibrancy : "";
+    const effects = windowEffect(config.core<string>("window.vibrancy", "none"));
     if (effects !== this.lastEffects) {
       this.lastEffects = effects;
       try {

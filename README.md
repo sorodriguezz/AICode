@@ -75,7 +75,7 @@ and the Mods page.
 | **Search** | find and replace across the folder (regex with `$1`, case, whole word, preserve case), files to include/exclude, only open editors, unsaved editors searched as they are, .gitignore on or off | fs:read, fs:write |
 | **Terminal** | integrated terminals (xterm.js + a real PTY): tabs, side-by-side splits, a shell picker, ⌘-click on paths and URLs, ⌘K clears | pty, fs:read, open-external |
 | **AI Chat** | the chat panel only: attach files and selections, slash commands, edit/retry, chat history, file links and *Run in Terminal* in answers. The agents are the mods below | fs:read, open-external |
-| **Claude**, **Codex (OpenAI)**, **Gemini**, **Grok (xAI)** | one agent each for the AI Chat, through its CLI (your subscription — reads the folder; Claude and Codex also propose edits through the MCP server) or its API with an API key kept in the macOS Keychain (no CLI needed). *Configure …* in the agent picker switches | process, open-external |
+| **Claude**, **Codex (OpenAI)**, **Gemini**, **Grok (xAI)** | one agent each for the AI Chat, through its CLI (your subscription — reads the folder; Claude and Codex also propose edits through the MCP server) or its API with an API key kept in the system's password store (Keychain, Credential Manager, Secret Service) (no CLI needed). *Configure …* in the agent picker switches | process, open-external |
 | **OpenCode**, **Cline** | an agent each, through its CLI (which keeps its own providers and keys) | process, open-external |
 | **Ollama** | local models: `ollama run`, or the local Ollama server with the conversation as messages | process, open-external |
 | **Custom Agent Commands** | any program that takes a message and prints an answer (aider, llm, a script) as an agent | process |
@@ -86,7 +86,7 @@ and the Mods page.
 | **Themes** | 39 color themes for the whole window (editor, side bars, tabs, terminal, widgets): CodeFlow Dark/Light, Dracula, Monokai, One Dark/Light, Tokyo Night (+Light), Catppuccin Mocha/Latte, Night Owl (+Light), Omni Owl, Nord, Gruvbox, GitHub, Solarized, Darcula, Kiro Dark, Rosé Pine Dawn, Ayu Light… (declarative) | — |
 | **File Icon Themes** | Seti (the default) and VS Code Icons, with packs for Angular, React, Next.js, Vue/Nuxt, NestJS, Bun, Spring Boot, .NET, FastAPI, Django and Laravel — or *Auto*, which picks the pack each folder calls for (*Preferences: File Icon Theme…*) | fs:read |
 | **JSON & YAML Paths** | the keys down to the cursor in the breadcrumbs (`dependencies › react`), click to jump | — |
-| **Glass (Acrylic)** | macOS frosted glass behind the window, tinted with the theme so nothing turns invisible (configuration only) | — |
+| **Glass (Acrylic)** | the system's frosted glass behind the window (macOS vibrancy, Windows Acrylic/Mica; opaque on Linux, which has no blur), tinted with the theme so nothing turns invisible (configuration only) | — |
 | **Soft Look** | pill tabs, rounded corners, themed tooltips, a smooth cursor (configuration only) | — |
 | **Syntax Highlighting** | VS Code's own TextMate grammars (TypeScript, JavaScript, Python, Rust, Go, C/C++, …), so code is colored exactly as in VS Code | — |
 | **Markdown Preview** | preview .md files to the side or in their own tab (⌘K V, ⇧⌘V), live while typing, scrolling with the editor, maximized over the editor; the headings above the cursor in the breadcrumbs; Markdown snippets; raw HTML is shown as text | open-external |
@@ -123,7 +123,8 @@ pnpm install
 pnpm tauri dev          # debug build; bundled mods load live from ./mods
 pnpm check:mods         # validate the bundled mods
 cd src-tauri && cargo test
-pnpm tauri build        # .app and .dmg in src-tauri/target/release/bundle
+pnpm tauri build        # this OS's bundles in src-tauri/target/release/bundle
+                        # (macOS .app/.dmg, Windows NSIS -setup.exe, Linux AppImage/.deb/.rpm)
 ```
 
 Environment variables:
@@ -135,14 +136,23 @@ Environment variables:
 ## Releases and updates
 
 Every release is built by GitHub Actions ([.github/workflows/release.yml](.github/workflows/release.yml))
-and published on the [Releases page](https://github.com/sorodriguezz/AICode/releases): a `.dmg` per
-Mac (Apple silicon `aarch64`, Intel `x64`), the signed update archives and `latest.json`, the feed
-the app reads.
+and published on the [Releases page](https://github.com/sorodriguezz/AICode/releases), for ARM
+(`aarch64`: Apple silicon, Windows on ARM, ARM64 Linux) and Intel/AMD (`x64`) each:
 
-**Installing**: open the `.dmg`, drag AICode to Applications. The app is not signed with an Apple
-Developer ID, so the first time macOS may say it "is damaged" or "cannot be opened": run
+| | Install | Update package (signed) |
+|---|---|---|
+| macOS | `AICode_<v>_<arch>.dmg` | `.app.tar.gz` |
+| Windows | `AICode_<v>_<arch>-setup.exe` (per user, no admin) | the installer itself |
+| Linux | `AICode_<v>_<arch>.AppImage`, `.deb`, `.rpm` | the AppImage (and `.deb`/`.rpm` when signed) |
+
+plus `latest.json`, the feed the app reads. The bundles each OS makes are set in
+`src-tauri/tauri.windows.conf.json` and `tauri.linux.conf.json` (merged over `tauri.conf.json`).
+
+**Installing**: on macOS open the `.dmg`, drag AICode to Applications. The app is not signed with
+an Apple Developer ID, so the first time macOS may say it "is damaged" or "cannot be opened": run
 `xattr -dr com.apple.quarantine /Applications/AICode.app` once. Updates installed from the app do
-not need this.
+not need this. On Windows the installer is not code-signed: SmartScreen asks once (*More info →
+Run anyway*).
 
 **Updating**: *Settings → Updates → Check for Updates* (also the gear menu, the AICode menu and the
 command palette: *Update: Check for Updates…*). If there is a newer version it offers **Install and
@@ -155,11 +165,13 @@ restarts it — windows, tabs and unsaved text come back as they were, even with
 workflow runs on every push to `main`; when `v0.2.0` is not released yet it copies the version to
 `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json` and `Cargo.lock` (a `chore(release): v0.2.0`
 commit on `main` when they differ — `git pull` afterwards), tags `v0.2.0`, builds and publishes it.
-A push that leaves the version as it is does nothing. The release stays a draft until both builds
+A push that leaves the version as it is does nothing. The release stays a draft until all six builds
 are uploaded, then `latest.json` is written and the release is published, so installed copies see
 it at once. `pnpm release patch --push` (or minor / major / 1.2.3) still works: it sets the version
 everywhere, commits, tags and pushes in one step. The workflow can also be run by hand from the
-Actions tab.
+Actions tab; with **Dry run** ticked it only builds the branch for every platform and leaves the
+installers as artifacts of the run (no tag, no release, no secrets), to try a change on Windows or
+Linux before releasing it.
 
 **One-time setup** — the repository secrets the workflow needs (*Settings → Secrets and
 variables → Actions*):
@@ -172,7 +184,7 @@ variables → Actions*):
 
 The public half of the key is `plugins.updater.pubkey` in `tauri.conf.json`; the app installs only
 updates signed with the private half. **Keep the private key safe and backed up**: if it is lost,
-installed copies cannot verify new releases and must be reinstalled by hand from a `.dmg` after
+installed copies cannot verify new releases and must be reinstalled by hand from an installer after
 you put a new key in place.
 
 A local `pnpm tauri build` does not need the key: update archives are only made with
@@ -210,4 +222,8 @@ scripts/release.mjs  sets the version everywhere, tags a release
 - Split editors, a remote-hosting mod (pull requests on GitHub/GitLab/Azure DevOps).
 - Mods share the window's JavaScript realm: permissions are checked on every core call, but a
   hostile mod could reach around them. Per-mod isolation is planned for mod API 2.
-- Windows and Linux builds compile but have not been tried.
+- Windows and Linux builds are made by the release workflow but have barely been tried. Paths
+  reach the window as `C:/Users/…` on Windows (see `uiPath` in src/core/ui.ts); native code runs
+  in PowerShell (Windows) and Python 3 (Linux) instead of JXA; Glass on Linux has no blur, so the
+  window stays opaque there. One AICode runs per user (tauri-plugin-single-instance): a file
+  opened from Explorer or the file manager opens in the window in front.

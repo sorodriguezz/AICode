@@ -4,7 +4,7 @@ import "./styles.css";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "./core/dialog";
 import * as monaco from "monaco-editor";
 import { invoke, prepareStreams, streamCounts, type ModInfo } from "./core/ipc";
 import * as commands from "./core/commands";
@@ -16,7 +16,7 @@ import { registerModManager } from "./core/modManager";
 import { applyTheme, BUILTIN_DARK, BUILTIN_LIGHT, ThemeEntry } from "./core/theme";
 import { configureFileIcons, setIconTheme, iconThemes, currentIconTheme } from "./core/fileIcons";
 import { quickInput, fuzzyScore, highlight, pick, notify, QuickItem, dialog, inputBox } from "./core/widgets";
-import { basename, h, icon } from "./core/ui";
+import { basename, h, icon, isAbsolute, uiPath } from "./core/ui";
 import { motionEnabled, setMotion } from "./core/motion";
 import { openProfiles, openSettings, switchProfile, createProfile, importProfile, exportProfile, ProfileView } from "./core/profiles";
 import { ModHost as ModHostClass } from "./core/mods";
@@ -25,6 +25,11 @@ import { config } from "./core/config";
 import { Appearance, editorOptions } from "./core/appearance";
 import { openWindow, resolveLayout, layouts, type WindowSpec, type WindowLayout } from "./core/windows";
 import type { ViewLocation, LayoutState, TitleHandle, StatusHandle } from "./core/workbench";
+
+// "mac", "windows" or "linux", for styles that differ (on macOS the title bar leaves room for the
+// window buttons; elsewhere the system draws its own title bar above it).
+const ua = navigator.userAgent.toLowerCase();
+document.documentElement.dataset.platform = navigator.platform.toLowerCase().includes("mac") ? "mac" : ua.includes("windows") ? "windows" : "linux";
 
 // Errors and warnings also go to the terminal that started AICode (see `core_log`).
 for (const level of ["error", "warn"] as const) {
@@ -350,7 +355,7 @@ async function boot() {
     const p = e.payload;
     if (p.type === "enter" || p.type === "over") dropHint.classList.add("visible");
     else dropHint.classList.remove("visible");
-    if (p.type === "drop" && p.paths.length) openPaths(p.paths, true);
+    if (p.type === "drop" && p.paths.length) openPaths(p.paths.map((x) => uiPath(x)), true);
   });
 
   // Hot exit: the session (unsaved text included) is written as you type, so quitting, a crash or
@@ -809,7 +814,7 @@ function registerWorkbenchCommands(
     if (workspace.folder) {
       const name = (await inputBox({ prompt: `New file in ${workspace.name} (folders are created as needed)`, placeholder: "src/notes.md" }))?.trim();
       if (!name) return;
-      path = name.startsWith("/") ? name : `${workspace.folder}/${name.replace(/^(\.\/)+/, "")}`;
+      path = uiPath(isAbsolute(name) ? name : `${workspace.folder}/${name.replace(/^(\.[\\/])+/, "")}`);
     } else {
       path = await saveDialog({ title: "New File" });
       if (!path) return;

@@ -66,7 +66,9 @@ a:hover { text-decoration: underline; }
   color: var(--aicode-titleBar-activeForeground);
   border-bottom: 1px solid var(--aicode-titleBar-border);
 }
-.titlebar-left { display: flex; align-items: center; justify-content: flex-end; padding-left: 78px; gap: 2px; padding-right: 8px; }
+.titlebar-left { display: flex; align-items: center; justify-content: flex-end; padding-left: 8px; gap: 2px; padding-right: 8px; }
+/* Room for the window buttons the title bar overlays on macOS. */
+:root[data-platform="mac"] .titlebar-left { padding-left: 78px; }
 .titlebar-left > .group { display: flex; align-items: center; gap: 2px; }
 .titlebar-center { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .titlebar-center .command-center { flex: 1 1 auto; min-width: 0; }

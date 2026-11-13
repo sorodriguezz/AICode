@@ -79,7 +79,7 @@ pub async fn update_install(app: AppHandle, state: State<'_, UpdateState>) -> Re
     let downloaded = AtomicU64::new(0);
     let mut last_emit = std::time::Instant::now() - std::time::Duration::from_secs(1);
     let result = update
-        .download_and_install(
+        .download(
             |chunk, total| {
                 let done = downloaded.fetch_add(chunk as u64, Ordering::Relaxed) + chunk as u64;
                 // A few events a second is enough for a progress bar.
@@ -93,7 +93,29 @@ pub async fn update_install(app: AppHandle, state: State<'_, UpdateState>) -> Re
             },
         )
         .await;
-    if let Err(e) = result {
+    let bytes = match result {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            *app.state::<UpdateState>().installing.lock().unwrap() = false;
+            return Err(describe(e));
+        }
+    };
+    // Windows runs the installer and exits AICode right away, inside `install`: the sessions
+    // are saved and the programs mods started are ended before, since nothing runs after it.
+    #[cfg(windows)]
+    {
+        before_restart(&app);
+        let flush = app.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            let _ = flush.emit("session-flush", ());
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            crate::procs::kill_all(&flush);
+        })
+        .await;
+        // The installer starts the new AICode: this one must not count as running any more.
+        tauri_plugin_single_instance::destroy(&app);
+    }
+    if let Err(e) = update.install(bytes) {
         *app.state::<UpdateState>().installing.lock().unwrap() = false;
         return Err(describe(e));
     }
@@ -102,11 +124,15 @@ pub async fn update_install(app: AppHandle, state: State<'_, UpdateState>) -> Re
     Ok(())
 }
 
+/// The restarted AICode brings every window back even with a clean start (see windows::stash_sessions).
+fn before_restart(_app: &AppHandle) {
+    let _ = std::fs::write(crate::paths::state().join("restore-once"), b"update");
+}
+
 /// Every window saves its session (as when switching profiles), then AICode restarts through the
 /// normal quit path, which keeps sessions (see `RunEvent::ExitRequested` in lib.rs).
 fn restart(app: &AppHandle) {
-    // The restarted AICode brings every window back even with a clean start (see windows::stash_sessions).
-    let _ = std::fs::write(crate::paths::state().join("restore-once"), b"update");
+    before_restart(app);
     let app = app.clone();
     std::thread::spawn(move || {
         let _ = app.emit("session-flush", ());

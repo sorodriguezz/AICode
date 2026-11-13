@@ -147,7 +147,7 @@ export async function activate(ctx) {
         if (!target) return error("No editor is open.");
         const open = ctx.editor.getText(target);
         if (open !== undefined) return text(open);
-        if (typeof target === "string" && target.startsWith("/")) {
+        if (typeof target === "string" && ctx.ui.isAbsolute(target)) {
           const f = await ctx.fs.readText(target).catch((e) => ({ error: String(e) }));
           if (f.error) return error(f.error);
           return f.binary ? error(`${target} is binary`) : text(f.text);

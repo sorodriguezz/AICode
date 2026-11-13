@@ -3,7 +3,7 @@
 // exported to one file and imported elsewhere. Settings shows the editor's own preferences and
 // those every enabled mod declares, for the active profile.
 
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "./dialog";
 import { invoke } from "./ipc";
 import { h, icon, clear, toDisposable } from "./ui";
 import { EditorService } from "./editor";

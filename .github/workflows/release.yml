@@ -1,11 +1,22 @@
-# Builds AICode and publishes it as a GitHub release: a .dmg to download and install, and the signed
-# update archives + latest.json that "Check for Updates…" in the app reads.
+# Builds AICode for macOS, Windows and Linux (Apple silicon / ARM64 and Intel / x64 each) and
+# publishes it as a GitHub release: an installer to download for each, and the signed update
+# packages + latest.json that "Check for Updates…" in the app reads.
+#
+#   macOS    AICode_<v>_<arch>.dmg            update: AICode_<v>_<arch>.app.tar.gz (+ .sig)
+#   Windows  AICode_<v>_<arch>-setup.exe      the installer is also the update (+ .sig)
+#   Linux    AICode_<v>_<arch>.AppImage       the AppImage is also the update (+ .sig)
+#            AICode_<v>_<arch>.deb / .rpm     (+ .sig when the bundler signs them)
+#   <arch>: aarch64 (Apple silicon, ARM64) or x64 (Intel / AMD).
 #
 # Runs on every push to main and releases the version in package.json — so to release, change
 # "version" in package.json and push. If vX.Y.Z is already released, the push does nothing.
 # The workflow copies the version to src-tauri/Cargo.toml, tauri.conf.json and Cargo.lock (one
 # "chore(release): vX.Y.Z" commit on main when they differ), tags vX.Y.Z and builds that tag.
 # It can also be run by hand from the Actions tab, which does the same.
+#
+# Run by hand with "Dry run" ticked, on any branch, it only builds: every platform's installers
+# end up as artifacts of the run (no tag, no release, no update signatures, no secrets needed).
+# Use it to try a change on Windows or Linux before releasing it.
 #
 # Secrets (Settings → Secrets and variables → Actions):
 #   TAURI_SIGNING_PRIVATE_KEY           required — contents of ~/.tauri/aicode.key
@@ -14,6 +25,7 @@
 #   APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
 #                                       optional — sign with a Developer ID and notarize. Without
 #                                       them the app is ad-hoc signed (see the release notes).
+# Windows installers are not code-signed (SmartScreen warns once; see the release notes).
 #
 # The release stays a draft until every build is uploaded, then latest.json is written and the
 # release is published, so the app never sees a release that is half there.
@@ -24,9 +36,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: only build every platform (artifacts of the run), release nothing"
+        type: boolean
+        default: false
 
 concurrency:
-  group: release
+  # A dry run does not wait for (or hold up) a release.
+  group: ${{ inputs.dry_run && format('build-{0}', github.ref) || 'release' }}
   cancel-in-progress: false
 
 permissions:
@@ -38,36 +56,46 @@ env:
 jobs:
   prepare:
     name: Prepare release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
+      build: ${{ steps.version.outputs.build }}
       release: ${{ steps.version.outputs.release }}
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
-      sha: ${{ steps.tag.outputs.sha }}
+      sha: ${{ steps.tag.outputs.sha || github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: lts/*
+          # No pnpm in this job: no cache from package.json's packageManager.
+          package-manager-cache: false
 
       - name: Read the version in package.json
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
         run: |
           version=$(node -p 'require("./package.json").version')
           tag="v$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          if [ "$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)" = "false" ]; then
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run: building $version from $GITHUB_REF_NAME for every platform; nothing is released." >> "$GITHUB_STEP_SUMMARY"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          elif [ "$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)" = "false" ]; then
             echo "$tag is already released: nothing to do. To release, change \"version\" in package.json." >> "$GITHUB_STEP_SUMMARY"
             echo "::notice::$tag is already released. Change \"version\" in package.json to make a new release."
+            echo "build=false" >> "$GITHUB_OUTPUT"
             echo "release=false" >> "$GITHUB_OUTPUT"
           else
             echo "Releasing $tag." >> "$GITHUB_STEP_SUMMARY"
+            echo "build=true" >> "$GITHUB_OUTPUT"
             echo "release=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -96,7 +124,7 @@ jobs:
             node scripts/release.mjs --check "$TAG"
           else
             if [ "$GITHUB_REF_NAME" != "main" ]; then
-              echo "::error::Run the release from main (this run is on $GITHUB_REF_NAME)."
+              echo "::error::Run the release from main (this run is on $GITHUB_REF_NAME). To only build a branch, tick \"Dry run\"."
               exit 1
             fi
             git config user.name "github-actions[bot]"
@@ -132,10 +160,22 @@ jobs:
           cat > body.md <<EOF
           ## Install
 
-          1. Download **AICode_${VERSION}_aarch64.dmg** (Apple silicon: M1 and later) or **AICode_${VERSION}_x64.dmg** (Intel).
+          **aarch64** is for ARM machines (Apple silicon M1 and later, Windows on ARM, ARM64 Linux); **x64** for Intel and AMD.
+
+          ### macOS
+          1. Download **AICode_${VERSION}_aarch64.dmg** (Apple silicon) or **AICode_${VERSION}_x64.dmg** (Intel).
           2. Open it and drag **AICode** to **Applications**.
           3. The first time only, if macOS says AICode "is damaged" or "cannot be opened" (it is not signed with an Apple Developer ID), run in Terminal:
              \`xattr -dr com.apple.quarantine /Applications/AICode.app\`
+
+          ### Windows
+          1. Download **AICode_${VERSION}_x64-setup.exe** (Intel / AMD) or **AICode_${VERSION}_aarch64-setup.exe** (ARM) and run it. It installs for your user, no administrator needed.
+          2. If SmartScreen says "Windows protected your PC" (the installer is not code-signed), click **More info → Run anyway**.
+
+          ### Linux
+          - **AICode_${VERSION}_<arch>.AppImage**: any distribution. \`chmod +x\` it and run it; it updates itself.
+          - **AICode_${VERSION}_<arch>.deb** (Debian, Ubuntu): \`sudo apt install ./AICode_${VERSION}_x64.deb\`
+          - **AICode_${VERSION}_<arch>.rpm** (Fedora, openSUSE): \`sudo dnf install ./AICode_${VERSION}_x64.rpm\`
 
           Already installed? *Settings → Updates → Check for Updates* (or the gear menu → *Check for Updates…*).
 
@@ -153,38 +193,72 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: steps.version.outputs.release == 'true'
         with:
           name: notes
           path: notes.md
 
   build:
-    name: Build (${{ matrix.arch }})
+    name: Build (${{ matrix.os }} ${{ matrix.arch }})
     needs: prepare
-    if: needs.prepare.outputs.release == 'true'
+    if: needs.prepare.outputs.build == 'true'
     strategy:
-      fail-fast: true
+      # Every platform builds to the end, so one run shows all that is broken. The release is
+      # published only when all of them succeeded (the publish job needs every build).
+      fail-fast: false
       matrix:
         include:
-          - arch: aarch64
+          - os: macos
+            arch: aarch64
             target: aarch64-apple-darwin
             runner: macos-latest
-          - arch: x64
+          - os: macos
+            arch: x64
             target: x86_64-apple-darwin
             runner: macos-latest
+          - os: windows
+            arch: x64
+            target: x86_64-pc-windows-msvc
+            runner: windows-latest
+          # Cross-compiled on x64 Windows (MSVC's ARM64 tools and LLVM come with the runner).
+          - os: windows
+            arch: aarch64
+            target: aarch64-pc-windows-msvc
+            runner: windows-latest
+          # Ubuntu 22.04: the oldest glibc still supported, so the AppImage runs on most distributions.
+          - os: linux
+            arch: x64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+          - os: linux
+            arch: aarch64
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
     runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE: ${{ needs.prepare.outputs.release }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.sha }}
 
-      - uses: pnpm/action-setup@v4
+      - name: Install the Linux libraries
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev \
+            build-essential patchelf file
 
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: pnpm
@@ -197,16 +271,23 @@ jobs:
         with:
           workspaces: src-tauri -> target
           key: ${{ matrix.target }}
-          # Keep the compiled dependencies even when a later step fails (a bad secret, the dmg
-          # script), so the next run does not compile everything again.
+          # Keep the compiled dependencies even when a later step fails (a bad secret, the
+          # bundler), so the next run does not compile everything again.
           cache-on-failure: true
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # A dry run builds whatever branch it is on, whose files may not agree on the version yet
+      # (a real release has made them agree in its tag). Only the working copy changes.
+      - name: Use the version in package.json everywhere (dry run)
+        if: env.RELEASE != 'true'
+        run: node scripts/release.mjs --sync
+
       # Only when the Apple secrets exist: an empty APPLE_CERTIFICATE would make the build try to
       # import an empty certificate and fail. Without them, tauri.conf.json's ad-hoc signing applies.
       - name: Use the Apple Developer ID (optional)
+        if: matrix.os == 'macos' && env.RELEASE == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -226,50 +307,106 @@ jobs:
             echo "No Apple certificate: the app is ad-hoc signed."
           fi
 
+      # A release also makes the signed update packages (tauri.release.conf.json), which needs
+      # the signing key; a dry run does not. tauri.<platform>.conf.json picks each one's bundles.
       - name: Build
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: pnpm tauri build --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
-
-      - name: Collect the files
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.RELEASE == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.RELEASE == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: |
-          bundle="src-tauri/target/${{ matrix.target }}/release/bundle"
+          if [ "$RELEASE" = "true" ]; then
+            pnpm tauri build --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
+          else
+            pnpm tauri build --target ${{ matrix.target }}
+          fi
+
+      # Each bundle under one name per platform and arch (the bundler's own names differ:
+      # amd64/x86_64/arm64…). In a release, each platform's update package must be signed.
+      - name: Collect the files
+        env:
+          OS: ${{ matrix.os }}
+          ARCH: ${{ matrix.arch }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          shopt -s nullglob
+          bundle="src-tauri/target/$TARGET/release/bundle"
+          name="AICode_${VERSION}_${ARCH}"
           mkdir out
-          cp "$bundle"/dmg/*.dmg "out/AICode_${VERSION}_${{ matrix.arch }}.dmg"
-          cp "$bundle/macos/AICode.app.tar.gz" "out/AICode_${VERSION}_${{ matrix.arch }}.app.tar.gz"
-          cp "$bundle/macos/AICode.app.tar.gz.sig" "out/AICode_${VERSION}_${{ matrix.arch }}.app.tar.gz.sig"
+          # take <glob> <name in out/> [update]: the one file the glob matches, and its .sig.
+          take() {
+            local files=($1)
+            if [ ${#files[@]} -ne 1 ]; then
+              echo "::error::expected one $1, found ${#files[@]}: ${files[*]}"
+              exit 1
+            fi
+            cp "${files[0]}" "out/$2"
+            if [ -f "${files[0]}.sig" ]; then
+              cp "${files[0]}.sig" "out/$2.sig"
+            elif [ "$3" = "update" ] && [ "$RELEASE" = "true" ]; then
+              echo "::error::${files[0]} has no .sig: the update would not install."
+              exit 1
+            fi
+          }
+          case "$OS" in
+            macos)
+              take "$bundle/dmg/*.dmg" "$name.dmg"
+              if [ "$RELEASE" = "true" ]; then
+                take "$bundle/macos/AICode.app.tar.gz" "$name.app.tar.gz" update
+              fi
+              ;;
+            windows)
+              take "$bundle/nsis/*-setup.exe" "$name-setup.exe" update
+              ;;
+            linux)
+              take "$bundle/appimage/*.AppImage" "$name.AppImage" update
+              take "$bundle/deb/*.deb" "$name.deb"
+              take "$bundle/rpm/*.rpm" "$name.rpm"
+              ;;
+          esac
           ls -la out
 
       - name: Upload to the draft release
+        if: env.RELEASE == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$TAG" out/* --clobber
 
-      - uses: actions/upload-artifact@v4
+      - name: Keep the signatures for the update feed
+        if: env.RELEASE == 'true'
+        uses: actions/upload-artifact@v7
         with:
-          name: signature-${{ matrix.arch }}
+          name: signature-${{ matrix.os }}-${{ matrix.arch }}
           path: out/*.sig
+
+      - name: Keep the installers (dry run)
+        if: env.RELEASE != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: AICode-${{ matrix.os }}-${{ matrix.arch }}
+          path: out/*
+          retention-days: 7
 
   publish:
     name: Publish release
     needs: [prepare, build]
     if: needs.prepare.outputs.release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       TAG: ${{ needs.prepare.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.sha }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: lts/*
+          # No pnpm in this job: no cache from package.json's packageManager.
+          package-manager-cache: false
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true

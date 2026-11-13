@@ -116,7 +116,7 @@ Icon Theme…* previews each one as you move through the list.
 | Setting | What it does |
 |---|---|
 | `window.transparent` | Makes the window able to show what is behind it. It is set when a window is created: AICode offers **Reopen Window**. |
-| `window.vibrancy` | macOS material behind the window, e.g. `sidebar`, `underWindowBackground`, `hudWindow`, `fullScreenUI`. It blurs what is behind (acrylic). It follows the theme's light or dark. |
+| `window.vibrancy` | The system's material behind the window: macOS's (`sidebar`, `underWindowBackground`, `hudWindow`, `fullScreenUI`…) or Windows' (`acrylic`, `mica`, `tabbed`, their `Dark`/`Light` variants, `blur`). It blurs what is behind (acrylic) and follows the theme's light or dark. A macOS name on Windows becomes the closest Windows material. Linux cannot blur behind a window: with a material set the window stays opaque there. |
 | `workbench.partOpacity` | Opacity of each part's background, from 0 to 1. Parts: `window` (between the cards), `titleBar`, `activityBar`, `sideBar`, `secondarySideBar`, `panel`, `editor`, `tabs`, `statusBar`. Text stays solid. |
 | `workbench.opacity` | Multiplies every part's opacity: one knob for the whole window. |
 | `window.background` | An image, a video or a color behind the whole window, e.g. `{ "image": "~/Pictures/a.jpg", "opacity": 0.4, "blur": 6 }`. |

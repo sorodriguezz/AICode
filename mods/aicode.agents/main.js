@@ -498,7 +498,8 @@ export async function activate(ctx) {
     let path = m[1];
     const line = Number(m[2] ?? m[4]) || undefined;
     const column = Number(m[3]) || undefined;
-    if (!path.startsWith("/")) {
+    path = path.replace(/\\/g, "/");
+    if (!ctx.ui.isAbsolute(path)) {
       const folder = ctx.workspace.folder();
       if (!folder) return ctx.window.showInfo(`Open a folder to follow ${raw}.`);
       path = `${folder}/${path.replace(/^\.\//, "")}`;

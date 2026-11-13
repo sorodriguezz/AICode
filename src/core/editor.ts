@@ -8,10 +8,10 @@ import jsonWorker from "monaco-editor/languages/features/json/json.worker?worker
 import cssWorker from "monaco-editor/languages/features/css/css.worker?worker";
 import htmlWorker from "monaco-editor/languages/features/html/html.worker?worker";
 import tsWorker from "monaco-editor/languages/features/typescript/ts.worker?worker";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "./dialog";
 
 import { invoke, TextFile } from "./ipc";
-import { h, icon, clear, basename, dirname, Disposable, toDisposable, fileIcon } from "./ui";
+import { h, icon, clear, basename, dirname, isAbsolute, Disposable, toDisposable, fileIcon } from "./ui";
 import { fileIconEl, configureFileIcons } from "./fileIcons";
 import { Emitter } from "./events";
 import { Workbench, StatusHandle } from "./workbench";
@@ -1495,7 +1495,7 @@ export class EditorService {
    */
   async proposeEdit(target: string, proposal: EditProposal, opts: { source?: string; description?: string } = {}): Promise<boolean> {
     let doc = this.find(target);
-    if (!doc && target.startsWith("/")) doc = (await this.openFile(target, { background: true })) ?? undefined;
+    if (!doc && isAbsolute(target)) doc = (await this.openFile(target, { background: true })) ?? undefined;
     if (!doc) throw new Error(`${target} is not open and is not a file path`);
     const target_doc = doc;
     const current = target_doc.model.getValue();

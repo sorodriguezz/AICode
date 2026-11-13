@@ -12,7 +12,8 @@
 
 import * as monaco from "monaco-editor";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog } from "./dialog";
+import { NATIVE_LANGUAGE, nativeEval, nativeOpen, nativeSpawn } from "./native";
 import { invoke, listen, onStream, ModInfo } from "./ipc";
 import * as commands from "./commands";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -23,7 +24,7 @@ import { setIcon, iconOverrides, type IconSource } from "./icons";
 import { EditorService, EditProposal, CustomTabSpec, TitleAction, EditorType, SidePaneSpec, BreadcrumbProvider } from "./editor";
 import { Workspace } from "./workspace";
 import { notify, pick, inputBox, confirm, contextMenu, QuickItem, MenuItem } from "./widgets";
-import { h, icon, iconButton, clear, basename, dirname, joinPath, fileIcon, fileIconColor, Disposable, toDisposable } from "./ui";
+import { h, icon, iconButton, clear, basename, dirname, joinPath, isAbsolute, pathRoot, uiPath, fileIcon, fileIconColor, Disposable, toDisposable } from "./ui";
 import { ThemeEntry, VsTheme } from "./theme";
 import type { GrammarSource } from "./textmate";
 import { Emitter } from "./events";
@@ -747,15 +748,17 @@ export class ModHost {
        * `ObjC.registerSubclass` for delegates and targets. No Rust, no compiling. See docs/MODS.md.
        */
       native: {
-        /** Runs `source` (a function body: `return` a JSON-able value) inside AICode, on the main thread. `opts.args` is `args` there. */
-        eval: (source: string, opts: { args?: unknown } = {}) => call<unknown>("native_eval", { source, args: opts.args ?? null }),
+        /** The language native code is written in here: "jxa" (macOS), "powershell" (Windows), "python" (Linux). */
+        language: NATIVE_LANGUAGE,
+        /** Runs `source` (a function body: `return` a JSON-able value). macOS: inside AICode, on the main thread; elsewhere in a helper process. `opts.args` is `args` there (`$Arguments` in PowerShell). */
+        eval: (source: string, opts: { args?: unknown } = {}) =>
+          NATIVE_LANGUAGE === "jxa" ? call<unknown>("native_eval", { source, args: opts.args ?? null }) : nativeEval(spawnProc, source, opts.args ?? null),
         /**
          * A native context that stays: its top-level functions and state live until `dispose()`
          * (a `dispose()` function of its own runs first). `call(name, ...args)` runs one of its
          * functions; `emit(channel, data)` in it reaches `on(channel, fn)` / `opts.onEvent`.
          */
         open: async (source: string, opts: { args?: unknown; onEvent?: (channel: string, data: unknown) => void } = {}) => {
-          await host.listenNative();
           const listeners = new Map<string, Set<(data: unknown) => void>>();
           let id = -1;
           const route = (channel: string, data: unknown) => {
@@ -763,6 +766,23 @@ export class ModHost {
             listeners.get(channel)?.forEach((f) => f(data));
             listeners.get("*")?.forEach((f) => f({ channel, data }));
           };
+          const on = (channel: string, fn: (data: unknown) => void) => {
+            if (!listeners.has(channel)) listeners.set(channel, new Set());
+            listeners.get(channel)!.add(fn);
+            return toDisposable(() => listeners.get(channel)?.delete(fn));
+          };
+          if (NATIVE_LANGUAGE !== "jxa") {
+            const ctxt = await nativeOpen(spawnProc, source, opts.args ?? null, route);
+            let closed = false;
+            const dispose = async () => {
+              if (closed) return;
+              closed = true;
+              await ctxt.close();
+            };
+            track(toDisposable(() => void dispose()));
+            return { id, call: ctxt.call, on, dispose };
+          }
+          await host.listenNative();
           id = await call<number>("native_open", { source, args: opts.args ?? null });
           host.nativeHandlers.set(id, route);
           let closed = false;
@@ -776,11 +796,7 @@ export class ModHost {
           return {
             id,
             call: <T = unknown>(name: string, ...args: unknown[]) => invoke<T>("native_call", { id, name, args }),
-            on: (channel: string, fn: (data: unknown) => void) => {
-              if (!listeners.has(channel)) listeners.set(channel, new Set());
-              listeners.get(channel)!.add(fn);
-              return toDisposable(() => listeners.get(channel)?.delete(fn));
-            },
+            on,
             dispose,
           };
         },
@@ -790,6 +806,11 @@ export class ModHost {
          * `receive(fn)` (← `send()` here) and `keepAlive()` (runs until killed or stdin closes).
          */
         spawn: async (source: string, opts: { args?: unknown; onMessage?: (data: unknown) => void; onStderr?: (text: string) => void; onExit?: (code: number | null) => void } = {}) => {
+          if (NATIVE_LANGUAGE !== "jxa") {
+            const helper = await nativeSpawn(spawnProc, source, opts);
+            track(toDisposable(() => void helper.kill()));
+            return helper;
+          }
           let buf = "";
           const proc = await spawnProc("/usr/bin/osascript", ["-l", "JavaScript", "-e", JXA_HELPER_PRELUDE + `var args = ${JSON.stringify(opts.args ?? null)};
 ` + source], {
@@ -1165,7 +1186,7 @@ export class ModHost {
         list: () => iconOverrides(),
       },
 
-      ui: { h, icon, iconButton, clear, basename, dirname, joinPath, fileIcon, fileIconColor, fileIconEl, folderIconEl },
+      ui: { h, icon, iconButton, clear, basename, dirname, joinPath, isAbsolute, pathRoot, uiPath, fileIcon, fileIconColor, fileIconEl, folderIconEl },
     });
   }
 }
@@ -1414,8 +1435,8 @@ async function trayIcon(icon: string | undefined, url: (path: string) => string,
   if (src.startsWith("data:image/png")) return src;
   if (src.startsWith("<")) return rasterize(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(src)}`);
   if (src.startsWith("data:")) return rasterize(src);
-  if (/\.png$/i.test(src)) return src.startsWith("/") ? src : `${dir}/${normalizePath(src)}`;
-  if (/\.(svg|jpe?g|gif|webp)$/i.test(src)) return rasterize(src.startsWith("/") ? convertFileSrc(src) : url(src));
+  if (/\.png$/i.test(src)) return isAbsolute(src) ? src : `${dir}/${normalizePath(src)}`;
+  if (/\.(svg|jpe?g|gif|webp)$/i.test(src)) return rasterize(isAbsolute(src) ? convertFileSrc(src) : url(src));
   return codiconPng(src);
 }
 

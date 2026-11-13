@@ -373,7 +373,9 @@ export const PART_NAMES = [
 export const SURFACE_PARTS = ["window", "titleBar", "activityBar", "sideBar", "secondarySideBar", "panel", "editor", "tabs", "statusBar"] as const;
 
 const VIBRANCY = [
-  "none", "sidebar", "underWindowBackground", "windowBackground", "hudWindow", "fullScreenUI", "titlebar", "headerView",
+  "none",
+  // Windows' own (a macOS name there is the closest of these; on macOS these are "sidebar").
+  "acrylic", "mica", "micaDark", "micaLight", "tabbed", "tabbedDark", "tabbedLight", "blur", "sidebar", "underWindowBackground", "windowBackground", "hudWindow", "fullScreenUI", "titlebar", "headerView",
   "menu", "popover", "sheet", "contentBackground", "underPageBackground", "tooltip", "selection", "appearanceBased", "light", "dark", "mediumLight", "ultraDark",
 ];
 
@@ -541,7 +543,7 @@ export const CORE_SCHEMA: Record<string, SettingSchema> = {
   // ----- Window and transparency -----
   "window.restoreOnStartup": { section: "Window and Transparency", type: "string", title: "Restore on Startup", default: "none", applies: "reopen", description: "What AICode opens when it starts. \"none\": one empty window — the last session waits for File: Reopen Last Session (offered when it had unsaved text). \"all\": every window with its files and folder, as you left them.", enum: e(["none", "Nothing (a clean start)"], ["all", "The last session"]) },
   "window.transparent": { section: "Window and Transparency", type: "boolean", title: "Transparent Window", default: false, applies: "reopen", description: "Lets what is behind the window show through the parts you make see-through (Part Opacity, Background). Needs the window reopened." },
-  "window.vibrancy": { section: "Window and Transparency", type: "string", title: "Background Material (macOS)", default: "none", description: "macOS's frosted glass behind the window. Needs Transparent Window.", enum: VIBRANCY.map((v) => ({ value: v, label: v })) },
+  "window.vibrancy": { section: "Window and Transparency", type: "string", title: "Background Material", default: "none", description: "The system's frosted glass behind the window: macOS's materials (sidebar, hudWindow…) or Windows' Acrylic, Mica and Tabbed (a macOS name on Windows becomes the closest of them). Linux has none: there the window stays opaque, so the parts' tint shows over the window's own background. Needs Transparent Window.", enum: VIBRANCY.map((v) => ({ value: v, label: v })) },
   "workbench.opacity": { section: "Window and Transparency", type: "number", title: "Opacity of Every Part", default: 1, min: 0, max: 1, description: "0 to 1, multiplies each part's own opacity (Part Opacity): one knob for the whole window. Backgrounds only — text stays solid." },
   "workbench.partOpacity": {
     section: "Window and Transparency",

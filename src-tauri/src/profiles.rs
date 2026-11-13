@@ -65,8 +65,8 @@ pub fn profile_get(state: State<'_, ModsState>) -> ProfileView {
         enabled: p.enabled,
         keybindings: p.keybindings,
         available,
-        path: mods::profile_path(&name).to_string_lossy().into(),
-        mods_dir: mods::profile_mods_dir(&name).to_string_lossy().into(),
+        path: crate::paths::ui(mods::profile_path(&name)),
+        mods_dir: crate::paths::ui(mods::profile_mods_dir(&name)),
         name,
     }
 }

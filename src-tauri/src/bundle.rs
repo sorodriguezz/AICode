@@ -159,7 +159,7 @@ fn install_text(text: &str, root: &Path) -> Result<(Manifest, PathBuf), String> 
 
 fn installed(app: &AppHandle, state: &ModsState, (manifest, dir): (Manifest, PathBuf)) -> Installed {
     mods::refresh(app, state);
-    Installed { id: manifest.id, dir: dir.to_string_lossy().into(), permissions: manifest.permissions }
+    Installed { id: manifest.id, dir: crate::paths::ui(&dir), permissions: manifest.permissions }
 }
 
 // ---------- mod commands ----------
