@@ -90,6 +90,7 @@ and the Mods page.
 | **Soft Look** | pill tabs, rounded corners, themed tooltips, a smooth cursor (configuration only) | — |
 | **Syntax Highlighting** | VS Code's own TextMate grammars (TypeScript, JavaScript, Python, Rust, Go, C/C++, …), so code is colored exactly as in VS Code | — |
 | **Markdown Preview** | preview .md files to the side or in their own tab (⌘K V, ⇧⌘V), live while typing, scrolling with the editor, maximized over the editor; the headings above the cursor in the breadcrumbs; Markdown snippets; raw HTML is shown as text | open-external |
+| **Image Preview** | images open as images, never as code (PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, TIFF, SVG): zoom with buttons, ⌘-scroll, pinch, click/⌥-click and + − 0 1, drag to pan, fit or actual size, checkerboard/dark/light background, sharp pixels when zoomed, size in the status bar, reloads on change; SVG keeps *Open Source* and previews its code live. On by default | fs:read, open-external |
 
 The window uses VS Code's 2026 look: its Dark / Light 2026 color themes are built in (MIT, see
 `src/core/themes/LICENSE.md`). File icons come from the File Icon Themes mod (Seti, VS Code Icons

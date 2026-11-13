@@ -16,7 +16,8 @@ export async function activate(ctx) {
       install: "npm install -g @google/gemini-cli",
       models: MODELS,
       interactive: (model) => (model ? ["--model", model] : []),
-      build: ({ prompt, model }) => ({ args: [...(model ? ["--model", model] : []), "-p", prompt] }),
+      // --yolo: every tool call approved without asking.
+      build: ({ prompt, model, autoApprove }) => ({ args: [...(autoApprove ? ["--yolo"] : []), ...(model ? ["--model", model] : []), "-p", prompt] }),
     },
     api: {
       label: "the Gemini API",

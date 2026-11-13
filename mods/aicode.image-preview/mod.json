@@ -1,0 +1,42 @@
+{
+  "id": "aicode.image-preview",
+  "name": "Image Preview",
+  "version": "1.0.0",
+  "description": "Opens images as images, never as code: PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, TIFF and SVG. Zoom (buttons, ⌘ + scroll, pinch, click and ⌥-click, + − 0 1 keys), drag to pan, fit to the window or actual size, a checkerboard, dark or light background for transparency, crisp pixels when zoomed in, the size in pixels and on disk in the status bar, and reloads when the file changes. SVG keeps its code a click away (Open Source in the tab bar, or Reopen Editor With… → Text Editor), and its preview follows the code as you type.",
+  "author": "AICode",
+  "icon": "file-media",
+  "main": "main.js",
+  "api": 1,
+  "activation": ["onStartup"],
+  "permissions": ["fs:read", "open-external"],
+  "contributes": {
+    "styles": [{ "path": "styles.css" }],
+    "commands": [
+      { "id": "imagePreview.zoomIn", "title": "Zoom In", "category": "Image Preview", "icon": "zoom-in" },
+      { "id": "imagePreview.zoomOut", "title": "Zoom Out", "category": "Image Preview", "icon": "zoom-out" },
+      { "id": "imagePreview.fit", "title": "Zoom to Fit", "category": "Image Preview", "icon": "screen-normal" },
+      { "id": "imagePreview.actualSize", "title": "Actual Size (100%)", "category": "Image Preview" },
+      { "id": "imagePreview.cycleBackground", "title": "Change Background", "category": "Image Preview", "icon": "color-mode" },
+      { "id": "imagePreview.showSource", "title": "Open Source", "category": "Image Preview", "icon": "go-to-file" },
+      { "id": "imagePreview.showPreview", "title": "Open Image Preview", "category": "Image Preview", "icon": "preview" }
+    ],
+    "settings": {
+      "background": {
+        "type": "string",
+        "enum": ["checkerboard", "dark", "light", "editor"],
+        "default": "checkerboard",
+        "description": "What shows behind an image's transparent parts"
+      },
+      "pixelated": {
+        "type": "boolean",
+        "default": true,
+        "description": "Show sharp pixels instead of smoothing when an image is zoomed past 200%"
+      },
+      "fitUpscale": {
+        "type": "boolean",
+        "default": false,
+        "description": "Zoom to Fit also enlarges images smaller than the editor (off: they open at 100%)"
+      }
+    }
+  }
+}

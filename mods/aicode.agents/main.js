@@ -93,6 +93,7 @@ body .code-block .bar .codicon { font-size: 14px; }
 .pick { display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 6px; border-radius: 4px; border: 0; background: transparent; color: var(--aicode-descriptionForeground); font: inherit; font-size: 12px; cursor: pointer; max-width: 160px; }
 .pick:hover { background: var(--aicode-toolbar-hoverBackground); color: var(--aicode-foreground); }
 .pick .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick.access.full .codicon { color: var(--aicode-editorWarning-foreground, #cca700); }
 body .pick .codicon { font-size: 12px; }
 .chat-row .grow { flex: 1; }
 .chat-row .send { width: 26px; height: 26px; border-radius: 4px; }
@@ -172,7 +173,7 @@ export async function activate(ctx) {
   let attachments = []; // { kind: "file", path } | { kind: "selection", path, title, startLine, endLine, text, language }
   let chat = newChatState();
   let running = null;
-  let root, log, textarea, chips, sendBtn, agentBtn, modelBtn, slashMenu;
+  let root, log, textarea, chips, sendBtn, agentBtn, modelBtn, accessBtn, slashMenu;
   let promptHistory = [];
   let historyIndex = -1;
 
@@ -775,7 +776,26 @@ export async function activate(ctx) {
     modelBtn.replaceChildren(h("span", { class: "label" }, model || "Default model"), icon("chevron-down"));
     modelBtn.title = model ? `Model: ${model}` : "The CLI's default model";
     if (textarea) textarea.placeholder = a ? `Ask ${a.name}… (/ for commands)` : "Turn on an agent mod to chat";
+    paintAccess();
   };
+
+  // ---------- full access (the autoApprove setting) ----------
+
+  const fullAccess = () => ctx.settings.getNow("autoApprove", true) !== false;
+  function paintAccess() {
+    if (!accessBtn) return;
+    const a = agent();
+    // Only a CLI agent edits files or runs commands; through an API key it just answers.
+    accessBtn.style.display = a && statusOf(a)?.mode !== "api" ? "" : "none";
+    const on = fullAccess();
+    accessBtn.classList.toggle("full", on);
+    accessBtn.replaceChildren(icon(on ? "unlock" : "lock"), h("span", { class: "label" }, on ? "Full access" : "Restricted"));
+    accessBtn.title = on
+      ? "Full access: the agent edits files and runs commands on its own, without asking. Click to restrict it."
+      : "Restricted: the agent cannot edit files or run commands on its own. Click to give it full access.";
+  }
+  const toggleAccess = () => ctx.settings.set("autoApprove", !fullAccess());
+  ctx.settings.onDidChange((keys) => keys.includes("autoApprove") && paintAccess());
 
   const pickAgent = (e) => {
     const r = e?.currentTarget?.getBoundingClientRect?.();
@@ -969,13 +989,14 @@ export async function activate(ctx) {
       });
       agentBtn = h("button", { class: "pick", onclick: pickAgent });
       modelBtn = h("button", { class: "pick", onclick: pickModel });
+      accessBtn = h("button", { class: "pick access", onclick: toggleAccess });
       sendBtn = h("button", { class: "icon-button send", title: "Send (Enter)", onclick: () => (running ? stop() : send()) }, icon("send"));
       root.append(
         h(
           "div",
           { class: "chat" },
           log,
-          h("div", { class: "chat-input" }, chips, textarea, h("div", { class: "chat-row" }, agentBtn, modelBtn, h("span", { class: "grow" }), sendBtn)),
+          h("div", { class: "chat-input" }, chips, textarea, h("div", { class: "chat-row" }, agentBtn, modelBtn, accessBtn, h("span", { class: "grow" }), sendBtn)),
         ),
       );
       paintPickers();

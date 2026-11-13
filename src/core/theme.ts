@@ -297,7 +297,7 @@ export function applyTheme(entry: ThemeEntry, theme: VsTheme) {
   }
   const editorColors: Record<string, string> = {};
   for (const [key, value] of Object.entries(colors)) {
-    if (/^(editor|editorCursor|editorLineNumber|editorWidget|editorGutter|editorIndentGuide|editorSuggestWidget|editorHoverWidget|diffEditor|minimap|scrollbarSlider|input|list|focusBorder|widget)/.test(key)) {
+    if (/^(editor|editorCursor|editorLineNumber|editorWidget|editorGutter|editorIndentGuide|editorSuggestWidget|editorHoverWidget|diffEditor|minimap|scrollbarSlider|input|list|focusBorder|widget|menu)/.test(key)) {
       editorColors[key] = value;
     }
   }

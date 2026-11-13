@@ -230,7 +230,9 @@ export function defineAgent(ctx, spec) {
 
   const runCli = async (o) => {
     const c = spec.cli;
-    const { args, env } = c.build({ prompt: o.prompt, sessionId: o.sessionId, mcp: o.mcp, model: o.model });
+    // On by default: the agent edits files and runs commands on its own, without asking.
+    const autoApprove = ctx.config.getFor("aicode.agents", "autoApprove", true) !== false;
+    const { args, env } = c.build({ prompt: o.prompt, sessionId: o.sessionId, mcp: o.mcp, model: o.model, autoApprove });
     const parse = c.parser ? c.parser({ onText: o.onText, onTool: o.onTool, onSession: o.onSession, onResult: o.onResult }) : (chunk) => o.onText(stripAnsi(chunk));
     let log = "";
     const proc = await ctx.process.spawn(c.bin, args, {

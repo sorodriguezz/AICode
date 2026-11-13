@@ -395,7 +395,7 @@ export async function activate(ctx) {
       { label: "New Terminal", keybinding: "ctrl+shift+`", run: () => create() },
       { separator: true, label: "" },
       { label: "Kill Terminal", run: () => kill(t) },
-    ]);
+    ], { menu: "terminal/context", context: { id: t.id, selection: sel ? t.term.getSelection() : "" } });
   };
 
   const pasteInto = async (t) => {

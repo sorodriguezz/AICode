@@ -51,6 +51,100 @@ pub fn menu_context(app: AppHandle, window: tauri::Window, context: Context) {
     refresh(&app);
 }
 
+// ---------- items mods add to the menu bar ----------
+
+/// An item a mod put in the menu bar: in one of the menus (File, Edit, View, Window, or a new one
+/// of its own, placed before Window). Picking it runs `command` in the window in front.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtraItem {
+    pub menu: String,
+    pub command: String,
+    pub label: String,
+    pub accelerator: Option<String>,
+    #[serde(default)]
+    pub separator_before: bool,
+}
+
+static EXTRA: Mutex<Vec<ExtraItem>> = Mutex::new(Vec::new());
+
+/// The window sends every item its mods add (all of them, each time they change).
+#[tauri::command]
+pub fn menu_set_extra(app: AppHandle, items: Vec<ExtraItem>) {
+    {
+        let mut current = EXTRA.lock().unwrap();
+        if *current == items {
+            return;
+        }
+        *current = items;
+    }
+    refresh(&app);
+}
+
+/// Appends the mods' items for `menu` (after a separator).
+fn add_extra<'a>(app: &'a AppHandle, mut sub: SubmenuBuilder<'a, Wry, AppHandle>, menu: &str) -> tauri::Result<SubmenuBuilder<'a, Wry, AppHandle>> {
+    let items: Vec<ExtraItem> = EXTRA.lock().unwrap().iter().filter(|i| i.menu.eq_ignore_ascii_case(menu)).cloned().collect();
+    if items.is_empty() {
+        return Ok(sub);
+    }
+    sub = sub.separator();
+    for (n, it) in items.iter().enumerate() {
+        if it.separator_before && n > 0 {
+            sub = sub.separator();
+        }
+        let mut b = MenuItemBuilder::with_id(it.command.as_str(), it.label.as_str());
+        if let Some(a) = it.accelerator.as_deref().filter(|a| !a.is_empty()) {
+            b = b.accelerator(a);
+        }
+        // A bad accelerator must not take the whole menu bar down: the item goes without it.
+        let built = match b.build(app) {
+            Ok(i) => i,
+            Err(e) => {
+                eprintln!("[aicode] menu item {:?}: shortcut {:?} rejected ({e}); shown without it", it.label, it.accelerator);
+                MenuItemBuilder::with_id(it.command.as_str(), it.label.as_str()).build(app)?
+            }
+        };
+        sub = sub.item(&built);
+    }
+    Ok(sub)
+}
+
+/// Menus of the mods' own (any name that is not one of the app's), in the order first seen.
+fn extra_menus(app: &AppHandle) -> tauri::Result<Vec<Submenu<Wry>>> {
+    const BUILT_IN: &[&str] = &["aicode", "file", "edit", "view", "window"];
+    let mut names: Vec<String> = Vec::new();
+    for it in EXTRA.lock().unwrap().iter() {
+        if !BUILT_IN.contains(&it.menu.to_ascii_lowercase().as_str()) && !names.iter().any(|n| n.eq_ignore_ascii_case(&it.menu)) {
+            names.push(it.menu.clone());
+        }
+    }
+    let mut out = Vec::new();
+    for name in names {
+        // `add_extra` starts with a separator; a menu of its own has nothing above it to separate.
+        let items: Vec<ExtraItem> = EXTRA.lock().unwrap().iter().filter(|i| i.menu.eq_ignore_ascii_case(&name)).cloned().collect();
+        let mut sub = SubmenuBuilder::new(app, name.as_str());
+        for (n, it) in items.iter().enumerate() {
+            if it.separator_before && n > 0 {
+                sub = sub.separator();
+            }
+            let mut b = MenuItemBuilder::with_id(it.command.as_str(), it.label.as_str());
+            if let Some(a) = it.accelerator.as_deref().filter(|a| !a.is_empty()) {
+                b = b.accelerator(a);
+            }
+            let built = match b.build(app) {
+                Ok(i) => i,
+                Err(e) => {
+                    eprintln!("[aicode] menu item {:?}: shortcut {:?} rejected ({e}); shown without it", it.label, it.accelerator);
+                    MenuItemBuilder::with_id(it.command.as_str(), it.label.as_str()).build(app)?
+                }
+            };
+            sub = sub.item(&built);
+        }
+        out.push(sub.build()?);
+    }
+    Ok(out)
+}
+
 // ---------- the recent list (folders and files opened from AICode, newest first) ----------
 
 fn recent_file() -> std::path::PathBuf {
@@ -193,7 +287,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     if ctx.folder {
         file = file.item(&item("workbench.closeFolder", "Close Folder [⌘K F]", None)?);
     }
-    let file = file.item(&item("window.close", "Close Window", Some("CmdOrCtrl+Shift+W"))?).build()?;
+    let file = add_extra(app, file.item(&item("window.close", "Close Window", Some("CmdOrCtrl+Shift+W"))?), "File")?.build()?;
     // Undo/Redo are the editor's own (Monaco keeps the undo stack), so they are plain items routed
     // to the window; Cut/Copy/Paste/Select All stay the system's, which is what makes the clipboard
     // work inside the web view.
@@ -207,8 +301,8 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .select_all()
         .separator()
         .item(&item("edit.find", "Find", Some("CmdOrCtrl+F"))?)
-        .item(&item("edit.replace", "Replace", Some("CmdOrCtrl+Alt+F"))?)
-        .build()?;
+        .item(&item("edit.replace", "Replace", Some("CmdOrCtrl+Alt+F"))?);
+    let edit = add_extra(app, edit, "Edit")?.build()?;
     let view = SubmenuBuilder::new(app, "View")
         .item(&item("workbench.commandPalette", "Command Palette…", Some("CmdOrCtrl+Shift+P"))?)
         .item(&item("workbench.quickOpen", "Go to File…", Some("CmdOrCtrl+P"))?)
@@ -221,10 +315,16 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .item(&item("editor.zoomOut", "Zoom Out", Some("CmdOrCtrl+-"))?)
         .item(&item("editor.zoomReset", "Reset Zoom", Some("CmdOrCtrl+0"))?)
         .separator()
-        .item(&item("workbench.reload", "Reload Window", Some("CmdOrCtrl+R"))?)
-        .build()?;
-    let window = SubmenuBuilder::new(app, "Window").minimize().fullscreen().build()?;
-    MenuBuilder::new(app).items(&[&app_menu, &file, &edit, &view, &window]).build()
+        .item(&item("workbench.reload", "Reload Window", Some("CmdOrCtrl+R"))?);
+    let view = add_extra(app, view, "View")?.build()?;
+    let window = add_extra(app, SubmenuBuilder::new(app, "Window").minimize().fullscreen(), "Window")?.build()?;
+    let extra = extra_menus(app)?;
+    let mut menus: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = vec![&app_menu, &file, &edit, &view];
+    for m in &extra {
+        menus.push(m);
+    }
+    menus.push(&window);
+    MenuBuilder::new(app).items(&menus).build()
 }
 
 /// Rebuilds the menu bar (the recent list, the profiles or Auto Save changed).

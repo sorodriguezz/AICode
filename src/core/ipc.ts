@@ -56,7 +56,7 @@ const early = new Map<string, Map<number, any[]>>();
 export const streamCounts: Record<string, number> = {};
 
 export async function prepareStreams() {
-  for (const name of ["proc://data", "proc://exit", "pty://data", "pty://exit"]) {
+  for (const name of ["proc://data", "proc://exit", "pty://data", "pty://exit", "http://head", "http://data", "http://end"]) {
     handlers.set(name, new Map());
     early.set(name, new Map());
     await listen<any>(name, (e) => {

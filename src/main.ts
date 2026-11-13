@@ -262,6 +262,8 @@ async function boot() {
   pinVisible();
   appearance.checkTransparency();
   if (session?.folder) workspace.set(session.folder);
+  // Another folder (or none) in place of this one: its tabs go, as VS Code starts afresh.
+  workspace.beforeReplace = () => editors.closeAll();
   const updateTitle = () => wb.setTitle(workspace.name ?? (editors.activeInfo()?.title ?? "Search"));
   workspace.onDidChange.event(updateTitle);
   // Every folder this window opens joins the Dock icon's recent list, as in VS Code.
@@ -305,29 +307,30 @@ async function boot() {
    *  (the Dock icon, `open -a`, the command line) a window with a folder keeps it. */
   const openPaths = async (paths: string[], dropped = false) => {
     const folders: string[] = [];
+    const files: string[] = [];
     for (const path of paths) {
       const st = await invoke<{ exists: boolean; is_dir: boolean }>("fs_stat", { modId: "core", path }).catch(() => null);
       if (!st?.exists) {
         notify("warning", `${path} does not exist.`);
         continue;
       }
-      if (st.is_dir) folders.push(path);
-      // Files open here as regular tabs (never a preview), next to what is open: nothing is replaced.
-      else if (await editors.openFile(path, { preview: false })) invoke("recent_add", { path });
+      (st.is_dir ? folders : files).push(path);
     }
     // As in VS Code, a window without a folder takes the first one; a window that already has one
     // keeps it, and every other folder gets a window of its own. Dropped onto the window, the first
     // folder replaces this one.
     const mine = workspace.folder === null || dropped ? folders[0] : folders.find((f) => f === workspace.folder);
     for (const other of folders.filter((f) => f !== mine)) invoke("window_new", { paths: [other] });
-    if (mine) {
-      if (mine !== workspace.folder) workspace.set(mine);
+    // The folder first: replacing it closes the old folder's tabs, and the files below must not go with them.
+    if (mine && (await workspace.change(mine))) {
       if (wb.hasView("explorer")) wb.showView("explorer", false);
       else
         notify("info", `Opened ${basename(mine)}. Turn on the Explorer mod to browse it (⌘P already finds its files).`, [
           { label: "Open Mods", run: () => commands.execute("mods.manage") },
         ]);
     }
+    // Files open as regular tabs (never a preview), next to what is open: the folder stays.
+    for (const path of files) if (await editors.openFile(path, { preview: false })) invoke("recent_add", { path });
   };
   if (pending.length) await openPaths(pending);
   for (const paths of queued.splice(0)) await openPaths(paths);
@@ -785,11 +788,10 @@ function registerWorkbenchCommands(
   // Open a folder in this window (replacing the one it has), as VS Code's File ▸ Open Folder.
   reg("workbench.openFolder", "Open Folder…", async (path?: string) => {
     const folder = typeof path === "string" ? path : await openDialog({ directory: true, multiple: false });
-    if (typeof folder !== "string") return;
-    workspace.set(folder);
+    if (typeof folder !== "string" || !(await workspace.change(folder))) return;
     if (wb.hasView("explorer")) wb.showView("explorer", false);
   }, "File");
-  reg("workbench.closeFolder", "Close Folder", () => workspace.set(null), "File");
+  reg("workbench.closeFolder", "Close Folder", () => workspace.change(null), "File");
   commands.bind("mod+k f", "workbench.closeFolder");
   reg("workbench.duplicateWindow", "Duplicate Window", () => invoke("window_new", { paths: workspace.folder ? [workspace.folder] : [] }), "File");
   // A named file on disk (a text file is ⌘N): in the open folder, or wherever the user picks.

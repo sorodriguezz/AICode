@@ -95,6 +95,23 @@ export interface StatusHandle {
 }
 
 /** A button in the title bar: left (after back/forward), center (beside the search box) or right. */
+/** A button a mod puts in the activity bar that is not a view: it runs a command (or `run`). */
+export interface ActivityItem {
+  id?: string;
+  icon: string;
+  /** Tooltip. */
+  title?: string;
+  command?: string;
+  args?: unknown[];
+  run?: (e: MouseEvent) => void;
+  /** "top" (after the views) or "bottom" (with the gear, like VS Code's Accounts). */
+  position?: "top" | "bottom";
+  order?: number;
+  badge?: number | string;
+  /** Shown pressed. */
+  checked?: boolean;
+}
+
 export interface TitleItem {
   id?: string;
   icon?: string;
@@ -146,6 +163,8 @@ export class Workbench {
   private motionReady = false;
   private statusItems = new Set<{ item: StatusItem; el: HTMLElement }>();
   private titleItems = new Set<{ item: TitleItem; el: HTMLElement }>();
+  private activityItems = new Set<ActivityItem>();
+  private activityBottom!: HTMLElement;
   private titleHosts!: Record<"left" | "center" | "right", HTMLElement>;
   /** Views taken off the window (workbench.hiddenViews, a layout's "hidden"). */
   private hiddenViews = new Set<string>();
@@ -220,7 +239,8 @@ export class Workbench {
     );
 
     this.activityTop = h("div", { class: "group" });
-    this.activitybar = h("div", { class: "activitybar", dataset: { drop: "sidebar", part: "activityBar" }, oncontextmenu: (e: MouseEvent) => this.activityMenu(e) }, this.activityTop);
+    this.activityBottom = h("div", { class: "group bottom" });
+    this.activitybar = h("div", { class: "activitybar", dataset: { drop: "sidebar", part: "activityBar" }, oncontextmenu: (e: MouseEvent) => this.activityMenu(e) }, this.activityTop, this.activityBottom);
 
     const partName = { sidebar: "sideBar", secondary: "secondarySideBar", panel: "panel" } as const;
     const makePart = (loc: ViewLocation) => {
@@ -489,7 +509,24 @@ export class Workbench {
       );
       this.lastBadges.set(d.id, entry.badge);
     }
-    const activityShown = sidebarViews.length > 0 && this.options.activityBar;
+    // Mods' own buttons (not views): after the views, or at the bottom.
+    clear(this.activityBottom);
+    for (const it of [...this.activityItems].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))) {
+      const el = h(
+        "div",
+        {
+          class: `activity-item mod-item${it.checked ? " active" : ""}`,
+          title: it.title ?? "",
+          "aria-label": it.title ?? it.icon,
+          dataset: { part: "activityBar.item", ...(it.id ? { id: it.id } : {}) },
+          onclick: (e: MouseEvent) => (it.run ? it.run(e) : it.command ? commands.execute(it.command, ...(it.args ?? [])).catch((err) => console.error(err)) : undefined),
+        },
+        icon(it.icon),
+        it.badge ? h("span", { class: "badge", dataset: { part: "activityBar.badge" } }, String(it.badge)) : null,
+      );
+      (it.position === "bottom" ? this.activityBottom : this.activityTop).append(el);
+    }
+    const activityShown = (sidebarViews.length > 0 || this.activityItems.size > 0) && this.options.activityBar;
     this.activitybar.style.display = activityShown ? "" : "none";
     this.root.classList.toggle("no-activitybar", !activityShown);
 
@@ -611,7 +648,7 @@ export class Workbench {
       ...(moved ? [{ separator: true, label: "" }, { label: "Reset Location", run: () => this.moveView(id, entry.original.location) }] : []),
       { separator: true, label: "" },
       { label: "Reset All View Locations", run: () => this.resetPlacement() },
-    ]);
+    ], { menu: "view/title", context: { viewId: id } });
   }
 
   /** Right click on the activity bar, as in VS Code: which icons it shows, and where it goes. */
@@ -655,7 +692,7 @@ export class Workbench {
       { separator: true, label: "" },
       { label: "Reset All View Locations", run: () => { this.resetPlacement(); this.setOptions({ hiddenActivity: [] }); } },
     );
-    contextMenu(e.clientX, e.clientY, items);
+    contextMenu(e.clientX, e.clientY, items, { menu: "activityBar", context: { viewId: id } });
   }
 
   /** Press on a view's icon, tab or title and drag it to the activity bar, a part, or an edge. */
@@ -922,7 +959,7 @@ export class Workbench {
       { label: "File Icon Theme…", run: () => commands.execute("preferences.fileIconTheme") },
       { separator: true, label: "" },
       { label: "Check for Updates…", run: () => commands.execute("update.check") },
-    ], { above: true });
+    ], { above: true, menu: "manage", context: {} });
   }
 
   // ---------- status bar ----------
@@ -967,6 +1004,36 @@ export class Workbench {
   }
 
   // ---------- title bar ----------
+
+  /** A mod's button in the activity bar (see ActivityItem). */
+  addActivityItem(item: ActivityItem): { update(patch: Partial<ActivityItem>): void; dispose(): void } {
+    const it = { position: "top", order: 0, ...item } as ActivityItem;
+    this.activityItems.add(it);
+    this.renderChrome();
+    return {
+      update: (patch) => {
+        Object.assign(it, patch);
+        this.renderChrome();
+      },
+      dispose: () => {
+        this.activityItems.delete(it);
+        this.renderChrome();
+      },
+    };
+  }
+
+  /** Draws a view with another icon (its activity bar button, its tab) until disposed. */
+  setViewIcon(viewId: string, iconName: string): Disposable {
+    const entry = this.views.get(viewId);
+    if (!entry) throw new Error(`no view ${viewId}`);
+    const before = entry.desc.icon;
+    entry.desc.icon = iconName;
+    this.renderChrome();
+    return toDisposable(() => {
+      if (entry.desc.icon === iconName) entry.desc.icon = before;
+      this.renderChrome();
+    });
+  }
 
   addTitleItem(item: TitleItem): TitleHandle {
     const record = { item: { align: "right", order: 0, ...item } as TitleItem, el: h("button", { class: "title-item" }) as HTMLElement };

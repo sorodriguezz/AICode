@@ -1,0 +1,41 @@
+.imgp { position: absolute; inset: 0; display: flex; flex-direction: column; outline: none; user-select: none; -webkit-user-select: none; }
+.imgp-stage { position: relative; flex: 1 1 auto; overflow: auto; display: grid; }
+.imgp-stage.grab { cursor: grab; }
+.imgp-stage.grabbing { cursor: grabbing; }
+.imgp-stage.zoom-in { cursor: zoom-in; }
+.imgp-stage.zoom-out { cursor: zoom-out; }
+.imgp-stage.bg-editor { background: var(--aicode-editor-background); }
+.imgp-stage.bg-dark { background: #1e1e1e; }
+.imgp-stage.bg-light { background: #f3f3f3; }
+.imgp-stage.bg-checkerboard {
+  --imgp-a: color-mix(in srgb, var(--aicode-editor-background) 92%, var(--aicode-foreground, #ccc));
+  --imgp-b: color-mix(in srgb, var(--aicode-editor-background) 80%, var(--aicode-foreground, #ccc));
+  background-color: var(--imgp-a);
+  background-image: linear-gradient(45deg, var(--imgp-b) 25%, transparent 25%), linear-gradient(-45deg, var(--imgp-b) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--imgp-b) 75%), linear-gradient(-45deg, transparent 75%, var(--imgp-b) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+/* The image sits in the middle while it is smaller than the stage, and scrolls once it is larger. */
+.imgp-canvas { margin: auto; padding: 16px; box-sizing: content-box; }
+.imgp-canvas img { display: block; width: 100%; height: 100%; -webkit-user-drag: none; }
+.imgp-canvas img.pixelated { image-rendering: pixelated; }
+.imgp-canvas img.has-alpha-outline { outline: 1px dashed color-mix(in srgb, var(--aicode-foreground, #ccc) 25%, transparent); }
+
+.imgp-bar {
+  position: absolute; top: 10px; right: 14px; display: flex; align-items: center; gap: 1px; padding: 2px;
+  border-radius: 6px; border: 1px solid var(--aicode-widget-border, transparent);
+  background: color-mix(in srgb, var(--aicode-editorWidget-background, #252526) 88%, transparent);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  box-shadow: 0 2px 8px var(--aicode-widget-shadow, rgba(0,0,0,.3));
+  opacity: 0; transition: opacity .15s ease; z-index: 2;
+}
+.imgp:hover .imgp-bar, .imgp:focus-within .imgp-bar, .imgp-bar.pinned { opacity: 1; }
+.imgp-bar .icon-button { width: 24px; height: 24px; }
+.imgp-bar .imgp-zoom { min-width: 48px; height: 24px; padding: 0 6px; border: 0; border-radius: 4px; background: transparent; color: var(--aicode-foreground); font: inherit; font-size: 12px; font-variant-numeric: tabular-nums; cursor: pointer; }
+.imgp-bar .imgp-zoom:hover { background: var(--aicode-toolbar-hoverBackground); }
+.imgp-bar .sep { width: 1px; height: 16px; margin: 0 3px; background: var(--aicode-widget-border, rgba(128,128,128,.35)); }
+
+.imgp-message { margin: auto; max-width: 420px; padding: 24px; text-align: center; color: var(--aicode-descriptionForeground, #999); line-height: 1.5; }
+.imgp-message .codicon { font-size: 28px; display: block; margin: 0 auto 10px; }
+.imgp-message .btn { margin-top: 12px; }

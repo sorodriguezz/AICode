@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "mods");
-const PERMS = new Set(["fs:read", "fs:write", "process", "pty", "mcp-server", "open-external"]);
+const PERMS = new Set(["fs:read", "fs:write", "process", "pty", "mcp-server", "open-external", "network", "secrets"]);
 const LOCATIONS = new Set(["sidebar", "secondary", "panel"]);
 let problems = 0;
 const fail = (mod, msg) => {

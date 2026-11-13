@@ -15,7 +15,9 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { invoke, listen, onStream, ModInfo } from "./ipc";
 import * as commands from "./commands";
-import { Workbench, ViewProvider, StatusItem, TitleItem, ViewLocation, LayoutOptions } from "./workbench";
+import { Workbench, ViewProvider, StatusItem, TitleItem, ViewLocation, LayoutOptions, type ActivityItem } from "./workbench";
+import { addMenuItem, menuContributions, prepareMenuBarItem, type MenuContribution } from "./menus";
+import { setIcon, iconOverrides, type IconSource } from "./icons";
 import { EditorService, EditProposal, CustomTabSpec, TitleAction, EditorType, SidePaneSpec, BreadcrumbProvider } from "./editor";
 import { Workspace } from "./workspace";
 import { notify, pick, inputBox, confirm, contextMenu, QuickItem, MenuItem } from "./widgets";
@@ -232,6 +234,32 @@ export class ModHost {
     for (const item of Array.isArray(c.titleBar) ? c.titleBar : []) {
       if (!item || (!item.command && !item.run)) continue;
       const handle = this.wb.addTitleItem({ id: item.id, icon: item.icon, text: item.text, title: item.title ?? item.tooltip, command: item.command, args: item.args, align: item.align, order: item.order });
+      m.subscriptions.push({ dispose: handle.dispose });
+    }
+    // Icons: change any codicon, or add names that work wherever an icon name does (icons.ts).
+    if (c.icons && typeof c.icons === "object") {
+      for (const [name, source] of Object.entries(c.icons)) {
+        try {
+          m.subscriptions.push(setIcon(name, source as IconSource, m.info.id, (p) => this.url(m.info.id, p)));
+        } catch (e) {
+          console.warn(`[${m.info.id}] icon ${name}:`, e);
+        }
+      }
+    }
+    // Menu items: { "explorer/context": [{ "command", "label", "icon", "keybinding", "order" }], "menubar/Docker": […] }.
+    if (c.menus && typeof c.menus === "object") {
+      for (const [menu, list] of Object.entries(c.menus)) {
+        for (const it of Array.isArray(list) ? (list as any[]) : []) {
+          if (!it?.command) continue;
+          const title = (c.commands ?? []).find((x: any) => x.id === it.command)?.title;
+          m.subscriptions.push(addContributedMenuItem(menu, { id: it.id ?? it.command, label: it.label ?? title ?? it.command, icon: it.icon, keybinding: it.keybinding, command: it.command, args: it.args, order: it.order, separatorBefore: it.separatorBefore, owner: m.info.id }));
+        }
+      }
+    }
+    // Activity bar buttons that run a command (not views).
+    for (const it of Array.isArray(c.activityBar) ? c.activityBar : []) {
+      if (!it?.icon || !it.command) continue;
+      const handle = this.wb.addActivityItem({ id: it.id, icon: it.icon, title: it.title, command: it.command, args: it.args, position: it.position, order: it.order });
       m.subscriptions.push({ dispose: handle.dispose });
     }
     for (const v of c.views ?? []) {
@@ -490,7 +518,8 @@ export class ModHost {
         showQuickPick: <T extends QuickItem>(items: T[], opts?: Parameters<typeof pick<T>>[1]) => pick(items, opts),
         showInputBox: (opts: { prompt?: string; placeholder?: string; value?: string; password?: boolean; validate?: (v: string) => string | null }) => inputBox(opts),
         confirm: (message: string, detail?: string, primary?: string) => confirm(message, detail, primary),
-        contextMenu: (x: number, y: number, items: MenuItem[]) => contextMenu(x, y, items),
+        /** `opts.menu`: this menu's id, so other mods can add to it (`ctx.menus.add(id, …)`); `opts.context` goes to their items. */
+        contextMenu: (x: number, y: number, items: MenuItem[], opts?: { menu?: string; context?: unknown; above?: boolean }) => contextMenu(x, y, items, opts),
         pickFolder: async () => {
           const r = await openDialog({ directory: true, multiple: false });
           return typeof r === "string" ? r : null;
@@ -511,7 +540,8 @@ export class ModHost {
         },
         getSelection: () => editors.selection(),
         replaceSelection: (text: string) => editors.replaceSelection(text),
-        open: (path: string, opts?: { line?: number; column?: number; preview?: boolean }) => editors.openFile(path, opts).then((d) => (d ? editors.info(d) : null)),
+        /** `asText`: in the text editor even when a mod's editor type opens such files by default. */
+        open: (path: string, opts?: { line?: number; column?: number; preview?: boolean; asText?: boolean }) => editors.openFile(path, opts).then((d) => (d ? editors.info(d) : null)),
         focus: (id: string) => editors.activateById(id),
         newUntitled: (text?: string, language?: string) => editors.info(editors.newUntitled(text, language)),
         openCustom: (spec: CustomTabSpec) => editors.info(editors.openCustom(spec)),
@@ -548,13 +578,23 @@ export class ModHost {
 
       workspace: {
         folder: () => workspace.folder,
-        setFolder: (path: string | null) => workspace.set(path),
+        setFolder: (path: string | null) => workspace.change(path),
         onDidChangeFolder: (fn: (folder: string | null) => void) => track(workspace.onDidChange.event(fn)),
         listFiles: (limit?: number) => (workspace.folder ? call<string[]>("fs_list_files", { root: workspace.folder, limit }) : Promise.resolve([])),
       },
 
       fs: {
         readText: (path: string) => call<{ text: string; binary: boolean; bom: boolean; eol: "\n" | "\r\n" }>("fs_read_text", { path }),
+        /** Any file (an image, a PDF, a binary) as a data: URL, ready for an <img>/<video> src. Up to 40 MB. */
+        readDataUrl: (path: string) => call<string>("fs_read_data_url", { path }),
+        /** Any file's bytes. Up to 40 MB. */
+        readBytes: async (path: string) => {
+          const url = await call<string>("fs_read_data_url", { path });
+          const bin = atob(url.slice(url.indexOf(",") + 1));
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          return bytes;
+        },
         writeText: (path: string, text: string, opts: { bom?: boolean } = {}) => call<void>("fs_write_text", { path, text, bom: !!opts.bom }),
         readDir: (path: string) => call<{ name: string; path: string; is_dir: boolean; is_symlink: boolean }[]>("fs_read_dir", { path }),
         stat: (path: string) => call<{ exists: boolean; is_dir: boolean; size: number; modified_ms: number }>("fs_stat", { path }),
@@ -597,16 +637,26 @@ export class ModHost {
         spawn: async (
           program: string,
           args: string[],
-          opts: { cwd?: string; stdin?: string; env?: Record<string, string>; onData?: (data: string, stream: "stdout" | "stderr") => void; onExit?: (code: number | null) => void } = {},
+          opts: {
+            cwd?: string;
+            stdin?: string;
+            env?: Record<string, string>;
+            /** Keep the input open: write to the program while it runs with `write()`, close it with `end()`. */
+            keepStdin?: boolean;
+            /** "base64": `onData` gets the raw bytes (a Uint8Array), for programs that print binary. */
+            encoding?: "utf8" | "base64";
+            onData?: (data: any, stream: "stdout" | "stderr") => void;
+            onExit?: (code: number | null) => void;
+          } = {},
         ) => {
-          const id = await call<number>("proc_spawn", { program, args, cwd: opts.cwd ?? workspace.folder ?? undefined, stdin: opts.stdin, env: opts.env });
+          const id = await call<number>("proc_spawn", { program, args, cwd: opts.cwd ?? workspace.folder ?? undefined, stdin: opts.stdin, env: opts.env, keepStdin: !!opts.keepStdin, encoding: opts.encoding });
           let resolveDone: (code: number | null) => void;
           const done = new Promise<number | null>((r) => (resolveDone = r));
           // A quick program may have exited already: its buffered exit then arrives inside onStream,
           // before offExit is assigned — so the cleanup must not need it yet.
           let offExit: (() => void) | null = null;
           let exited = false;
-          const offData = onStream("proc://data", id, (p) => opts.onData?.(p.data, p.stream));
+          const offData = onStream("proc://data", id, (p) => opts.onData?.(p.base64 ? fromBase64(p.data) : p.data, p.stream));
           offExit = onStream("proc://exit", id, (p) => {
             exited = true;
             offData();
@@ -615,7 +665,15 @@ export class ModHost {
             resolveDone(p.code);
           });
           if (exited) offExit();
-          return { id, done, kill: () => invoke("proc_kill", { id }) };
+          return {
+            id,
+            done,
+            kill: () => invoke("proc_kill", { id }),
+            /** Text, or bytes (Uint8Array). Needs `keepStdin`. */
+            write: (data: string | Uint8Array) => (typeof data === "string" ? invoke<void>("proc_write", { id, data }) : invoke<void>("proc_write", { id, data: toBase64(data), base64: true })),
+            /** Closes the input (the program reads end-of-file). */
+            end: () => invoke<void>("proc_end", { id }),
+          };
         },
       },
 
@@ -718,6 +776,14 @@ export class ModHost {
         root: () => wb.root,
         part: (name: string) => document.querySelector<HTMLElement>(`[data-part="${name}"]`),
         parts: (name: string) => Array.from(document.querySelectorAll<HTMLElement>(`[data-part="${name}"]`)),
+        /** A button in the activity bar that runs a command (not a view): `{ icon, title, command | run, position: "top" | "bottom", order, badge }`. */
+        addActivityItem: (item: ActivityItem) => {
+          const handle = wb.addActivityItem(item);
+          track({ dispose: handle.dispose });
+          return handle;
+        },
+        /** Draws a view (any mod's, or the core's) with another icon until disposed. */
+        setViewIcon: (viewId: string, iconName: string) => track(wb.setViewIcon(viewId, iconName)),
         addTitleItem: (item: TitleItem) => {
           const handle = wb.addTitleItem(item);
           track({ dispose: handle.dispose });
@@ -759,6 +825,40 @@ export class ModHost {
             const items = m.info.contributes?.[point];
             return (Array.isArray(items) ? items : []).map((item: any) => ({ ...item, mod: m.info.id, modName: m.info.name }));
           }),
+      },
+
+      /**
+       * HTTP from Rust: any URL, method, headers and body — no CORS, no CSP — with the real status
+       * and headers, binary bodies, timings, streaming and cancel. Needs the "network" permission (declared for the user).
+       */
+      http: {
+        request: (opts: HttpOptions) => httpRequest(call, opts),
+        get: (url: string, opts: Omit<HttpOptions, "url" | "method"> = {}) => httpRequest(call, { ...opts, url, method: "GET" }),
+        post: (url: string, body: HttpOptions["body"], opts: Omit<HttpOptions, "url" | "method" | "body"> = {}) => httpRequest(call, { ...opts, url, method: "POST", body }),
+      },
+
+      /** Passwords, tokens, connection strings: in the macOS Keychain (service "AICode: <mod id>" unless `service` is given). */
+      secrets: {
+        get: (key: string, opts: { service?: string } = {}) => call<string | null>("secret_get", { key, service: opts.service }),
+        set: (key: string, value: string, opts: { service?: string } = {}) => call<void>("secret_set", { key, value, service: opts.service }),
+        delete: (key: string, opts: { service?: string } = {}) => call<void>("secret_delete", { key, service: opts.service }),
+      },
+
+      /**
+       * Items in the window's menus: any context menu by id ("editor/context", "editor/tab",
+       * "editor/title", "explorer/context", "explorer/title", "terminal/context", "activityBar",
+       * "view/title", "manage", or a mod's own) and the app's menu bar ("menubar/File", "menubar/Edit",
+       * "menubar/View", "menubar/Window", or "menubar/<New Menu>"). See menus.ts.
+       */
+      menus: {
+        add: (menu: string, item: MenuContribution) => track(addContributedMenuItem(menu, { ...item, owner: modId })),
+        items: (menu: string) => menuContributions(menu).map((i) => ({ ...i })),
+      },
+
+      /** Draw any icon differently, or add new icon names (SVG, picture, font glyph, another codicon). See icons.ts. */
+      icons: {
+        set: (name: string, source: IconSource) => track(setIcon(name, source, modId, (p) => host.url(modId, p))),
+        list: () => iconOverrides(),
       },
 
       ui: { h, icon, iconButton, clear, basename, dirname, joinPath, fileIcon, fileIconColor, fileIconEl, folderIconEl },
@@ -829,3 +929,139 @@ export function parseJsonc(text: string): any {
   return JSON.parse(out.replace(/,(\s*[}\]])/g, "$1"));
 }
 
+
+// ---------- helpers for ctx.process (binary) and ctx.http ----------
+
+function fromBase64(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function toBase64(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+export interface HttpOptions {
+  url: string;
+  method?: string;
+  /** An object or [name, value] pairs (a header can repeat). */
+  headers?: Record<string, string> | [string, string][];
+  /** Text, bytes, or any other value (sent as JSON, with Content-Type: application/json). */
+  body?: string | Uint8Array | ArrayBuffer | object | null;
+  timeoutMs?: number;
+  followRedirects?: boolean;
+  /** Accept invalid or self-signed certificates (a local server). */
+  insecure?: boolean;
+  /** As soon as the status and headers arrive. */
+  onHead?: (head: { status: number; statusText: string; headers: [string, string][]; url: string; ttfbMs: number }) => void;
+  /** Each piece of the body as it arrives (server-sent events, logs, big downloads). */
+  onChunk?: (chunk: Uint8Array) => void;
+}
+
+export interface HttpResponse {
+  status: number;
+  statusText: string;
+  ok: boolean;
+  url: string;
+  version: string;
+  headers: [string, string][];
+  /** First value of a header (any case). */
+  header(name: string): string | null;
+  body: Uint8Array;
+  text(): string;
+  json<T = any>(): T;
+  /** Time to first byte and total, in milliseconds; size of the body in bytes. */
+  timings: { ttfbMs: number; totalMs: number };
+  size: number;
+}
+
+/** Sends a request through Rust; the promise has `cancel()` and `id`. */
+function httpRequest(call: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>, opts: HttpOptions): Promise<HttpResponse> & { cancel(): void; id: Promise<number> } {
+  const headers: [string, string][] = Array.isArray(opts.headers) ? [...opts.headers] : Object.entries(opts.headers ?? {});
+  const has = (name: string) => headers.some(([k]) => k.toLowerCase() === name.toLowerCase());
+  let body: string | undefined;
+  let bodyBase64 = false;
+  const b = opts.body;
+  if (b == null) body = undefined;
+  else if (typeof b === "string") body = b;
+  else if (b instanceof Uint8Array || b instanceof ArrayBuffer) {
+    body = toBase64(b instanceof ArrayBuffer ? new Uint8Array(b) : b);
+    bodyBase64 = true;
+  } else {
+    body = JSON.stringify(b);
+    if (!has("content-type")) headers.push(["Content-Type", "application/json"]);
+  }
+  let cancelled = false;
+  let reqId: number | null = null;
+  const idPromise = call<number>("http_request", {
+    request: { url: opts.url, method: opts.method ?? "GET", headers, body, bodyBase64, timeoutMs: opts.timeoutMs, followRedirects: opts.followRedirects, insecure: opts.insecure },
+  });
+  const promise = new Promise<HttpResponse>((resolve, reject) => {
+    idPromise.then((id) => {
+      reqId = id;
+      if (cancelled) invoke("http_cancel", { id });
+      let head: any = null;
+      const chunks: Uint8Array[] = [];
+      const offHead = onStream("http://head", id, (p) => {
+        head = p;
+        opts.onHead?.({ status: p.status, statusText: p.statusText, headers: p.headers, url: p.url, ttfbMs: p.ttfbMs });
+      });
+      const offData = onStream("http://data", id, (p) => {
+        const chunk = fromBase64(p.data);
+        chunks.push(chunk);
+        opts.onChunk?.(chunk);
+      });
+      const offEnd = onStream("http://end", id, (p) => {
+        offHead();
+        offData();
+        offEnd();
+        if (p.error) return reject(Object.assign(new Error(p.error), { cancelled: !!p.cancelled, status: head?.status }));
+        const size = chunks.reduce((n, c) => n + c.length, 0);
+        const all = new Uint8Array(size);
+        let at = 0;
+        for (const c of chunks) {
+          all.set(c, at);
+          at += c.length;
+        }
+        let decoded: string | null = null;
+        const text = () => (decoded ??= new TextDecoder().decode(all));
+        resolve({
+          status: head?.status ?? 0,
+          statusText: head?.statusText ?? "",
+          ok: !!head && head.status >= 200 && head.status < 300,
+          url: head?.url ?? opts.url,
+          version: head?.version ?? "",
+          headers: head?.headers ?? [],
+          header: (name: string) => (head?.headers ?? []).find(([k]: [string, string]) => k.toLowerCase() === name.toLowerCase())?.[1] ?? null,
+          body: all,
+          text,
+          json: () => JSON.parse(text()),
+          timings: { ttfbMs: head?.ttfbMs ?? 0, totalMs: p.totalMs ?? 0 },
+          size,
+        });
+      });
+    }, reject);
+  });
+  return Object.assign(promise, {
+    id: idPromise,
+    cancel: () => {
+      cancelled = true;
+      if (reqId != null) invoke("http_cancel", { id: reqId });
+    },
+  });
+}
+
+/** A mod's menu item; one in the menu bar also gets its command and its keyboard shortcut (menus.ts). */
+function addContributedMenuItem(menu: string, item: MenuContribution): Disposable {
+  if (!menu.startsWith("menubar/")) return addMenuItem(menu, item);
+  const prepared = prepareMenuBarItem(item);
+  const added = addMenuItem(menu, prepared.item);
+  return toDisposable(() => {
+    added.dispose();
+    prepared.dispose();
+  });
+}

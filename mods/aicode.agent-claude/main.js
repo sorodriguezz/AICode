@@ -58,9 +58,11 @@ export async function activate(ctx) {
       models: CLI_MODELS,
       parser: streamJson,
       interactive: (model) => (model ? ["--model", model] : []),
-      build: ({ prompt, sessionId, mcp, model }) => {
+      build: ({ prompt, sessionId, mcp, model, autoApprove }) => {
         const args = ["-p", prompt, "--output-format", "stream-json", "--verbose"];
         if (model) args.push("--model", model);
+        // Every tool (edit, write, bash…) without asking: `-p` cannot ask, so it would refuse them.
+        if (autoApprove) args.push("--permission-mode", "bypassPermissions");
         if (sessionId) args.push("--resume", sessionId);
         const env = {};
         if (mcp) {

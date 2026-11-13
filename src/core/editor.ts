@@ -16,6 +16,7 @@ import { fileIconEl, configureFileIcons } from "./fileIcons";
 import { Emitter } from "./events";
 import { Workbench, StatusHandle } from "./workbench";
 import { dialog, notify, pick, contextMenu, MenuItem } from "./widgets";
+import { bindEditorContextMenu } from "./menus";
 import * as commands from "./commands";
 import { leave, play } from "./motion";
 import { openModal, closeModal, ModalAction } from "./modal";
@@ -89,6 +90,8 @@ export interface CustomDoc {
   id: string;
   title: string;
   spec: CustomTabSpec;
+  /** A preview tab (single click in the explorer on a file a mod's editor type opens): the next preview replaces it. */
+  preview?: boolean;
   el?: HTMLElement;
   disposable?: Disposable | void;
 }
@@ -111,6 +114,12 @@ export interface TitleAction {
 export interface EditorType {
   id: string;
   label: string;
+  /** The files it opens by default (VS Code's custom editor priority "default"): they open straight
+   *  in it, never as text first; "Reopen Editor With…" still offers the text editor. Off: only offered. */
+  default?: boolean;
+  /** False for files it shows that have no text form (a PNG): "Reopen Editor With…" then leaves out
+   *  the text editor. Default: offered. */
+  hasText?: (info: EditorInfo) => boolean;
   when: (info: EditorInfo) => boolean;
   open: (info: EditorInfo) => void;
 }
@@ -232,7 +241,9 @@ export class EditorService {
   dragTabsToWindow = true;
 
   constructor(private wb: Workbench) {
-    this.monacoHost = h("div", { class: "monaco-host" });
+    // `monaco-component`: Monaco defines its --vscode-* colors on that class, and puts the context
+    // menu (in a shadow root) in this host, outside `.monaco-editor`: without it the menu has no background.
+    this.monacoHost = h("div", { class: "monaco-host monaco-component" });
     this.customHost = h("div", { class: "custom-host" });
     this.watermark = this.buildWatermark();
     wb.editorBody.append(this.monacoHost, this.customHost, this.watermark);
@@ -265,6 +276,16 @@ export class EditorService {
       "semanticHighlighting.enabled": true,
       wordWrap: "off",
     });
+    // Mods' items in the editor's right-click menu (`editor/context`).
+    bindEditorContextMenu(
+      this.editor,
+      () => {
+        const doc = this.activeText();
+        const sel = this.editor.getSelection();
+        return { path: doc?.path ?? null, language: doc?.model.getLanguageId() ?? "", selection: sel && doc ? doc.model.getValueInRange(sel) : "" };
+      },
+      (x, y, items) => contextMenu(x, y, items),
+    );
     // Resize and paint in the same frame, before the browser draws: no blank minimap frame.
     let last = "";
     new ResizeObserver(() => {
@@ -367,8 +388,50 @@ export class EditorService {
     return doc;
   }
 
-  async openFile(path: string, opts: { line?: number; column?: number; preview?: boolean; background?: boolean } = {}): Promise<TextDoc | null> {
+  /** The preview tab the next preview replaces: a text one without changes, or a mod's. */
+  private replaceablePreview(): Doc | undefined {
+    return this.docs.find((d) => (d.kind === "text" ? d.preview && !this.isDirty(d) : !!d.preview));
+  }
+
+  /** Closes a tab being replaced, at once (no closing animation: the new one is already in its place). */
+  private async dropTab(doc: Doc) {
+    const motion = this.motionReady;
+    this.motionReady = false;
+    try {
+      await this.close(doc, true);
+    } finally {
+      this.motionReady = motion;
+    }
+  }
+
+  /** `asText`: the text editor itself, never a mod's editor type (a binary file then gets the notice). */
+  async openFile(path: string, opts: { line?: number; column?: number; preview?: boolean; background?: boolean; asText?: boolean } = {}): Promise<TextDoc | null> {
     let doc = this.find(path);
+    // A mod's editor that opens this kind of file by default takes it before anything is read as text.
+    if (!doc && !opts.asText) {
+      const info: EditorInfo = { id: "", editorType: "default", path, title: basename(path), language: detectLanguage(path), dirty: false, active: true };
+      const claim = this.typesFor(info).find((t) => t.default);
+      if (claim) {
+        const asPreview = !!opts.preview && this.previewEnabled;
+        const previous = asPreview ? this.replaceablePreview() : undefined;
+        const before = new Set(this.docs);
+        claim.open(info);
+        // Preview tabs work as for text: a single click opens one in the place of the last preview.
+        const now = this.active;
+        if (now?.kind === "custom") {
+          if (!before.has(now)) {
+            now.preview = asPreview;
+            if (previous && previous !== now) {
+              this.docs.splice(this.docs.indexOf(now), 1);
+              this.docs.splice(this.docs.indexOf(previous), 0, now);
+              void this.dropTab(previous);
+            }
+          } else if (!opts.preview) now.preview = false;
+          this.renderTabs();
+        }
+        return null;
+      }
+    }
     if (!doc) {
       let file: TextFile;
       try {
@@ -378,7 +441,13 @@ export class EditorService {
         return null;
       }
       if (file.binary) {
-        this.openCustom({ title: basename(path), icon: "file-binary", key: `binary:${path}`, render: (el) => el.append(h("div", { class: "notice" }, h("p", null, `${basename(path)} is a binary file or too large to open as text (${(file.size / 1024).toFixed(0)} KB).`))) });
+        // The text editor cannot show it: a mod's editor type that claims the file (an image viewer)
+        // opens it; otherwise a notice, which keeps the path (`forPath`) so mods and "Reopen Editor
+        // With…" still know which file it is.
+        const info: EditorInfo = { id: "", editorType: "default", path, title: basename(path), language: detectLanguage(path), dirty: false, active: true };
+        const type = opts.asText ? undefined : this.typesFor(info)[0];
+        if (type) type.open(info);
+        else this.openCustom({ title: basename(path), icon: "file-binary", key: `binary:${path}`, forPath: path, render: (el) => el.append(h("div", { class: "notice" }, h("p", null, `${basename(path)} is a binary file or too large to open as text (${(file.size / 1024).toFixed(0)} KB).`))) });
         return null;
       }
       const uri = monaco.Uri.file(path);
@@ -387,11 +456,15 @@ export class EditorService {
       model.setEOL(file.eol === "\r\n" ? monaco.editor.EndOfLineSequence.CRLF : monaco.editor.EndOfLineSequence.LF);
       doc = { kind: "text", id: `doc-${nextId++}`, path, title: basename(path), model, savedVersion: model.getAlternativeVersionId(), bom: file.bom, lossy: file.lossy, viewState: null, preview: !!opts.preview && this.previewEnabled };
       // A preview tab (single click in the explorer) is replaced by the next preview.
-      const previewDoc = opts.preview && this.previewEnabled ? this.docs.find((d): d is TextDoc => d.kind === "text" && d.preview && !this.isDirty(d)) : undefined;
-      if (previewDoc) {
+      const previewDoc = opts.preview && this.previewEnabled ? this.replaceablePreview() : undefined;
+      if (previewDoc?.kind === "text") {
         const i = this.docs.indexOf(previewDoc);
         this.docs.splice(i, 1, doc);
         previewDoc.model.dispose();
+      } else if (previewDoc) {
+        // A mod's preview tab (an image): this one takes its place, and it goes.
+        this.docs.splice(this.docs.indexOf(previewDoc), 0, doc);
+        void this.dropTab(previewDoc);
       } else {
         this.docs.push(doc);
       }
@@ -498,8 +571,59 @@ export class EditorService {
     for (const a of shown) host.append(h("button", { class: "icon-button", title: a.title, onclick: () => a.run(this.activeFile()?.info ?? this.activeInfo() ?? info) }, icon(a.icon)));
   }
 
+  /** A file in a mod's editor type by id. The session is restored before mods start: until that type
+   *  is registered the tab waits (with a way to open the file as text), and turns into it then. */
+  private openWithType(typeId: string, path: string): Doc | null {
+    const info: EditorInfo = { id: "", editorType: "default", path, title: basename(path), language: detectLanguage(path), dirty: false, active: true };
+    const type = this.editorTypes.get(typeId);
+    if (type) {
+      type.open(info);
+      return this.active;
+    }
+    return this.openCustom({
+      title: basename(path),
+      icon: "loading",
+      key: `pending:${typeId}:${path}`,
+      forPath: path,
+      editorType: typeId,
+      render: (el) =>
+        el.append(
+          h("div", { class: "notice" },
+            h("p", null, `Waiting for the editor that shows ${basename(path)}. If its mod is off, `),
+            h("button", { class: "btn secondary", onclick: () => this.openFile(path, { asText: true }) }, "Open in Text Editor"),
+          ),
+        ),
+    });
+  }
+
+  /** Waiting tabs (above) for this type become its view of the file, in place. */
+  private fulfillPending(type: EditorType) {
+    const waiting = this.docs.filter((d): d is CustomDoc => d.kind === "custom" && !!d.spec.key?.startsWith(`pending:${type.id}:`));
+    if (!waiting.length) return;
+    const before = this.active;
+    for (const old of waiting) {
+      const path = old.spec.forPath!;
+      const wasActive = old === before;
+      try {
+        type.open({ id: "", editorType: "default", path, title: basename(path), language: detectLanguage(path), dirty: false, active: wasActive });
+      } catch (e) {
+        console.warn("editor type", type.id, e);
+        continue;
+      }
+      const now = this.active;
+      if (now && now !== old) {
+        this.docs.splice(this.docs.indexOf(now), 1);
+        this.docs.splice(this.docs.indexOf(old), 0, now);
+        void this.close(old, true);
+      }
+      if (!wasActive && before && this.docs.includes(before)) this.activate(before, false);
+    }
+    this.renderTabs();
+  }
+
   registerEditorType(type: EditorType): Disposable {
     this.editorTypes.set(type.id, type);
+    this.fulfillPending(type);
     this.paintBreadcrumbs(this.active);
     return toDisposable(() => {
       if (this.editorTypes.get(type.id) === type) this.editorTypes.delete(type.id);
@@ -529,15 +653,36 @@ export class EditorService {
   }
 
   /** "Reopen Editor With…": the text editor or a mod's view of the same file, in the same tab. */
+  /** What "Reopen Editor With…" offers for a file: the text editor (unless a type says the file has no
+   *  text form) and every mod's type that shows it. */
+  private reopenChoices(cur: { info: EditorInfo; type: string }) {
+    const types = this.typesFor(cur.info);
+    const noText = types.some((t) => {
+      try {
+        return t.hasText?.(cur.info) === false;
+      } catch {
+        return false;
+      }
+    });
+    return [
+      ...(noText ? [] : [{ id: "default", label: "Text Editor", description: cur.type === "default" ? "Active" : "Built-in" }]),
+      ...types.map((t) => ({ id: t.id, label: t.label, description: cur.type === t.id ? "Active" : "" })),
+    ];
+  }
+
+  /** Whether "Reopen Editor With…" has anything other than the editor already showing the file. */
+  private canReopen(file: { info: EditorInfo; path: string | null; type: string } | null): boolean {
+    return !!file?.path && this.reopenChoices(file).some((c) => c.id !== file.type);
+  }
+
   async reopenWith() {
     const cur = this.activeFile();
     if (!cur?.path) return;
-    const types = this.typesFor(cur.info);
-    const items = [{ id: "default", label: "Text Editor", description: cur.type === "default" ? "Active" : "Built-in" }, ...types.map((t) => ({ id: t.id, label: t.label, description: cur.type === t.id ? "Active" : "" }))];
+    const items = this.reopenChoices(cur);
     const picked = await pick(items, { placeholder: `Select editor for '${basename(cur.path)}'` });
     if (!picked || picked.id === cur.type) return;
     const old = this.active;
-    if (picked.id === "default") await this.openFile(cur.path);
+    if (picked.id === "default") await this.openFile(cur.path, { asText: true });
     else this.editorTypes.get(picked.id)?.open(cur.info);
     // Same tab, other view: it takes the old one's place, which goes away (unless it has unsaved changes).
     const now = this.active;
@@ -717,8 +862,8 @@ export class EditorService {
       { label: "Configure Editors", run: () => commands.execute("preferences.settings") },
     );
     const file = this.activeFile();
-    if (file?.path && this.typesFor(file.info).length) items.push({ label: "Reopen Editor With…", run: () => this.reopenWith() });
-    contextMenu(r.right - 220, r.bottom + 4, items);
+    if (this.canReopen(file)) items.push({ label: "Reopen Editor With…", run: () => this.reopenWith() });
+    contextMenu(r.right - 220, r.bottom + 4, items, { menu: "editor/title", context: file?.info ?? this.activeInfo() });
   }
 
   /** Right click on a tab, as in VS Code. */
@@ -753,11 +898,12 @@ export class EditorService {
       if (commands.has("explorer.revealActive")) items.push({ label: "Reveal in Explorer View", run: async () => { await this.activate(doc); commands.execute("explorer.revealActive"); } });
     }
     const file = doc === this.active ? this.activeFile() : null;
-    if (file?.path && this.typesFor(file.info).length) items.push({ separator: true, label: "" }, { label: "Reopen Editor With…", run: () => this.reopenWith() });
-    if (doc.kind === "text" && doc.preview)
+    if (this.canReopen(file)) items.push({ separator: true, label: "" }, { label: "Reopen Editor With…", run: () => this.reopenWith() });
+    if (doc.preview)
       items.push({ separator: true, label: "" }, { label: "Keep Open", run: () => { doc.preview = false; this.renderTabs(); } });
     if (doc.kind === "text" && this.detachTab) items.push({ separator: true, label: "" }, { label: "Move into New Window", run: () => this.detach(doc) }, { label: "Copy into New Window", run: () => this.detach(doc, undefined, false) });
-    contextMenu(e.clientX, e.clientY, items);
+    const info = this.info(doc);
+    contextMenu(e.clientX, e.clientY, items, { menu: "editor/tab", context: doc.kind === "custom" && doc.spec.forPath ? { ...info, path: doc.spec.forPath, editorType: doc.spec.editorType } : info });
   }
 
   /** Opens a text tab in a window of its own (keeping unsaved text), and closes it here unless `move` is false. */
@@ -1018,7 +1164,7 @@ export class EditorService {
       const tab = h(
         "div",
         {
-          class: `tab${doc === this.active ? " active" : ""}${dirty ? " dirty" : ""}${doc.kind === "text" && doc.preview ? " preview" : ""}${isNew && this.motionReady ? " tab-enter" : ""}${doc === this.active && activeChanged && this.motionReady && !isNew ? " just-active" : ""}`,
+          class: `tab${doc === this.active ? " active" : ""}${dirty ? " dirty" : ""}${doc.preview ? " preview" : ""}${isNew && this.motionReady ? " tab-enter" : ""}${doc === this.active && activeChanged && this.motionReady && !isNew ? " just-active" : ""}`,
           dataset: { doc: doc.id, part: "tab" },
           title: doc.kind === "text" && doc.path ? doc.path : doc.title,
           onmousedown: (e: MouseEvent) => {
@@ -1028,7 +1174,7 @@ export class EditorService {
             } else if (e.button === 0) {
               // Double-click keeps a preview tab open, as in VS Code. Detected here, not with
               // `dblclick`: the first press re-renders the tabs, so the second lands on a new element.
-              if (e.detail >= 2 && doc.kind === "text" && doc.preview) {
+              if (e.detail >= 2 && doc.preview) {
                 e.preventDefault();
                 doc.preview = false;
                 this.renderTabs();
@@ -1208,6 +1354,12 @@ export class EditorService {
     return true;
   }
 
+  /** Closes every tab, asking about unsaved ones; false when a prompt was cancelled (the rest stay). */
+  async closeAll(): Promise<boolean> {
+    for (const d of [...this.docs]) if (!(await this.close(d))) return false;
+    return true;
+  }
+
   async close(doc: Doc | null = this.active, force = false): Promise<boolean> {
     if (!doc) return false;
     if (doc.kind === "text" && this.isDirty(doc) && !force) {
@@ -1305,7 +1457,7 @@ export class EditorService {
         title: `Proposed: ${target_doc.title}`,
         icon: "diff",
         render: (el) => {
-          const diffHost = h("div", { class: "proposal-diff" });
+          const diffHost = h("div", { class: "proposal-diff monaco-component" });
           const accept = h("button", { class: "btn", onclick: () => answer(true) }, icon("check"), "Accept");
           const reject = h("button", { class: "btn secondary", onclick: () => answer(false) }, icon("close"), "Reject");
           el.append(
@@ -1351,7 +1503,11 @@ export class EditorService {
       active: this.active ? this.docs.indexOf(this.active) : -1,
       docs: this.docs
         .map((d) => {
-          if (d.kind === "custom") return d.spec.restore ? { restore: d.spec.restore } : null;
+          if (d.kind === "custom") {
+            if (d.spec.restore) return { restore: d.spec.restore };
+            // A mod's view of a file (an image, a preview) comes back through its editor type.
+            return d.spec.forPath && d.spec.editorType ? { path: d.spec.forPath, editorType: d.spec.editorType } : null;
+          }
           const dirty = this.isDirty(d);
           return {
             path: d.path,
@@ -1383,6 +1539,10 @@ export class EditorService {
             this.restoringPage = false;
           }
           restored.push(this.active);
+          continue;
+        }
+        if (s.path && s.editorType) {
+          restored.push(this.openWithType(s.editorType, s.path));
           continue;
         }
         if (s.path) {
@@ -1459,9 +1619,7 @@ export class EditorService {
       this.renderTabs();
     });
     c("editor.close", "Close Editor", () => this.close(), "View");
-    c("editor.closeAll", "Close All Editors", async () => {
-      for (const d of [...this.docs]) if (!(await this.close(d))) break;
-    }, "View");
+    c("editor.closeAll", "Close All Editors", () => this.closeAll(), "View");
     c("editor.closeOthers", "Close Other Editors", async () => {
       for (const d of [...this.docs]) if (d !== this.active && !(await this.close(d))) break;
     }, "View");
@@ -1536,7 +1694,7 @@ export class EditorService {
     }, "View");
     c("editor.togglePreview", "Toggle Preview Editors", async () => {
       this.previewEnabled = !this.previewEnabled;
-      if (!this.previewEnabled) for (const d of this.docs) if (d.kind === "text") d.preview = false;
+      if (!this.previewEnabled) for (const d of this.docs) d.preview = false;
       this.renderTabs();
       await import("./config").then(({ config }) => config.update("core", "workbench.previewEditors", this.previewEnabled)).catch(() => {});
     }, "View");

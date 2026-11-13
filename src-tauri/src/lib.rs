@@ -6,12 +6,14 @@ mod bundle;
 #[cfg(target_os = "macos")]
 mod dock;
 mod fsops;
+mod http;
 mod mcp;
 mod menu;
 mod mods;
 mod paths;
 mod procs;
 mod profiles;
+mod secrets;
 mod updater;
 mod windows;
 
@@ -70,6 +72,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(mods::ModsState::load())
         .manage(procs::ProcState::default())
+        .manage(http::HttpState::default())
         .manage(mcp::McpState::default())
         .manage(windows::WindowsState::default())
         .manage(fsops::WatchState::default())
@@ -176,6 +179,14 @@ pub fn run() {
             procs::proc_which,
             procs::proc_spawn,
             procs::proc_kill,
+            procs::proc_write,
+            menu::menu_set_extra,
+            http::http_request,
+            http::http_cancel,
+            secrets::secret_get,
+            secrets::secret_set,
+            secrets::secret_delete,
+            procs::proc_end,
             procs::pty_spawn,
             procs::pty_shells,
             procs::pty_write,

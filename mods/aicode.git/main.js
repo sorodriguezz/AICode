@@ -899,7 +899,7 @@ export async function activate(ctx) {
       key,
       render: (el) => {
         const bar = h("div", { class: "proposal-bar" }, icon("source-control"), h("div", { class: "what" }, h("b", null, path), h("span", { class: "muted" }, what)), ...buttons());
-        const host = h("div", { class: "proposal-diff" });
+        const host = h("div", { class: "proposal-diff monaco-component" });
         el.append(h("div", { class: "proposal" }, bar, host));
         const a = monaco.editor.createModel(original, language);
         const b = monaco.editor.createModel(modified, language);

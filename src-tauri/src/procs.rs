@@ -32,6 +32,8 @@ struct Proc {
     program: String,
     pid: u32,
     child: Arc<Mutex<std::process::Child>>,
+    /// Kept open when the mod asked to write to the program while it runs (`keepStdin`).
+    stdin: Option<Arc<Mutex<std::process::ChildStdin>>>,
 }
 
 #[derive(Default)]
@@ -127,7 +129,11 @@ pub fn proc_which(state: State<'_, ModsState>, mod_id: String, program: String) 
 }
 
 /// Starts a program. Its output arrives as `proc://data` events and its end as `proc://exit`.
+/// `keep_stdin`: the input stays open for `proc_write` / `proc_end` (a REPL, a database client, a
+/// helper the mod talks to over stdio). `encoding: "base64"`: output chunks as base64 (`data` is then
+/// the bytes, encoded), for programs that print binary.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn proc_spawn(
     app: AppHandle,
     window: tauri::Window,
@@ -139,14 +145,18 @@ pub fn proc_spawn(
     cwd: Option<String>,
     stdin: Option<String>,
     env: Option<HashMap<String, String>>,
+    keep_stdin: Option<bool>,
+    encoding: Option<String>,
 ) -> Result<u32, String> {
     require(&mods, &mod_id, "process")?;
+    let keep_stdin = keep_stdin.unwrap_or(false);
+    let base64_out = encoding.as_deref() == Some("base64");
     let resolved = which(&program).ok_or_else(|| format!("{program} was not found on this machine"))?;
     let mut cmd = Command::new(&resolved);
     cmd.args(&args)
         .current_dir(default_cwd(cwd))
         .env("PATH", login_path())
-        .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdin(if stdin.is_some() || keep_stdin { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     for (k, v) in env.unwrap_or_default() {
@@ -154,7 +164,14 @@ pub fn proc_spawn(
     }
     let mut child = cmd.spawn().map_err(|e| format!("{program}: {e}"))?;
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    if let (Some(input), Some(mut pipe)) = (stdin, child.stdin.take()) {
+    let mut kept = None;
+    if keep_stdin {
+        kept = child.stdin.take();
+        if let (Some(input), Some(pipe)) = (stdin, kept.as_mut()) {
+            pipe.write_all(input.as_bytes()).map_err(|e| format!("{program}: {e}"))?;
+            let _ = pipe.flush();
+        }
+    } else if let (Some(input), Some(mut pipe)) = (stdin, child.stdin.take()) {
         std::thread::spawn(move || {
             let _ = pipe.write_all(input.as_bytes());
         });
@@ -164,7 +181,7 @@ pub fn proc_spawn(
     let pid = child.id();
     let child = Arc::new(Mutex::new(child));
     let label = window.label().to_string();
-    procs.procs.lock().unwrap().insert(id, Proc { owner: mod_id, window: label.clone(), program, pid, child: child.clone() });
+    procs.procs.lock().unwrap().insert(id, Proc { owner: mod_id, window: label.clone(), program, pid, child: child.clone(), stdin: kept.map(|k| Arc::new(Mutex::new(k))) });
 
     let mut readers = Vec::new();
     for (stream, pipe) in [("stdout", stdout.map(|p| Box::new(p) as Box<dyn Read + Send>)), ("stderr", stderr.map(|p| Box::new(p) as Box<dyn Read + Send>))] {
@@ -178,6 +195,12 @@ pub fn proc_spawn(
                 match pipe.read(&mut buf) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
+                        if base64_out {
+                            use base64::Engine;
+                            let data = base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
+                            let _ = app.emit_to(label.as_str(), "proc://data", json!({ "id": id, "stream": stream, "data": data, "base64": true }));
+                            continue;
+                        }
                         let data = carry.push(&buf[..n]);
                         if !data.is_empty() {
                             let _ = app.emit_to(label.as_str(), "proc://data", json!({ "id": id, "stream": stream, "data": data }));
@@ -203,6 +226,35 @@ pub fn proc_spawn(
         let _ = app.emit_to(label.as_str(), "proc://exit", json!({ "id": id, "code": code }));
     });
     Ok(id)
+}
+
+/// Writes to a running program's input (started with `keep_stdin`). `base64`: `data` is bytes, encoded.
+#[tauri::command]
+pub fn proc_write(procs: State<'_, ProcState>, id: u32, data: String, base64: Option<bool>) -> Result<(), String> {
+    let bytes = if base64.unwrap_or(false) {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.decode(data).map_err(|e| e.to_string())?
+    } else {
+        data.into_bytes()
+    };
+    // Taken out of the table first: a program slow to read must not hold up every other process.
+    let pipe = {
+        let map = procs.procs.lock().unwrap();
+        let p = map.get(&id).ok_or("that program is no longer running")?;
+        p.stdin.clone().ok_or("that program's input is closed (start it with keepStdin)")?
+    };
+    let mut pipe = pipe.lock().unwrap();
+    pipe.write_all(&bytes).map_err(|e| e.to_string())?;
+    pipe.flush().map_err(|e| e.to_string())
+}
+
+/// Closes a running program's input: it reads end-of-file (how many CLIs know to finish).
+#[tauri::command]
+pub fn proc_end(procs: State<'_, ProcState>, id: u32) -> Result<(), String> {
+    if let Some(p) = procs.procs.lock().unwrap().get_mut(&id) {
+        p.stdin.take();
+    }
+    Ok(())
 }
 
 #[tauri::command]

@@ -5,6 +5,7 @@ import { h, icon, clear } from "./ui";
 import { prettyKey, keyCaps } from "./commands";
 import { leave } from "./motion";
 import { fileIconEl } from "./fileIcons";
+import { menuItems } from "./menus";
 
 // ---------- notifications ----------
 
@@ -396,8 +397,10 @@ export interface MenuItem {
   submenu?: MenuItem[];
 }
 
-/** `above`: y is where the menu's bottom goes (menus opened from the status bar grow upward). */
-export function contextMenu(x: number, y: number, items: MenuItem[], opts: { above?: boolean } = {}) {
+/** `above`: y is where the menu's bottom goes (menus opened from the status bar grow upward).
+ *  `menu`: this menu's id — what mods added to it (see menus.ts) is appended, given `context`. */
+export function contextMenu(x: number, y: number, items: MenuItem[], opts: { above?: boolean; menu?: string; context?: unknown } = {}) {
+  if (opts.menu) items = [...items, ...menuItems(opts.menu, opts.context)];
   document.querySelectorAll(".context-menu").forEach((m) => m.remove());
   const previousFocus = document.activeElement as HTMLElement | null;
   const menus: HTMLElement[] = [];

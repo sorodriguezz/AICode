@@ -460,8 +460,8 @@ export async function activate(ctx) {
 
   const openFolder = async (path) => {
     const picked = typeof path === "string" ? path : await ctx.window.pickFolder();
-    if (!picked) return;
-    ctx.workspace.setFolder(picked);
+    // false: a save prompt for the old folder's tabs was cancelled, and the folder stays.
+    if (!picked || !(await ctx.workspace.setFolder(picked))) return;
     ctx.views.reveal("explorer", false);
   };
 
@@ -518,7 +518,13 @@ export async function activate(ctx) {
     else setFocus(null);
     render();
     treeEl?.focus();
-    ctx.window.contextMenu(ev.clientX, ev.clientY, menuFor(path));
+    // "explorer/context": other mods add items here (ctx.menus.add), given the paths clicked.
+    const list = path ? targets(path) : [];
+    const entry = path ? entryOf(path) : null;
+    ctx.window.contextMenu(ev.clientX, ev.clientY, menuFor(path), {
+      menu: "explorer/context",
+      context: { path: path ?? folder(), paths: list.length ? list : [path ?? folder()].filter(Boolean), isDir: !entry || entry.is_dir, folder: folder() },
+    });
   };
 
   // ---------- drag and drop (pointer events: the OS owns HTML drag and drop here) ----------
@@ -1013,7 +1019,7 @@ export async function activate(ctx) {
             { label: "Open Editors", checked: showOpenEditors, run: toggleOpen },
             { label: "Folders", checked: true, disabled: true },
           ];
-          if (r) ctx.window.contextMenu(r.right - 180, r.bottom + 4, items);
+          if (r) ctx.window.contextMenu(r.right - 180, r.bottom + 4, items, { menu: "explorer/title", context: { folder: folder() } });
           else toggleOpen();
         },
       },

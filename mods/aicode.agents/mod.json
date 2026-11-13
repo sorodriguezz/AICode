@@ -85,6 +85,13 @@
         "title": "Delete All Past Chats…",
         "category": "Chat"
       }
-    ]
+    ],
+    "settings": {
+      "autoApprove": {
+        "type": "boolean",
+        "default": true,
+        "description": "Let agents edit files and run commands on their own, without asking (Claude: bypassPermissions, Codex: no approvals or sandbox, Gemini: --yolo)"
+      }
+    }
   }
 }

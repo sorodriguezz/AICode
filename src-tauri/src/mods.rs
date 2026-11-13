@@ -10,10 +10,10 @@
 //! Installed is not enabled, and enabled is not running: the active **profile** lists the enabled
 //! ids, and the window only loads a mod's code when one of its activation events fires.
 //!
-//! Permissions are declared in the manifest and checked here on every command a mod calls. Mods run
-//! in the window's JavaScript realm, so this check is a contract, not a sandbox: it stops a mod from
-//! doing by accident what it did not declare, and it is what the Mods view shows the user. Hard
-//! isolation (one realm per mod) is on the roadmap in `docs/MODS.md`.
+//! Permissions are declared in the manifest to tell the user what a mod does (the Mods view and the
+//! install prompt show them); they do not limit it. A mod can do anything the editor can: mods run in
+//! the window's JavaScript realm, and AICode is meant to be changed without limits. The only check on
+//! every command is that the mod is installed and enabled.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -35,6 +35,8 @@ pub const PERMISSIONS: &[(&str, &str)] = &[
     ("pty", "Open terminals"),
     ("mcp-server", "Serve AICode's tools to agents on 127.0.0.1"),
     ("open-external", "Open links and other apps"),
+    ("network", "Make HTTP requests to any address"),
+    ("secrets", "Keep passwords and tokens in the macOS Keychain"),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,10 +102,11 @@ pub struct Profile {
     pub defaults_offered: Vec<String>,
 }
 
-/// Mods every profile starts with, because they do what the core itself used to: the file icons
-/// (Seti) were built in before they became `aicode.icons`, and the JSON/YAML keys in the
-/// breadcrumbs before they became `aicode.json-yaml`.
-pub const DEFAULT_ON: &[&str] = &["aicode.icons", "aicode.json-yaml"];
+/// Mods every profile starts with, because they do what the core itself used to (or what an editor
+/// is expected to): the file icons (Seti) were built in before they became `aicode.icons`, the
+/// JSON/YAML keys in the breadcrumbs before they became `aicode.json-yaml`, and images open as
+/// images with `aicode.image-preview`.
+pub const DEFAULT_ON: &[&str] = &["aicode.icons", "aicode.json-yaml", "aicode.image-preview"];
 
 /// Mods split out of another one: a profile that had the first on gets the others, once, so it
 /// keeps what it had (the AI Chat carried every agent; Glass carried pill tabs and the cursor).
@@ -317,8 +320,9 @@ pub fn refresh(app: &AppHandle, state: &ModsState) -> Vec<ModInfo> {
     mods
 }
 
-/// The gate every mod-facing command goes through. `core` is the editor itself.
-pub fn require(state: &ModsState, mod_id: &str, permission: &str) -> Result<(), String> {
+/// What every mod-facing command checks: the mod is installed and on. `core` is the editor itself.
+/// `permission` names what the command does; an enabled mod may use any, declared or not.
+pub fn require(state: &ModsState, mod_id: &str, _permission: &str) -> Result<(), String> {
     if mod_id == "core" {
         return Ok(());
     }
@@ -328,9 +332,6 @@ pub fn require(state: &ModsState, mod_id: &str, permission: &str) -> Result<(), 
     };
     if !info.enabled {
         return Err(format!("{mod_id} is not enabled"));
-    }
-    if !info.manifest.permissions.iter().any(|p| p == permission) {
-        return Err(format!("{mod_id} did not declare the {permission:?} permission"));
     }
     Ok(())
 }
@@ -659,7 +660,9 @@ mod tests {
         };
         assert!(require(&state, "core", "pty").is_ok());
         assert!(require(&state, "a.b", "fs:read").is_ok());
-        assert!(require(&state, "a.b", "fs:write").is_err());
+        // Undeclared is allowed: permissions describe a mod, they do not limit it.
+        assert!(require(&state, "a.b", "fs:write").is_ok());
+        assert!(require(&state, "a.b", "process").is_ok());
         assert!(require(&state, "nope", "fs:read").is_err());
         state.mods.lock().unwrap()[0].enabled = false;
         assert!(require(&state, "a.b", "fs:read").is_err());

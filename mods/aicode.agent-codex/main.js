@@ -16,8 +16,10 @@ export async function activate(ctx) {
       mcp: true,
       models: ["gpt-5", "gpt-5-codex", "gpt-5-mini"],
       interactive: (model) => (model ? ["--model", model] : []),
-      build: ({ prompt, mcp, model }) => {
+      build: ({ prompt, mcp, model, autoApprove }) => {
         const args = ["exec", "--skip-git-repo-check"];
+        // Edits and commands without asking, outside Codex's sandbox.
+        if (autoApprove) args.push("--dangerously-bypass-approvals-and-sandbox");
         if (model) args.push("--model", model);
         const env = {};
         if (mcp) {
