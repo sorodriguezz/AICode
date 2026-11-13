@@ -1011,31 +1011,51 @@ export class Workbench {
     document.querySelector(".layout-picker")?.remove();
     const o = () => this.options;
     type Row = { icon: string; label: string; checked?: boolean; keys?: string; section?: string; run: () => void };
-    const vis = (loc: ViewLocation) => this.viewsAt(loc).length > 0 && this.state[loc].visible;
-    const rows = (): Row[] => [
-      { section: "Visibility", icon: "layout-activitybar-left", label: "Activity Bar", checked: o().activityBar, run: () => this.setOptions({ activityBar: !o().activityBar }) },
-      { icon: o().sidebarSide === "left" ? "layout-sidebar-left" : "layout-sidebar-right", label: "Primary Side Bar", checked: vis("sidebar"), keys: "mod+b", run: () => this.toggle("sidebar") },
-      { icon: o().sidebarSide === "left" ? "layout-sidebar-right" : "layout-sidebar-left", label: "Secondary Side Bar", checked: vis("secondary"), keys: "mod+alt+b", run: () => this.toggle("secondary") },
-      { icon: "layout-panel", label: "Panel", checked: vis("panel"), keys: "mod+j", run: () => this.toggle("panel") },
-      { icon: "layout-statusbar", label: "Status Bar", checked: o().statusBar, run: () => this.setOptions({ statusBar: !o().statusBar }) },
-      { section: "Primary Side Bar Position", icon: "layout-sidebar-left", label: "Left", checked: o().sidebarSide === "left", run: () => this.setOptions({ sidebarSide: "left" }) },
-      { icon: "layout-sidebar-right", label: "Right", checked: o().sidebarSide === "right", run: () => this.setOptions({ sidebarSide: "right" }) },
-      { section: "Panel Alignment", icon: "layout-panel-left", label: "Left", checked: o().panelAlign === "left", run: () => this.setOptions({ panelAlign: "left" }) },
-      { icon: "layout-panel-right", label: "Right", checked: o().panelAlign === "right", run: () => this.setOptions({ panelAlign: "right" }) },
-      { icon: "layout-panel-center", label: "Center", checked: o().panelAlign === "center", run: () => this.setOptions({ panelAlign: "center" }) },
-      { icon: "layout-panel-justify", label: "Justify", checked: o().panelAlign === "justify", run: () => this.setOptions({ panelAlign: "justify" }) },
-      { section: "Quick Input Position", icon: "arrow-up", label: "Top", checked: o().quickInput === "top", run: () => this.setOptions({ quickInput: "top" }) },
-      { icon: "circle-small", label: "Center", checked: o().quickInput === "center", run: () => this.setOptions({ quickInput: "center" }) },
-      { section: "Layout Density", icon: "layout", label: "Default", checked: o().density === "default", run: () => this.setOptions({ density: "default" }) },
-      { icon: "layout-centered", label: "Compact", checked: o().density === "compact", run: () => this.setOptions({ density: "compact" }) },
-      { section: "Modes", icon: "screen-full", label: "Full Screen", keys: "ctrl+mod+f", run: () => commands.execute("workbench.toggleFullScreen") },
-      { icon: "target", label: "Zen Mode", keys: "mod+k z", run: () => { close(); commands.execute("workbench.toggleZenMode"); } },
-    ];
+    const has = (loc: ViewLocation) => this.viewsAt(loc).length > 0;
+    const vis = (loc: ViewLocation) => has(loc) && this.state[loc].visible;
+    // Only what exists: with no mod putting views in the side bars or the panel, their rows (and
+    // the sections about where they go) aren't offered. The status bar always has core items.
+    const rows = (): Row[] => {
+      const groups: [string, (Row | false)[]][] = [
+        ["Visibility", [
+          has("sidebar") && { icon: "layout-activitybar-left", label: "Activity Bar", checked: o().activityBar, run: () => this.setOptions({ activityBar: !o().activityBar }) },
+          has("sidebar") && { icon: o().sidebarSide === "left" ? "layout-sidebar-left" : "layout-sidebar-right", label: "Primary Side Bar", checked: vis("sidebar"), keys: "mod+b", run: () => this.toggle("sidebar") },
+          has("secondary") && { icon: o().sidebarSide === "left" ? "layout-sidebar-right" : "layout-sidebar-left", label: "Secondary Side Bar", checked: vis("secondary"), keys: "mod+alt+b", run: () => this.toggle("secondary") },
+          has("panel") && { icon: "layout-panel", label: "Panel", checked: vis("panel"), keys: "mod+j", run: () => this.toggle("panel") },
+          { icon: "layout-statusbar", label: "Status Bar", checked: o().statusBar, run: () => this.setOptions({ statusBar: !o().statusBar }) },
+        ]],
+        ["Primary Side Bar Position", has("sidebar") || has("secondary") ? [
+          { icon: "layout-sidebar-left", label: "Left", checked: o().sidebarSide === "left", run: () => this.setOptions({ sidebarSide: "left" }) },
+          { icon: "layout-sidebar-right", label: "Right", checked: o().sidebarSide === "right", run: () => this.setOptions({ sidebarSide: "right" }) },
+        ] : []],
+        ["Panel Alignment", has("panel") ? [
+          { icon: "layout-panel-left", label: "Left", checked: o().panelAlign === "left", run: () => this.setOptions({ panelAlign: "left" }) },
+          { icon: "layout-panel-right", label: "Right", checked: o().panelAlign === "right", run: () => this.setOptions({ panelAlign: "right" }) },
+          { icon: "layout-panel-center", label: "Center", checked: o().panelAlign === "center", run: () => this.setOptions({ panelAlign: "center" }) },
+          { icon: "layout-panel-justify", label: "Justify", checked: o().panelAlign === "justify", run: () => this.setOptions({ panelAlign: "justify" }) },
+        ] : []],
+        ["Quick Input Position", [
+          { icon: "arrow-up", label: "Top", checked: o().quickInput === "top", run: () => this.setOptions({ quickInput: "top" }) },
+          { icon: "circle-small", label: "Center", checked: o().quickInput === "center", run: () => this.setOptions({ quickInput: "center" }) },
+        ]],
+        ["Layout Density", [
+          { icon: "layout", label: "Default", checked: o().density === "default", run: () => this.setOptions({ density: "default" }) },
+          { icon: "layout-centered", label: "Compact", checked: o().density === "compact", run: () => this.setOptions({ density: "compact" }) },
+        ]],
+        ["Modes", [
+          { icon: "screen-full", label: "Full Screen", keys: "ctrl+mod+f", run: () => commands.execute("workbench.toggleFullScreen") },
+          { icon: "target", label: "Zen Mode", keys: "mod+k z", run: () => { close(); commands.execute("workbench.toggleZenMode"); } },
+        ]],
+      ];
+      return groups.flatMap(([section, list]) => list.filter((r): r is Row => !!r).map((r, i) => (i === 0 ? { ...r, section } : r)));
+    };
     let index = 0;
     const list = h("div", { class: "layout-list", role: "listbox" });
     const paint = () => {
       clear(list);
-      rows().forEach((r, i) => {
+      const all = rows();
+      index = Math.min(index, all.length - 1);
+      all.forEach((r, i) => {
         list.append(
           h(
             "div",

@@ -3,7 +3,7 @@
 
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { invoke, ModInfo } from "./ipc";
-import { h, icon, clear, append, toDisposable } from "./ui";
+import { h, icon, iconButton, clear, append, toDisposable, Child } from "./ui";
 import { ModHost } from "./mods";
 import { EditorService } from "./editor";
 import { notify, inputBox, confirm, contextMenu } from "./widgets";
@@ -19,8 +19,32 @@ interface Stats {
 
 let pendingReload = false;
 
-/** "Enable development set": the full editor layout in one go (aicode.icons is on by default already). */
-const DEVELOPMENT_SET = ["aicode.explorer", "aicode.search", "aicode.git", "aicode.terminal", "aicode.agents", "aicode.agent-claude", "aicode.agent-codex", "aicode.agent-gemini", "aicode.syntax", "aicode.markdown", "aicode.mcp-server", "aicode.codeflow", "aicode.icons", "aicode.json-yaml"];
+type View = "all" | "enabled" | "available" | "running";
+
+const SOURCE_LABEL: Record<ModInfo["source"], string> = {
+  bundled: "Comes with AICode",
+  shared: "Installed for every profile",
+  profile: "Installed only in this profile (exported with it)",
+};
+
+const permIcon = (p: string) => (p.startsWith("fs") ? "file" : p === "pty" ? "terminal" : p === "process" ? "play" : p === "mcp-server" ? "mcp" : "link-external");
+const mb = (kb: number | null | undefined) => (kb ? `${(kb / 1024).toFixed(0)} MB` : "—");
+const byName = (a: ModInfo, b: ModInfo) => a.name.localeCompare(b.name);
+
+/** The element that scrolls the page (a tab's body or the modal's content). */
+function scrollParent(el: HTMLElement): HTMLElement | null {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const o = getComputedStyle(p).overflowY;
+    if (o === "auto" || o === "scroll") return p;
+  }
+  return null;
+}
+
+interface Status {
+  label: string;
+  kind: "on" | "off" | "idle" | "failed";
+  detail?: string;
+}
 
 /** The Mods page; `query` starts it filtered (the AI Chat opens it on "agent" to list its agents). */
 export function openModManager(host: ModHost, editors: EditorService, query = "") {
@@ -31,12 +55,15 @@ export function openModManager(host: ModHost, editors: EditorService, query = ""
     restore: "mods",
     render: (root) => {
       let filter = query;
+      let view: View = "all";
+      /** The mod whose details are open on the right. */
+      let selected: string | null = null;
       let installed: ModInfo[] = [];
       let permissions = new Map<string, string>();
       let profile: { name: string; available: string[] } = { name: "default", available: ["default"] };
       let stats: Stats | null = null;
 
-      const page = h("div", { class: "mods-page" });
+      const page = h("div", { class: "mods-page mods-manager" });
       root.append(page);
 
       const refresh = async () => {
@@ -50,10 +77,12 @@ export function openModManager(host: ModHost, editors: EditorService, query = ""
         profile = prof;
         render();
       };
+      const totalMemory = () => (stats ? (stats.rss_kb ?? 0) + stats.running.reduce((n, r) => n + (r.rss_kb ?? 0), 0) : 0);
       const refreshStats = async () => {
         stats = await invoke<Stats>("resource_stats");
-        const table = page.querySelector(".running");
-        if (table) table.replaceWith(renderRunning());
+        page.querySelector(".running")?.replaceWith(renderRunning());
+        const mem = page.querySelector(".mods-stat.mem b");
+        if (mem) mem.textContent = mb(totalMemory());
       };
 
       const toggle = async (mod: ModInfo) => {
@@ -73,64 +102,162 @@ export function openModManager(host: ModHost, editors: EditorService, query = ""
         refresh();
       };
 
+      const uninstall = async (mod: ModInfo) => {
+        if (!(await confirm(`Uninstall ${mod.name}?`, `Deletes ${mod.dir}.`, "Uninstall"))) return;
+        try {
+          await invoke("mod_uninstall", { id: mod.id });
+          pendingReload = true;
+          if (selected === mod.id) selected = null;
+        } catch (e) {
+          notify("error", String(e));
+        }
+        refresh();
+      };
+
       const runtimeState = (id: string) => host.list().find((m) => m.id === id);
 
-      let firstRender = true;
-      let cardIndex = 0;
-      const card = (mod: ModInfo) => {
+      const status = (mod: ModInfo): Status => {
         const rt = runtimeState(mod.id);
-        const state = !mod.enabled ? "Off" : rt?.state === "active" ? `Running${rt.loadMs != null ? ` · loaded in ${rt.loadMs} ms` : ""}` : rt?.state === "failed" ? "Failed" : rt?.state === "activating" ? "Starting…" : mod.main ? "Waiting — loads when used" : "Declarative — nothing to run";
-        const contributes = mod.contributes ?? {};
-        const adds = [
-          ...(contributes.views ?? []).map((v: any) => `${v.title} (${v.location ?? "sidebar"})`),
-          ...(contributes.themes ?? []).map((t: any) => `theme ${t.label}`),
-          ...(contributes.snippets ?? []).map((s: any) => `${s.language} snippets`),
-        ];
-        const delay = firstRender ? Math.min(cardIndex++, 12) * 30 : 0;
+        if (mod.problems.length) return { label: "Can't load", kind: "failed", detail: mod.problems.join(" · ") };
+        if (!mod.enabled) return { label: "Off", kind: "off" };
+        if (rt?.state === "failed") return { label: "Failed", kind: "failed", detail: rt.error ? String(rt.error) : undefined };
+        if (rt?.state === "active") return { label: rt.loadMs != null ? `Running · ${rt.loadMs} ms` : "Running", kind: "on", detail: rt.loadMs != null ? `Running · loaded in ${rt.loadMs} ms` : "Running" };
+        if (rt?.state === "activating") return { label: "Starting…", kind: "idle" };
+        return mod.main ? { label: "Loads when used", kind: "idle", detail: "Waiting — it loads the first time you use it" } : { label: "Declarative", kind: "on", detail: "Declarative — nothing to run" };
+      };
+
+      const select = (id: string | null) => {
+        selected = id;
+        render();
+        if (id) page.querySelector(".mod-details")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      };
+
+      const switchFor = (mod: ModInfo) => {
+        const blocked = !mod.enabled && mod.problems.length > 0;
+        return h(
+          "button",
+          {
+            class: `switch${mod.enabled ? " on" : ""}`,
+            role: "switch",
+            "aria-checked": String(mod.enabled),
+            "aria-label": `${mod.enabled ? "Disable" : "Enable"} ${mod.name}`,
+            title: blocked ? "Fix its problems to turn it on" : mod.enabled ? `Disable ${mod.name}` : `Enable ${mod.name}`,
+            disabled: blocked,
+            onclick: (e: MouseEvent) => {
+              e.stopPropagation();
+              toggle(mod);
+            },
+          },
+          h("span", { class: "switch-knob" }),
+        );
+      };
+
+      // ---------- tiles: every one the same size, the details live in the side panel ----------
+      let firstRender = true;
+      let tileIndex = 0;
+      const tile = (mod: ModInfo) => {
+        const st = status(mod);
+        const delay = firstRender ? Math.min(tileIndex++, 12) * 30 : 0;
+        const isSelected = selected === mod.id;
         return h(
           "div",
-          { class: firstRender ? "mod-card card-enter" : "mod-card", style: { animationDelay: `${delay}ms` } },
-          h("div", { class: "mod-icon" }, icon(mod.icon ?? "extensions")),
+          {
+            class: `mod-tile${firstRender ? " card-enter" : ""}${isSelected ? " selected" : ""}${mod.enabled ? " enabled" : ""}`,
+            style: { animationDelay: `${delay}ms` },
+            dataset: { id: mod.id },
+            tabindex: "0",
+            role: "button",
+            "aria-pressed": String(isSelected),
+            "aria-label": `${mod.name}, ${st.label}. Show details`,
+            onclick: () => select(isSelected ? null : mod.id),
+            onkeydown: (e: KeyboardEvent) => {
+              if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) {
+                e.preventDefault();
+                select(isSelected ? null : mod.id);
+              }
+            },
+          },
           h(
             "div",
-            null,
-            h("div", { class: "title" }, h("b", null, mod.name), h("span", { class: "muted" }, `v${mod.version}`), h("span", { class: "muted" }, mod.id)),
-            h("div", { class: "desc" }, mod.description),
+            { class: "mod-tile-head" },
+            h("div", { class: "mod-icon" }, icon(mod.icon ?? "extensions")),
+            h("div", { class: "mod-tile-name" }, h("div", { class: "name", title: mod.name }, mod.name), h("div", { class: "sub", title: mod.id }, `v${mod.version} · ${mod.id}`)),
+            switchFor(mod),
+          ),
+          h("div", { class: "mod-tile-desc" }, mod.description),
+          h(
+            "div",
+            { class: "mod-tile-foot" },
+            h("span", { class: `state-dot ${st.kind}`, title: st.detail ?? st.label }, st.label),
             h(
               "div",
-              { class: "meta" },
-              h("span", { class: "chip outline", title: mod.source === "profile" ? "Installed only in this profile; exported with it" : mod.source === "shared" ? "Installed for every profile" : "Comes with AICode" }, mod.source === "bundled" ? "bundled" : mod.source === "profile" ? "this profile" : "all profiles"),
-              !mod.main ? h("span", { class: "chip outline" }, "declarative") : null,
-              ...mod.permissions.map((p) => h("span", { class: "chip", title: permissions.get(p) ?? p }, icon(p.startsWith("fs") ? "file" : p === "pty" ? "terminal" : p === "process" ? "play" : p === "mcp-server" ? "mcp" : "link-external"), p)),
-              ...mod.dependencies.map((d) => h("span", { class: "chip outline", title: "Needs this mod" }, icon("package"), d)),
+              { class: "mod-tile-badges" },
+              mod.source !== "bundled" ? h("span", { class: "chip outline", title: SOURCE_LABEL[mod.source] }, mod.source === "profile" ? "profile" : "shared") : null,
+              mod.permissions.map((p) => h("span", { class: "perm-badge", title: `${p} — ${permissions.get(p) ?? p}` }, icon(permIcon(p)))),
             ),
-            adds.length ? h("div", { class: "muted", style: { marginTop: "6px", fontSize: "12px" } }, `Adds: ${adds.join(" · ")}`) : null,
-            mod.problems.length ? h("div", { class: "problems" }, mod.problems.join(" · ")) : null,
-            rt?.error ? h("div", { class: "problems" }, rt.error) : null,
+          ),
+        );
+      };
+
+      // ---------- the side panel: everything about one mod ----------
+      const details = (mod: ModInfo) => {
+        const st = status(mod);
+        const rt = runtimeState(mod.id);
+        const contributes = mod.contributes ?? {};
+        const commandCount = (contributes.commands ?? []).length;
+        const adds = [
+          ...(contributes.views ?? []).map((v: any) => `${v.title} view (${v.location ?? "sidebar"})`),
+          ...(contributes.themes ?? []).map((t: any) => `Theme “${t.label}”`),
+          ...(contributes.snippets ?? []).map((s: any) => `${s.language} snippets`),
+          commandCount ? `${commandCount} command${commandCount === 1 ? "" : "s"}` : null,
+        ].filter(Boolean) as string[];
+        const problems = [...mod.problems, ...(rt?.error ? [String(rt.error)] : [])];
+        const section = (title: string, ...body: Child[]) => h("section", { class: "mod-details-section" }, h("h3", null, title), ...body);
+        return h(
+          "aside",
+          { class: "mod-details", "aria-label": `${mod.name} details` },
+          h(
+            "div",
+            { class: "mod-details-head" },
+            h("div", { class: `mod-icon large${mod.enabled ? " on" : ""}` }, icon(mod.icon ?? "extensions")),
+            h("div", { class: "mod-tile-name" }, h("div", { class: "name" }, mod.name), h("div", { class: "sub selectable" }, `v${mod.version} · ${mod.id}`)),
+            iconButton("close", "Close Details", () => select(null)),
           ),
           h(
             "div",
-            { class: "side-actions" },
-            h("button", { class: mod.enabled ? "btn secondary" : "btn", onclick: () => toggle(mod), disabled: !mod.enabled && mod.problems.length > 0 }, mod.enabled ? "Disable" : "Enable"),
-            h("span", { class: `state-dot${rt?.state === "active" ? " active" : rt?.state === "failed" ? " failed" : ""}` }, state),
-            h(
-              "div",
-              { class: "row-actions" },
-              mod.source !== "bundled" ? h("button", { class: "icon-button", title: "Edit mod.json", onclick: () => editors.openFile(`${mod.dir}/mod.json`) }, icon("edit")) : null,
-              h("button", { class: "icon-button", title: "Export to an .aicode-mod file", onclick: () => exportMod(mod) }, icon("export")),
-              mod.source !== "bundled"
-                ? h("button", { class: "icon-button", title: "Uninstall", onclick: async () => {
-                    if (!(await confirm(`Uninstall ${mod.name}?`, `Deletes ${mod.dir}.`, "Uninstall"))) return;
-                    try {
-                      await invoke("mod_uninstall", { id: mod.id });
-                      pendingReload = true;
-                    } catch (e) {
-                      notify("error", String(e));
-                    }
-                    refresh();
-                  } }, icon("trash"))
-                : null,
-            ),
+            { class: "mod-details-toggle" },
+            h("div", null, h("div", null, `${mod.enabled ? "On" : "Off"} in “${profile.name}”`), h("span", { class: `state-dot ${st.kind}` }, st.detail ?? st.label)),
+            switchFor(mod),
+          ),
+          problems.length ? h("div", { class: "mod-details-problem" }, icon("warning"), h("div", null, problems.map((p) => h("div", null, p)))) : null,
+          h("p", { class: "mod-details-desc selectable" }, mod.description),
+          section(
+            "Permissions",
+            mod.permissions.length
+              ? h("ul", { class: "perm-list" }, mod.permissions.map((p) => h("li", null, h("span", { class: "perm-badge" }, icon(permIcon(p))), h("div", null, h("code", null, p), h("div", { class: "muted" }, permissions.get(p) ?? "")))))
+              : h("div", { class: "muted" }, "Asks for no permissions."),
+          ),
+          adds.length ? section("Adds", h("ul", { class: "plain-list" }, adds.map((a) => h("li", null, a)))) : null,
+          mod.dependencies.length
+            ? section(
+                "Needs",
+                h(
+                  "div",
+                  { class: "chips" },
+                  mod.dependencies.map((d) => {
+                    const dep = installed.find((m) => m.id === d);
+                    return h("button", { class: "chip outline", title: dep ? `Show ${dep.name}` : `${d} is not installed`, disabled: !dep, onclick: () => select(d) }, icon("package"), dep?.name ?? d);
+                  }),
+                ),
+              )
+            : null,
+          section("Installed", h("div", { class: "muted" }, SOURCE_LABEL[mod.source]), h("div", { class: "mod-path selectable", title: mod.dir }, mod.dir)),
+          h(
+            "div",
+            { class: "mod-details-actions" },
+            mod.source !== "bundled" ? h("button", { class: "btn secondary", onclick: () => editors.openFile(`${mod.dir}/mod.json`) }, icon("edit"), "Edit mod.json") : null,
+            h("button", { class: "btn secondary", onclick: () => exportMod(mod), title: "Save it as an .aicode-mod file anyone can install" }, icon("export"), "Export…"),
+            mod.source !== "bundled" ? h("button", { class: "btn secondary danger", onclick: () => uninstall(mod) }, icon("trash"), "Uninstall") : null,
           ),
         );
       };
@@ -138,89 +265,154 @@ export function openModManager(host: ModHost, editors: EditorService, query = ""
       const renderRunning = () => {
         const s = stats;
         const rows = [
-          h("tr", null, h("td", null, "AICode (app process)"), h("td", null, "core"), h("td", null, s ? String(s.pid) : ""), h("td", { class: "num" }, s?.rss_kb ? `${(s.rss_kb / 1024).toFixed(0)} MB` : "—")),
+          h("tr", null, h("td", null, "AICode (app process)"), h("td", null, "core"), h("td", null, s ? String(s.pid) : ""), h("td", { class: "num" }, mb(s?.rss_kb))),
           ...(s?.running ?? []).map((r) =>
-            h("tr", null, h("td", null, `${r.kind === "terminal" ? "Terminal" : "Program"}: ${r.label}`), h("td", null, r.owner), h("td", null, r.pid ? String(r.pid) : ""), h("td", { class: "num" }, r.rss_kb ? `${(r.rss_kb / 1024).toFixed(0)} MB` : "—")),
+            h("tr", null, h("td", null, `${r.kind === "terminal" ? "Terminal" : "Program"}: ${r.label}`), h("td", null, r.owner), h("td", null, r.pid ? String(r.pid) : ""), h("td", { class: "num" }, mb(r.rss_kb))),
           ),
           s?.mcp ? h("tr", null, h("td", null, `MCP server on ${s.mcp.url} (${s.mcp.tools} tools)`), h("td", null, s.mcp.owner), h("td", null, "—"), h("td", { class: "num" }, "in app")) : null,
         ];
         return h(
           "div",
           { class: "running" },
-          h("table", { class: "res-table" }, h("thead", null, h("tr", null, h("th", null, "What"), h("th", null, "Started by"), h("th", null, "PID"), h("th", { class: "num" }, "Memory"))), h("tbody", null, rows)),
-          h("p", { class: "muted", style: { fontSize: "12px" } }, "Memory is resident size as the system reports it. The web view runs in system processes of its own (WebKit on macOS), which are not counted here."),
+          h("div", { class: "res-card" }, h("table", { class: "res-table" }, h("thead", null, h("tr", null, h("th", null, "What"), h("th", null, "Started by"), h("th", null, "PID"), h("th", { class: "num" }, "Memory"))), h("tbody", null, rows))),
+          h("p", { class: "muted res-note" }, "Memory is resident size as the system reports it. The web view runs in system processes of its own (WebKit on macOS), which are not counted here."),
         );
       };
 
       // Created once so re-renders (each keystroke, state changes) keep focus and caret.
-      const search = h("input", { class: "input", placeholder: "Filter mods", value: filter, oninput: () => { filter = search.value; render(); } }) as HTMLInputElement;
+      const search = h("input", { class: "input", placeholder: "Search mods by name, id or description", "aria-label": "Search mods", value: filter, oninput: () => { filter = search.value; render(); } }) as HTMLInputElement;
+      const clearFilter = () => {
+        filter = search.value = "";
+        render();
+        search.focus();
+      };
+
+      const moreMenu = (e: MouseEvent) => {
+        const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        contextMenu(r.left, r.bottom + 2, [
+          { label: "Install from Folder…", icon: "folder", run: async () => { await commands.execute("mods.installFolder"); refresh(); } },
+          { label: "Install This File as Mod", icon: "file-code", run: async () => { await commands.execute("mods.installCurrentFile"); refresh(); } },
+          { separator: true, label: "" },
+          { label: "Create Mod with AI…", icon: "sparkle", run: () => commands.execute("mods.createWithAI") },
+          { label: "Copy Mod Guide for AI", icon: "copy", run: () => commands.execute("mods.copyGuide") },
+          { label: "Open Mod Guide", icon: "book", run: () => commands.execute("mods.openGuide") },
+          { separator: true, label: "" },
+          { label: "Open This Profile's Mods Folder", icon: "folder-opened", run: async () => invoke("open_external", { modId: "core", target: await invoke<string>("mods_folder", {}) }) },
+          { label: "Open Shared Mods Folder", icon: "folder-library", run: async () => invoke("open_external", { modId: "core", target: await invoke<string>("mods_folder", { scope: "shared" }) }) },
+        ]);
+      };
 
       const render = () => {
         const hadFocus = document.activeElement === search;
         const [selStart, selEnd] = [search.selectionStart, search.selectionEnd];
+        // Keep keyboard focus on the same tile (or its switch) across the re-render.
+        const focusedTile = (document.activeElement as HTMLElement | null)?.closest?.<HTMLElement>(".mod-tile");
+        const focusId = focusedTile?.dataset.id;
+        const focusSwitch = !!(document.activeElement as HTMLElement | null)?.classList?.contains("switch");
+        // The page is rebuilt on every change: keep where it is scrolled to.
+        const scroller = scrollParent(page);
+        const scrollTop = scroller?.scrollTop ?? 0;
+        // Reserve the scrollbar's room always: the long views (All, Available) scroll and the short
+        // ones (Enabled, Running) don't, and the page jumping sideways by its width when switching
+        // tabs reads as a jiggle.
+        if (scroller) {
+          if (CSS.supports("scrollbar-gutter", "stable")) scroller.style.scrollbarGutter = "stable";
+          else scroller.style.overflowY = "scroll";
+        }
         clear(page);
-        const q = filter.toLowerCase();
-        const visible = installed.filter((m) => !q || `${m.name} ${m.id} ${m.description}`.toLowerCase().includes(q));
+
+        const q = filter.trim().toLowerCase();
+        const visible = installed.filter((m) => !q || `${m.name} ${m.id} ${m.description}`.toLowerCase().includes(q)).sort(byName);
         const on = visible.filter((m) => m.enabled);
         const off = visible.filter((m) => !m.enabled);
-        append(page, [
-          h("h1", null, "Mods"),
-          h("div", { class: "muted" }, "AICode starts as a notepad. Each mod adds one thing — and only loads when you use it."),
+        const sel = selected ? installed.find((m) => m.id === selected) : undefined;
+        if (!sel) selected = null;
+        const showDetails = !!sel && view !== "running";
+
+        const stat = (value: string, label: string, cls = "") => h("div", { class: `mods-stat ${cls}` }, h("b", null, value), h("span", null, label));
+        const hero = h(
+          "header",
+          { class: "mods-hero" },
+          h("div", null, h("h1", null, "Mods"), h("p", null, "AICode starts as a notepad. Each mod adds one thing — and only loads when you use it.")),
           h(
             "div",
-            { class: "mods-toolbar" },
-            search,
-            h("button", { class: "btn", onclick: async () => { await commands.execute("mods.create"); refresh(); }, title: "A new mod, as one JSON file" }, icon("add"), "Create Mod…"),
-            h("button", { class: "btn secondary", onclick: async () => { await commands.execute("mods.installFile"); refresh(); }, title: "An .aicode-mod or a mod.json" }, icon("cloud-download"), "Install from File…"),
-            h("button", { class: "btn secondary", onclick: (e: MouseEvent) => {
-              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              contextMenu(r.left, r.bottom + 2, [
-                { label: "Install from Folder…", run: async () => { await commands.execute("mods.installFolder"); refresh(); } },
-                { label: "Install This File as Mod", run: async () => { await commands.execute("mods.installCurrentFile"); refresh(); } },
-                { separator: true, label: "" },
-                { label: "Create Mod with AI…", run: () => commands.execute("mods.createWithAI") },
-                { label: "Copy Mod Guide for AI", run: () => commands.execute("mods.copyGuide") },
-                { label: "Open Mod Guide", run: () => commands.execute("mods.openGuide") },
-                { separator: true, label: "" },
-                { label: "Open This Profile's Mods Folder", run: async () => invoke("open_external", { modId: "core", target: await invoke<string>("mods_folder", {}) }) },
-                { label: "Open Shared Mods Folder", run: async () => invoke("open_external", { modId: "core", target: await invoke<string>("mods_folder", { scope: "shared" }) }) },
-              ]);
-            } }, icon("ellipsis"), "More"),
+            { class: "mods-stats" },
+            stat(String(installed.filter((m) => m.enabled).length), "enabled"),
+            stat(String(installed.length), "installed"),
+            stat(mb(totalMemory()), "in use", "mem"),
           ),
-          h("div", { class: "muted profile-line" }, icon("account"), ` Profile "${profile.name}" — mods you install go into this profile. `, h("a", { href: "#", onclick: (e: Event) => { e.preventDefault(); commands.execute("profiles.manage"); } }, "Manage profiles")),
-          pendingReload
-            ? h("div", { class: "banner" }, icon("info"), h("span", { style: { flex: "1" } }, "Reload the window to apply your changes. Open files and unsaved text are kept."), h("button", { class: "btn", onclick: () => location.reload() }, "Reload Window"))
-            : "",
-          // Fresh profiles already have the default mods (File Icon Themes) on: offer the rest.
-          !installed.some((m) => m.enabled && DEVELOPMENT_SET.includes(m.id))
-            ? h(
-                "div",
-                { class: "banner" },
-                icon("rocket"),
-                h("span", { style: { flex: "1" } }, "Want the full editor layout? Turn on Explorer, Search, Source Control, Terminal, AI Chat, Syntax Highlighting, Markdown Preview, MCP Server and CodeFlow in one go."),
-                h("button", { class: "btn", onclick: enableDevelopmentSet }, "Enable development set"),
-              )
-            : "",
-          h("h2", null, `Enabled in "${profile.name}" — ${on.length}`),
-          on.length ? on.map(card) : h("div", { class: "muted" }, "Nothing yet: this is the plain editor."),
-          h("h2", null, `Available — ${off.length}`),
-          off.length ? off.map(card) : h("div", { class: "muted" }, "Every installed mod is enabled."),
-          h("h2", null, "Running now"),
-          renderRunning(),
+        );
+
+        const toolbar = h(
+          "div",
+          { class: "mods-toolbar" },
+          h("div", { class: "search-box" }, icon("search"), search, filter ? iconButton("close", "Clear Search", clearFilter) : null),
+          h("div", { class: "toolbar-spacer" }),
+          h("button", { class: "btn", onclick: async () => { await commands.execute("mods.create"); refresh(); }, title: "A new mod, as one JSON file" }, icon("add"), "Create Mod…"),
+          h("button", { class: "btn secondary", onclick: async () => { await commands.execute("mods.installFile"); refresh(); }, title: "An .aicode-mod or a mod.json" }, icon("cloud-download"), "Install from File…"),
+          h("button", { class: "btn secondary icon-only", title: "More Actions…", "aria-label": "More Actions", onclick: moreMenu }, icon("ellipsis")),
+        );
+
+        const tabs: [View, string, number | null][] = [
+          ["all", "All", visible.length],
+          ["enabled", "Enabled", on.length],
+          ["available", "Available", off.length],
+          ["running", "Running", null],
+        ];
+        const tabBar = h(
+          "div",
+          { class: "mods-tabs" },
+          h(
+            "div",
+            { class: "segmented", role: "tablist", "aria-label": "Show" },
+            tabs.map(([v, label, n]) =>
+              h("button", { class: `segment${view === v ? " active" : ""}`, role: "tab", "aria-selected": String(view === v), onclick: () => { view = v; render(); } }, label, n != null ? h("span", { class: "count" }, String(n)) : null),
+            ),
+          ),
+          h(
+            "div",
+            { class: "profile-pill", title: "Mods you install go into this profile" },
+            icon("account"),
+            h("span", null, "Profile ", h("b", null, profile.name)),
+            h("a", { href: "#", onclick: (e: Event) => { e.preventDefault(); commands.execute("profiles.manage"); } }, "Manage"),
+          ),
+        );
+
+        // Pinned to the bottom of the view, so it appearing does not move the tiles under the pointer.
+        const reloadBar = pendingReload
+          ? h("div", { class: "banner reload-bar" }, icon("info"), h("span", { style: { flex: "1" } }, "Reload the window to apply your changes. Open files and unsaved text are kept."), h("button", { class: "btn", onclick: () => location.reload() }, "Reload Window"))
+          : null;
+
+        const empty = (iconName: string, text: string, ...extra: Child[]) => h("div", { class: "mods-empty" }, icon(iconName), h("div", null, text), ...extra);
+        const group = (title: string, mods: ModInfo[], emptyText: string) => [
+          h("h2", null, title, h("span", { class: "count" }, String(mods.length))),
+          mods.length ? h("div", { class: "mod-grid" }, mods.map(tile)) : h("div", { class: "mods-empty small" }, emptyText),
+        ];
+        let content: Child;
+        if (view === "running") content = renderRunning();
+        else if (q && !visible.length) content = empty("search", `No mods match “${filter.trim()}”.`, h("button", { class: "btn secondary", onclick: clearFilter }, "Clear Search"));
+        else if (view === "enabled") content = group(`Enabled in “${profile.name}”`, on, "Nothing on yet: this is the plain editor.");
+        else if (view === "available") content = group("Available", off, "Every installed mod is enabled.");
+        // One grid, by name: switching a mod on or off leaves its tile where it is.
+        else content = h("div", { class: "mod-grid all" }, visible.map(tile));
+
+        append(page, [
+          hero,
+          toolbar,
+          tabBar,
+          h("div", { class: `mods-body${showDetails ? " with-details" : ""}` }, h("div", { class: "mods-main" }, content), showDetails ? details(sel!) : null),
+          reloadBar,
         ]);
+        if (scroller) scroller.scrollTop = scrollTop;
+
         if (hadFocus) {
-          search.focus();
+          search.focus({ preventScroll: true });
           search.setSelectionRange(selStart, selEnd);
+        } else if (focusId) {
+          const t = page.querySelector<HTMLElement>(`.mod-tile[data-id="${CSS.escape(focusId)}"]`);
+          (focusSwitch ? t?.querySelector<HTMLElement>(".switch") : t)?.focus({ preventScroll: true });
         }
         if (installed.length) firstRender = false;
-      };
-
-      const enableDevelopmentSet = async () => {
-        const ids = DEVELOPMENT_SET.filter((id) => installed.some((m) => m.id === id));
-        const asks = [...new Set(installed.filter((m) => ids.includes(m.id)).flatMap((m) => m.permissions))].map((p) => `• ${permissions.get(p) ?? p}`).join("\n");
-        if (!(await confirm("Enable the development set?", `Together these mods will be able to:\n${asks}`, "Enable"))) return;
-        for (const id of ids) await invoke("profile_set_enabled", { id, enabled: true }).catch((e) => notify("error", String(e)));
-        location.reload();
       };
 
       const exportMod = async (mod: ModInfo) => {

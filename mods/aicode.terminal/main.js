@@ -34,6 +34,8 @@ body .term-tab .codicon { font-size: 14px; }
 .term-tab input { flex: 1; min-width: 0; height: 18px; font: inherit; color: var(--aicode-input-foreground); background: var(--aicode-input-background); border: 1px solid var(--aicode-focusBorder); outline: none; padding: 0 3px; user-select: text; -webkit-user-select: text; }
 .term-msg { position: absolute; left: 16px; right: 16px; bottom: 8px; font-size: 12px; color: var(--aicode-descriptionForeground); }
 .xterm .xterm-viewport { scrollbar-width: thin; }
+/* xterm.css paints the viewport black: the panel shows through instead. */
+.term-root .xterm, .term-root .xterm-viewport, .term-root .xterm-screen, .term-root .xterm-scrollable-element { background-color: transparent !important; }
 `;
 
 export async function activate(ctx) {
@@ -58,9 +60,11 @@ export async function activate(ctx) {
 
   const color = (key, fallback) => getComputedStyle(document.documentElement).getPropertyValue(`--aicode-${key.replace(/\./g, "-")}`).trim() || fallback;
   const theme = () => ({
-    // The panel's own color, in every theme: the terminal is part of the panel, not a box set into
-    // it (a theme's terminal.background often differs by a shade, and the inset shows it).
-    background: color("panel.background", color("terminal.background", "#181818")),
+    // Transparent: the terminal is part of the panel, not a box set into it. Whatever the panel
+    // paints (its color, a gradient, the acrylic tint) shows through, so the two are one surface.
+    background: "#00000000",
+    // The glyph under the block cursor (and inverse text) needs a real color, not the transparent one.
+    cursorAccent: color("panel.background", color("terminal.background", "#181818")),
     foreground: color("terminal.foreground", "#cccccc"),
     cursor: color("terminalCursor.foreground", "#cccccc"),
     selectionBackground: color("terminal.selectionBackground", "#264f78"),
@@ -163,6 +167,7 @@ export async function activate(ctx) {
       macOptionClickForcesSelection: true,
       rightClickSelectsWord: false,
       drawBoldTextInBrightColors: true,
+      allowTransparency: true,
       theme: theme(),
     });
     const fit = new FitAddon();

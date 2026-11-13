@@ -464,6 +464,14 @@ export async function activate(ctx) {
     textarea?.focus();
   };
 
+  /** One past chat out of the history; the open one makes way for a new, empty chat. */
+  const deleteChat = async (id) => {
+    history = history.filter((x) => x.id !== id);
+    await ctx.settings.set("history", history);
+    if (chat.id === id) newChat();
+    return "remove";
+  };
+
   const showHistory = async () => {
     if (!history.length) return ctx.window.showInfo("No past chats yet.");
     const when = (t) => {
@@ -471,8 +479,13 @@ export async function activate(ctx) {
       return d < 3600 ? `${Math.max(1, Math.round(d / 60))} min ago` : d < 86400 ? `${Math.round(d / 3600)} h ago` : new Date(t).toLocaleDateString();
     };
     const choice = await ctx.window.showQuickPick(
-      history.map((x) => ({ label: x.title, description: `${agents.find((a) => a.id === x.agent)?.name ?? ""} · ${when(x.at)}`, id: x.id })),
-      { placeholder: "Select a chat to restore" },
+      history.map((x) => ({
+        label: x.title,
+        description: `${agents.find((a) => a.id === x.agent)?.name ?? ""} · ${when(x.at)}`,
+        id: x.id,
+        buttons: [{ icon: "trash", title: "Delete Chat" }],
+      })),
+      { placeholder: "Select a chat to restore", onButton: (item) => deleteChat(item.id) },
     );
     if (choice) loadChat(history.find((x) => x.id === choice.id));
   };
@@ -670,7 +683,9 @@ export async function activate(ctx) {
     });
   };
 
-  const paint = () => {
+  // Declared as functions (hoisted): the restored chat and the agent loader call these before this
+  // point; until the view is drawn they find no `log` / `agentBtn` and return.
+  function paint() {
     if (!log) return;
     clear(log);
     if (!chat.messages.length && (agentsState === "loading" || !agents.length)) {
@@ -749,7 +764,7 @@ export async function activate(ctx) {
 
   // ---------- pickers ----------
 
-  const paintPickers = () => {
+  function paintPickers() {
     if (!agentBtn) return;
     const a = agent();
     const st = statusOf(a);

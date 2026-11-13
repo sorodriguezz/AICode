@@ -497,6 +497,10 @@ export const CORE_SCHEMA: Record<string, SettingSchema> = {
   "editor.scrollbar.horizontal": { section: "Gutter, Minimap and Markers", type: "string", title: "Horizontal Scroll Bar", default: "auto", enum: e("auto", "visible", "hidden") },
   "editor.scrollbar.size": { section: "Gutter, Minimap and Markers", type: "number", title: "Scroll Bar Size", default: 14, min: 0, max: 40 },
 
+  // ----- Files -----
+  "files.autoSave": { section: "Files", type: "string", title: "Auto Save", default: "off", description: "Saves files that are on disk by themselves (File ▸ Auto Save turns it on and off).", enum: e(["off", "Off"], ["afterDelay", "After a delay"], ["onFocusChange", "When the editor loses focus"], ["onWindowChange", "When the window loses focus"]) },
+  "files.autoSaveDelay": { section: "Files", type: "number", title: "Auto Save Delay", default: 1000, min: 0, max: 60000, description: "Milliseconds after the last change, when Auto Save is \"After a delay\"." },
+
   // ----- Workbench -----
   theme: { section: "Workbench", type: "string", title: "Color Theme", default: "aicode-dark", enum: [] },
   "workbench.previewEditors": { section: "Workbench", type: "boolean", title: "Preview Editors", default: true, description: "A single click opens a file in a tab the next one replaces (shown in italics)." },

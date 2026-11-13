@@ -29,9 +29,12 @@ export function append(el: Element, children: Child[]) {
   }
 }
 
+/** A codicon. "sync~spin", as VS Code's $(sync~spin), turns (status bar and title bar items take it too). */
 export function icon(name: string, extra = ""): HTMLElement {
   const i = document.createElement("i");
-  i.className = `codicon codicon-${name}${extra ? " " + extra : ""}`;
+  const [base, mod] = name.split("~");
+  if (mod === "spin") extra = extra ? `${extra} codicon-modifier-spin` : "codicon-modifier-spin";
+  i.className = `codicon codicon-${base}${extra ? " " + extra : ""}`;
   return i;
 }
 

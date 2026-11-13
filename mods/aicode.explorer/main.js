@@ -42,10 +42,10 @@ body .explorer .tree-row .twistie .codicon { font-size: 16px; }
 .explorer .ex-tree:not(:focus) .list-row.focused { outline: none; }
 .explorer .tree-row.drop-target, .explorer .tree-row.in-drop { background: var(--aicode-list-dropBackground); }
 .explorer .ex-tree.drop-root { background: var(--aicode-list-dropBackground); }
-.explorer .tree-input { flex: 1 1 auto; min-width: 40px; height: 20px; box-sizing: border-box; margin-right: 0; padding: 0 3px; font: inherit; color: var(--aicode-input-foreground); background: var(--aicode-input-background); border: 1px solid var(--aicode-focusBorder); outline: none; border-radius: 0; user-select: text; -webkit-user-select: text; }
+.explorer .tree-input { flex: 1 1 auto; min-width: 40px; height: 20px; box-sizing: border-box; margin-right: 0; padding: 0 3px; font: inherit; color: var(--aicode-input-foreground); background: var(--aicode-input-background); border: 1px solid var(--aicode-focusBorder); outline: none; border-radius: 4px; user-select: text; -webkit-user-select: text; }
 .explorer .tree-input.invalid { border-color: var(--aicode-inputValidation-errorBorder, #be1100); }
 .explorer .tree-input.warn { border-color: var(--aicode-inputValidation-warningBorder, #b89500); }
-.explorer .tree-msg { position: absolute; z-index: 5; left: var(--msg-left); right: 10px; top: 100%; padding: 4px 6px; font-size: 12px; line-height: 1.4; white-space: normal; border: 1px solid var(--aicode-inputValidation-errorBorder, #be1100); background: var(--aicode-inputValidation-errorBackground, #5a1d1d); color: var(--aicode-foreground); }
+.explorer .tree-msg { position: absolute; z-index: 5; left: var(--msg-left); right: 10px; top: 100%; padding: 4px 6px; font-size: 12px; line-height: 1.4; white-space: normal; border-radius: 4px; border: 1px solid var(--aicode-inputValidation-errorBorder, #be1100); background: var(--aicode-inputValidation-errorBackground, #5a1d1d); color: var(--aicode-foreground); }
 .explorer .tree-msg.warn { border-color: var(--aicode-inputValidation-warningBorder, #b89500); background: var(--aicode-inputValidation-warningBackground, #352a05); }
 .explorer .ex-empty { padding: 10px 20px; display: flex; flex-direction: column; gap: 12px; }
 .explorer .oe-row .twistie { visibility: hidden; }
@@ -723,8 +723,10 @@ export async function activate(ctx) {
     const update = () => {
       ed.value = input.value;
       const problem = validate(input.value, ed.dir, ed.path);
-      input.classList.toggle("invalid", problem?.level === "error");
-      input.classList.toggle("warn", problem?.level === "warn");
+      // An empty box is just "not typed yet", as in VS Code: it only turns red once a name is wrong.
+      const shown = input.value ? problem : null;
+      input.classList.toggle("invalid", shown?.level === "error");
+      input.classList.toggle("warn", shown?.level === "warn");
       if (problem && input.value) {
         msg.textContent = problem.message;
         msg.className = `tree-msg${problem.level === "warn" ? " warn" : ""}`;
@@ -831,7 +833,9 @@ export async function activate(ctx) {
           if (e.is_dir) toggleDir(path);
           else {
             render();
-            openFile(path, true);
+            // The first click re-renders the row, so `dblclick` may never reach it: the second
+            // click of a double-click opens the file kept (not as a preview), as in VS Code.
+            openFile(path, ev.detail < 2);
           }
         },
         ondblclick: (ev) => {

@@ -12,7 +12,7 @@ use std::path::Path;
 
 use serde::Serialize;
 use serde_json::Value;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::bundle;
 use crate::mods::{self, ModsState, Profile};
@@ -111,7 +111,7 @@ pub fn profile_list(state: State<'_, ModsState>) -> Vec<ProfileSummary> {
 
 /// A new profile: empty (a plain notepad), or a copy of another one, mods included.
 #[tauri::command]
-pub fn profile_create(name: String, copy_from: Option<String>, description: Option<String>) -> Result<String, String> {
+pub fn profile_create(app: AppHandle, name: String, copy_from: Option<String>, description: Option<String>) -> Result<String, String> {
     let name = valid(&name)?;
     if mods::profile_names().contains(&name) {
         return Err(format!("there is already a profile called {name}"));
@@ -131,6 +131,7 @@ pub fn profile_create(name: String, copy_from: Option<String>, description: Opti
         profile.description = d;
     }
     mods::write_profile(&name, &profile)?;
+    crate::menu::refresh(&app);
     Ok(name)
 }
 
@@ -159,11 +160,12 @@ pub fn profile_rename(app: AppHandle, state: State<'_, ModsState>, from: String,
         crate::fsops::write_atomic(&paths::state().join("active-profile"), to.as_bytes())?;
         mods::refresh(&app, &state);
     }
+    crate::menu::refresh(&app);
     Ok(to)
 }
 
 #[tauri::command]
-pub fn profile_delete(state: State<'_, ModsState>, name: String) -> Result<(), String> {
+pub fn profile_delete(app: AppHandle, state: State<'_, ModsState>, name: String) -> Result<(), String> {
     let name = valid(&name)?;
     if *state.profile_name.lock().unwrap() == name {
         return Err("switch to another profile before deleting this one".into());
@@ -174,20 +176,27 @@ pub fn profile_delete(state: State<'_, ModsState>, name: String) -> Result<(), S
     }
     let _ = std::fs::remove_file(paths::profiles().join(format!("{name}.json")));
     windows::forget_profile_state(&name);
+    crate::menu::refresh(&app);
     Ok(())
 }
 
 /// Switches every window to another profile (creating it, empty, if it does not exist).
 #[tauri::command]
-pub fn profile_switch(app: AppHandle, state: State<'_, ModsState>, name: String) -> Result<(), String> {
-    let name = valid(&name)?;
+pub fn profile_switch(app: AppHandle, name: String) -> Result<(), String> {
+    switch_to(&app, &name)
+}
+
+/// [`profile_switch`], for File ▸ Switch Profile too.
+pub fn switch_to(app: &AppHandle, name: &str) -> Result<(), String> {
+    let state = app.state::<ModsState>();
+    let name = valid(name)?;
     if !mods::profile_path(&name).exists() && !paths::profiles().join(format!("{name}.json")).exists() {
         mods::write_profile(&name, &Profile::default())?;
     }
     if *state.profile_name.lock().unwrap() == name {
         return Ok(());
     }
-    windows::switch_profile(&app, name);
+    windows::switch_profile(app, name);
     Ok(())
 }
 
@@ -198,6 +207,7 @@ pub fn activate(app: &AppHandle, state: &ModsState, name: &str) {
     *state.profile_name.lock().unwrap() = name.to_string();
     *state.profile.lock().unwrap() = profile;
     mods::refresh(app, state);
+    crate::menu::refresh(app);
 }
 
 /// Re-reads the active profile.json after it was edited by hand.
@@ -208,6 +218,7 @@ pub fn profile_reload(app: AppHandle, window: tauri::Window, state: State<'_, Mo
     let profile: Profile = serde_json::from_str(&text).map_err(|e| format!("profile.json: {e}"))?;
     *state.profile.lock().unwrap() = profile;
     mods::refresh(&app, &state);
+    crate::menu::refresh(&app);
     // The other windows apply the saved file too.
     use tauri::Emitter;
     let _ = app.emit("settings://changed", window.label());
@@ -248,5 +259,7 @@ pub fn profile_export(app: AppHandle, state: State<'_, ModsState>, name: String,
 #[tauri::command]
 pub fn profile_import(app: AppHandle, path: String, name: Option<String>) -> Result<bundle::ImportedProfile, String> {
     let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    bundle::unpack_profile(&app, &text, name)
+    let imported = bundle::unpack_profile(&app, &text, name)?;
+    crate::menu::refresh(&app);
+    Ok(imported)
 }

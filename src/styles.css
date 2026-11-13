@@ -359,6 +359,18 @@ body .quick-item .codicon { font-size: 16px; }
 .quick-item .keys { display: flex; gap: 2px; margin-left: auto; }
 .quick-item.active { background: var(--aicode-quickInputList-focusBackground); color: var(--aicode-quickInputList-focusForeground); }
 .quick-item.separator-top { border-top: 1px solid var(--aicode-pickerGroup-border); }
+/* Two-line rows (an item with a detail) and the group names at the right ("branches", "tags"). */
+.quick-item.has-detail { height: auto; min-height: 40px; padding-top: 3px; padding-bottom: 3px; }
+.quick-item .quick-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.quick-item .quick-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.quick-item .detail { color: var(--aicode-descriptionForeground); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.quick-item .group-label { margin-left: auto; padding-left: 12px; flex: 0 0 auto; font-size: 11px; color: var(--aicode-pickerGroup-foreground, var(--aicode-descriptionForeground)); }
+.quick-item.active .detail, .quick-item.active .group-label { color: inherit; opacity: .8; }
+/* A row's buttons (delete a past chat…): at the end, on hover and on the active row, like VS Code. */
+.quick-item .quick-buttons { display: flex; gap: 2px; margin-left: auto; visibility: hidden; }
+.quick-item:hover .quick-buttons, .quick-item.active .quick-buttons { visibility: visible; }
+.quick-item .quick-buttons .icon-button { width: 20px; height: 20px; color: inherit; }
+.quick-item .quick-buttons .codicon { font-size: 14px; }
 .quick-empty { padding: 6px 8px; color: var(--aicode-descriptionForeground); }
 
 /* ---------- dialogs & notifications ---------- */
@@ -403,6 +415,9 @@ body .toast .codicon { font-size: 16px; margin-top: 1px; }
 .context-menu .item .muted { white-space: nowrap; }
 .context-menu .item .check { width: 16px; margin-right: -12px; display: inline-flex; }
 .context-menu .item .check .codicon { font-size: 14px; }
+.context-menu .item.open:not(.disabled) { background: var(--aicode-menu-selectionBackground); color: var(--aicode-menu-selectionForeground); }
+.context-menu .item .chev { display: inline-flex; margin-right: -4px; }
+.context-menu .item .chev .codicon { font-size: 14px; }
 .context-menu .sep { height: 1px; margin: 4px 0; background: var(--aicode-menu-separatorBackground); }
 
 /* ---------- mods manager ---------- */
@@ -411,10 +426,6 @@ body .toast .codicon { font-size: 16px; margin-top: 1px; }
 .mods-page h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--aicode-descriptionForeground); margin: 26px 0 8px; font-weight: 600; }
 .mods-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 16px; margin-bottom: 16px; }
 .mods-page > .muted { line-height: 1.5; max-width: 72ch; }
-.profile-card { align-items: center; padding: 14px 16px; }
-.profile-card .desc { margin: 4px 0 0; }
-.profile-card .meta { margin-top: 8px; }
-.profile-card .side-actions { flex-direction: row; align-items: center; gap: 8px; }
 .mods-toolbar .input { width: 240px; }
 .mods-toolbar select.input { width: auto; }
 .mod-card {
@@ -434,6 +445,196 @@ body .mod-card .mod-icon .codicon { font-size: 24px; }
 .state-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--aicode-descriptionForeground); opacity: .5; }
 .state-dot.active::before { background: var(--aicode-testing-iconPassed); opacity: 1; }
 .state-dot.failed::before { background: var(--aicode-errorForeground); opacity: 1; }
+.state-dot.on::before { background: var(--aicode-testing-iconPassed); opacity: 1; }
+.state-dot.idle::before { background: var(--aicode-focusBorder); opacity: .8; }
+.state-dot.failed { color: var(--aicode-errorForeground); }
+
+/* The Mods page: a header with totals, a toolbar, tabs, a grid of equal tiles and a details panel. */
+.mods-page.mods-manager { max-width: 1240px; container-type: inline-size; }
+.mods-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+.mods-hero p { margin: 4px 0 0; color: var(--aicode-descriptionForeground); line-height: 1.5; max-width: 64ch; }
+.mods-stats { display: flex; gap: 8px; }
+.mods-stat {
+  display: flex; flex-direction: column; min-width: 86px; padding: 6px 12px; border-radius: 8px;
+  border: 1px solid var(--aicode-widget-border); background: var(--aicode-sideBar-background);
+}
+.mods-stat b { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.mods-stat span { font-size: 11px; color: var(--aicode-descriptionForeground); }
+.mods-manager .mods-toolbar { margin: 20px 0 8px; flex-wrap: wrap; }
+.mods-manager .mods-toolbar .btn { height: 28px; }
+.btn.icon-only { width: 28px; padding: 0; }
+.toolbar-spacer { flex: 1 1 0; }
+.search-box { position: relative; flex: 1 1 260px; max-width: 440px; }
+.search-box > .codicon { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--aicode-descriptionForeground); pointer-events: none; }
+.mods-toolbar .search-box .input { width: 100%; height: 28px; padding: 0 28px 0 30px; }
+.search-box .icon-button { position: absolute; right: 3px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px; }
+.mods-tabs {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--aicode-widget-border);
+}
+.segmented { display: flex; gap: 4px; }
+.segment {
+  display: inline-flex; align-items: center; gap: 6px; padding: 9px 10px; margin-bottom: -1px;
+  border: 0; border-bottom: 2px solid transparent; background: transparent; cursor: pointer;
+  color: var(--aicode-descriptionForeground); font-size: 13px;
+}
+.segment:hover { color: var(--aicode-foreground); }
+.segment.active { color: var(--aicode-foreground); border-bottom-color: var(--aicode-panelTitle-activeBorder, var(--aicode-focusBorder)); }
+.segment .count, .mods-manager h2 .count {
+  min-width: 18px; padding: 0 6px; border-radius: 9px; line-height: 16px; text-align: center; font-size: 11px; font-weight: 600;
+  background: var(--aicode-badge-background); color: var(--aicode-badge-foreground); letter-spacing: 0;
+}
+.profile-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--aicode-descriptionForeground); }
+.profile-pill b { color: var(--aicode-foreground); font-weight: 600; }
+.profile-pill a { color: var(--aicode-textLink-foreground); text-decoration: none; }
+.profile-pill a:hover { text-decoration: underline; }
+.mods-manager h2 { display: flex; align-items: center; gap: 8px; margin: 22px 0 10px; }
+.mods-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
+.mods-body.with-details { grid-template-columns: minmax(0, 1fr) 340px; }
+@container (max-width: 780px) {
+  .mods-body.with-details { grid-template-columns: minmax(0, 1fr); }
+  .mods-body.with-details .mod-details { order: -1; position: static; max-height: none; margin-top: 16px; }
+  .mods-stats { display: none; }
+}
+.mod-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.mod-grid.all { margin-top: 16px; }
+.banner.reload-bar {
+  position: sticky; bottom: 16px; z-index: 3; margin-top: 20px;
+  background: var(--aicode-editorWidget-background, var(--aicode-sideBar-background));
+  border-color: var(--aicode-focusBorder); box-shadow: 0 6px 24px var(--aicode-widget-shadow);
+  animation: card-in var(--motion) var(--ease-out);
+}
+
+/* Every tile is the same size: the name and id truncate, the description is three lines at most. */
+.mod-tile {
+  height: 164px; display: flex; flex-direction: column; gap: 10px; padding: 14px; overflow: hidden;
+  border: 1px solid var(--aicode-widget-border); border-radius: 10px; background: var(--aicode-sideBar-background);
+  cursor: pointer; outline: none;
+}
+.mod-tile:hover { border-color: color-mix(in srgb, var(--aicode-focusBorder) 45%, var(--aicode-widget-border)); box-shadow: 0 2px 12px var(--aicode-widget-shadow); }
+.mod-tile:focus-visible { outline: 1px solid var(--aicode-focusBorder); outline-offset: 1px; }
+.mod-tile.selected { border-color: var(--aicode-focusBorder); box-shadow: inset 0 0 0 1px var(--aicode-focusBorder); }
+.mod-tile-head, .mod-details-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.mod-tile .mod-icon, .mod-details .mod-icon {
+  flex: 0 0 auto; width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+  background: var(--aicode-button-secondaryBackground); color: var(--aicode-descriptionForeground);
+}
+.mod-tile.enabled .mod-icon, .mod-details .mod-icon.on { background: color-mix(in srgb, var(--aicode-button-background) 24%, transparent); color: var(--aicode-foreground); }
+body .mod-tile .mod-icon .codicon { font-size: 19px; }
+.mod-details .mod-icon.large { width: 44px; height: 44px; border-radius: 10px; }
+body .mod-details .mod-icon.large .codicon { font-size: 24px; }
+.mod-tile-name { flex: 1 1 auto; min-width: 0; }
+.mod-tile-name .name { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mod-tile-name .sub { margin-top: 1px; font-size: 11.5px; color: var(--aicode-descriptionForeground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mod-tile-desc {
+  flex: 1 1 auto; min-height: 0; font-size: 12.5px; line-height: 18px; color: var(--aicode-descriptionForeground);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.mod-tile-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 20px; min-width: 0; }
+.mod-tile-foot .state-dot { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mod-tile-badges { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.perm-badge {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 5px;
+  background: color-mix(in srgb, var(--aicode-badge-background) 70%, transparent); color: var(--aicode-badge-foreground);
+}
+body .perm-badge .codicon { font-size: 12px; }
+
+/* On/off switch (a button with role="switch"). */
+.switch {
+  position: relative; flex: 0 0 auto; width: 32px; height: 18px; padding: 0; border-radius: 9px; cursor: pointer;
+  border: 1px solid var(--aicode-input-border, var(--aicode-widget-border)); background: var(--aicode-input-background);
+  transition: background-color var(--motion) ease, border-color var(--motion) ease;
+}
+.switch-knob {
+  position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--aicode-descriptionForeground); transition: transform var(--motion) var(--ease-out), background-color var(--motion) ease;
+}
+.switch.on { background: var(--aicode-button-background); border-color: var(--aicode-button-background); }
+.switch.on .switch-knob { transform: translateX(14px); background: var(--aicode-button-foreground); }
+.switch:disabled { opacity: .45; cursor: default; }
+.switch:focus-visible { outline: 1px solid var(--aicode-focusBorder); outline-offset: 2px; }
+
+/* The details panel, beside the grid (above it when the page is narrow). */
+.mod-details {
+  position: sticky; top: 12px; margin-top: 22px; max-height: calc(100vh - 160px); overflow: auto;
+  display: flex; flex-direction: column; gap: 14px; padding: 16px; border-radius: 10px;
+  border: 1px solid var(--aicode-widget-border); background: var(--aicode-sideBar-background);
+  animation: card-in var(--motion) var(--ease-out);
+}
+.mod-details-head .name { font-size: 15px; white-space: normal; }
+.mod-details-head .icon-button { align-self: flex-start; }
+.mod-details-toggle {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 8px;
+  background: var(--aicode-editor-background); border: 1px solid var(--aicode-widget-border); font-size: 13px;
+}
+.mod-details-toggle .state-dot { margin-top: 3px; }
+.mod-details-desc { margin: 0; font-size: 12.5px; line-height: 1.55; }
+.mod-details-problem {
+  display: flex; gap: 8px; padding: 8px 10px; border-radius: 6px; font-size: 12px; line-height: 1.45;
+  background: var(--aicode-inputValidation-errorBackground); border: 1px solid var(--aicode-inputValidation-errorBorder, var(--aicode-errorForeground));
+}
+.mod-details-section h3 { margin: 0 0 8px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--aicode-descriptionForeground); }
+.perm-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.perm-list li { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; line-height: 1.4; }
+.perm-list code { font-family: var(--font-mono); font-size: 11.5px; }
+.plain-list { margin: 0; padding-left: 16px; font-size: 12px; line-height: 1.6; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+button.chip { cursor: pointer; font-family: inherit; }
+button.chip:disabled { cursor: default; opacity: .6; }
+.mod-path { margin-top: 4px; font-family: var(--font-mono); font-size: 11px; color: var(--aicode-descriptionForeground); word-break: break-all; }
+.mod-details-actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 12px; border-top: 1px solid var(--aicode-widget-border); }
+.btn.danger:hover { color: var(--aicode-errorForeground); }
+.mods-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 48px 16px; margin-top: 16px; text-align: center;
+  color: var(--aicode-descriptionForeground); border: 1px dashed var(--aicode-widget-border); border-radius: 10px;
+}
+body .mods-empty .codicon { font-size: 28px; opacity: .6; }
+.mods-empty.small { padding: 18px 16px; margin-top: 0; }
+
+/* The Profiles page: the current profile on top, the others as equal tiles. */
+.profiles-page .profile-toolbar { margin: 0; flex-wrap: nowrap; }
+.profile-current {
+  margin-top: 22px; padding: 18px; border-radius: 12px; display: flex; flex-direction: column; gap: 16px;
+  border: 1px solid color-mix(in srgb, var(--aicode-focusBorder) 55%, var(--aicode-widget-border));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--aicode-button-background) 9%, var(--aicode-sideBar-background)), var(--aicode-sideBar-background));
+}
+.profile-current-head { display: flex; align-items: flex-start; gap: 14px; min-width: 0; }
+.profile-current .mod-icon {
+  flex: 0 0 auto; width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--aicode-button-background) 24%, transparent); color: var(--aicode-foreground);
+}
+body .profile-current .mod-icon .codicon { font-size: 24px; }
+.profile-current-name { flex: 1 1 auto; min-width: 0; }
+.profile-current-name .eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--aicode-textLink-foreground); }
+.profile-current-name .name { margin-top: 2px; font-size: 18px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.profile-current-name .desc { margin-top: 4px; font-size: 13px; line-height: 1.5; color: var(--aicode-descriptionForeground); }
+.profile-current-name a.desc.add { display: inline-flex; align-items: center; gap: 4px; color: var(--aicode-textLink-foreground); text-decoration: none; }
+.profile-current-name a.desc.add:hover { text-decoration: underline; }
+.profile-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.profile-fact {
+  display: flex; align-items: baseline; gap: 6px; min-width: 0; padding: 8px 12px; border-radius: 8px;
+  border: 1px solid var(--aicode-widget-border); background: color-mix(in srgb, var(--aicode-editor-background) 40%, transparent);
+}
+.profile-fact .codicon { align-self: center; color: var(--aicode-descriptionForeground); }
+.profile-fact b { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.profile-fact span { font-size: 12px; color: var(--aicode-descriptionForeground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.profile-current-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.profile-current-actions .btn { height: 28px; }
+.profile-tile { height: 148px; cursor: default; }
+.profile-tile .mod-tile-desc.empty { font-style: italic; opacity: .8; }
+.profile-tile .mod-tile-foot { height: 28px; }
+.profile-tile .mod-tile-foot .btn { height: 26px; }
+.profile-empty { padding: 32px 16px; margin-top: 0; }
+.profile-empty span { max-width: 52ch; line-height: 1.5; }
+.profile-empty .row { display: flex; gap: 8px; margin-top: 4px; }
+@container (max-width: 640px) {
+  .profile-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.mods-manager .running { margin-top: 16px; }
+.res-card { border: 1px solid var(--aicode-widget-border); border-radius: 10px; overflow: hidden; background: var(--aicode-sideBar-background); }
+.res-card .res-table th, .res-card .res-table td { padding: 8px 12px; }
+.res-card .res-table tr:last-child td { border-bottom: 0; }
+.res-note { font-size: 12px; }
 .banner {
   display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-top: 14px; border-radius: 6px;
   background: var(--aicode-inputValidation-infoBackground); border: 1px solid var(--aicode-inputValidation-infoBorder);
@@ -485,7 +686,7 @@ body .drop-card .codicon { font-size: 22px; color: var(--aicode-focusBorder); }
 
 /* Hover and state colors fade instead of snapping. */
 .list-row, .tab, .icon-button, .activity-item, .status-item, .btn, .part-tab, .section-header,
-.command-center, .ctx-chip, .chip, .input, .context-menu .item, .mod-card {
+.command-center, .ctx-chip, .chip, .input, .context-menu .item, .mod-card, .mod-tile {
   transition: background-color var(--motion-fast) ease, color var(--motion-fast) ease,
     border-color var(--motion-fast) ease, opacity var(--motion-fast) ease, box-shadow var(--motion) ease;
 }
@@ -584,7 +785,6 @@ html.no-motion *, html.no-motion *::before, html.no-motion *::after {
 }
 
 /* ---------- profiles, settings, JSON mods ---------- */
-.mod-card.active-profile { border-color: var(--aicode-focusBorder); }
 .mod-card .row-actions { display: flex; gap: 2px; }
 .profile-line { margin-top: 10px; font-size: 12px; display: flex; align-items: center; gap: 2px; }
 .profile-line a, .decl-md a { color: var(--aicode-textLink-foreground); text-decoration: none; }
@@ -868,7 +1068,6 @@ body .layout-row .codicon.check { font-size: 14px; }
   color: var(--aicode-titleBar-activeForeground); background: var(--aicode-titleBar-activeBackground);
   border-bottom: 1px solid var(--aicode-editorGroupHeader-tabsBorder, var(--aicode-widget-border));
 }
-.modal-editor-header.dragging { cursor: grabbing; }
 .modal-editor-title { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 body .modal-editor-title .codicon { font-size: 14px; }
 .modal-editor-actions { display: flex; align-items: center; gap: 4px; }

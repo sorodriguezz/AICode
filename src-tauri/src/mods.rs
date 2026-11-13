@@ -432,7 +432,11 @@ pub fn effective_core_setting(state: &ModsState, key: &str) -> Option<Value> {
 
 #[tauri::command]
 pub fn settings_set(app: AppHandle, window: tauri::Window, state: State<'_, ModsState>, mod_id: String, key: String, value: Value) -> Result<(), String> {
+    let menu_shows = mod_id == "core" && key == "files.autoSave";
     settings_write(&state, mod_id, key, value)?;
+    if menu_shows {
+        crate::menu::refresh(&app);
+    }
     // Every other window rereads the settings, so a change shows everywhere at once.
     use tauri::Emitter;
     let _ = app.emit("settings://changed", window.label());

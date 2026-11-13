@@ -1,9 +1,11 @@
 // Running git and reading what it says. Everything goes through the user's own `git` with
 // machine-readable output (`--porcelain=v2 -z`), never through a library of our own.
 
-export function makeGit(ctx) {
+/** `onRun(args, code, stderr, ms)`: every git that ran (the "Git Output"). */
+export function makeGit(ctx, onRun = null) {
   /** Runs git; resolves { code, stdout, stderr } (never rejects on a non-zero exit). */
   const run = async (args, { cwd, stdin, quiet = false } = {}) => {
+    const started = performance.now();
     let stdout = "";
     let stderr = "";
     const proc = await ctx.process.spawn("git", ["-c", "core.quotepath=off", "-c", "color.ui=false", ...args], {
@@ -13,6 +15,7 @@ export function makeGit(ctx) {
       onData: (data, stream) => (stream === "stdout" ? (stdout += data) : (stderr += data)),
     });
     const code = await proc.done;
+    onRun?.(args, code, stderr, Math.round(performance.now() - started));
     return { code, stdout, stderr };
   };
 
@@ -197,4 +200,93 @@ export function lineChanges(oldText, newText, maxD = 2000) {
   }
   for (const at of delAt.keys()) result.deleted.push(Math.max(1, at));
   return result;
+}
+
+// ---------- the graph ----------
+
+/** The `git log` format `parseLog` reads: one record per commit, fields split by NUL. */
+export const LOG_FORMAT = "%H%x00%P%x00%an%x00%ar%x00%aI%x00%D%x00%s%x1e";
+
+/** `git log --format=LOG_FORMAT` → [{ hash, parents, author, when, date, refs, subject }]. */
+export function parseLog(out) {
+  return out
+    .split("\x1e")
+    .map((r) => r.replace(/^\n/, ""))
+    .filter(Boolean)
+    .map((r) => {
+      const [hash, parents, author, when, date, refs, subject] = r.split("\0");
+      return { hash, parents: parents ? parents.split(" ") : [], author, when, date, refs: parseRefs(refs ?? ""), subject: subject ?? "" };
+    });
+}
+
+/** `%D` ("HEAD -> main, origin/main, tag: v1") → { head, branches, remotes, tags }. */
+export function parseRefs(d) {
+  const out = { head: null, branches: [], remotes: [], tags: [] };
+  for (const raw of d.split(", ").filter(Boolean)) {
+    if (raw.startsWith("HEAD -> ")) {
+      out.head = raw.slice(8);
+      out.branches.push(out.head);
+    } else if (raw === "HEAD") out.head = "HEAD";
+    else if (raw.startsWith("tag: ")) out.tags.push(raw.slice(5));
+    else if (raw.endsWith("/HEAD")) continue;
+    else if (raw.includes("/")) out.remotes.push(raw);
+    else out.branches.push(raw);
+  }
+  return out;
+}
+
+/** Lanes for a commit list in topological order (newest first). Each row says where its node sits
+ *  (`lane`) and which lines cross it: `through` (straight down), `into` (other lanes ending in this
+ *  commit), `out` (lanes this merge starts for its other parents), `up`/`down` (its own lane above and
+ *  below), and `after` (the lanes open under it, for rows drawn between commits). */
+export function layoutGraph(commits) {
+  const lanes = [];
+  return commits.map((c) => {
+    let lane = lanes.indexOf(c.hash);
+    const up = lane >= 0;
+    if (lane < 0) {
+      lane = lanes.indexOf(null);
+      if (lane < 0) lane = lanes.length;
+      lanes[lane] = c.hash;
+    }
+    const before = lanes.slice();
+    const through = [];
+    const into = [];
+    before.forEach((h, j) => {
+      if (j === lane || h == null) return;
+      if (h === c.hash) {
+        into.push(j);
+        lanes[j] = null;
+      } else through.push(j);
+    });
+    const [first, ...rest] = c.parents;
+    lanes[lane] = first ?? null;
+    const out = [];
+    for (const p of rest) {
+      let k = lanes.indexOf(p);
+      if (k < 0) {
+        k = lanes.indexOf(null);
+        if (k < 0) k = lanes.length;
+        lanes[k] = p;
+      }
+      out.push(k);
+    }
+    while (lanes.length && lanes[lanes.length - 1] == null) lanes.pop();
+    const after = lanes.map((h, j) => (h == null ? -1 : j)).filter((j) => j >= 0);
+    const width = Math.max(before.length, lanes.length, lane + 1);
+    return { lane, up, down: first != null, through, into, out, after, width };
+  });
+}
+
+/** `git diff --name-status -z` → [{ letter, path, from? }]. */
+export function parseNameStatus(out) {
+  const t = out.split("\0").filter((x) => x !== "");
+  const files = [];
+  for (let i = 0; i < t.length; ) {
+    const st = t[i++];
+    const letter = st[0];
+    if (letter === "R" || letter === "C") files.push({ letter, from: t[i++], path: t[i++] });
+    else files.push({ letter, path: t[i++] });
+  }
+  return files;
 }

@@ -7,6 +7,7 @@ mod bundle;
 mod dock;
 mod fsops;
 mod mcp;
+mod menu;
 mod mods;
 mod paths;
 mod procs;
@@ -14,8 +15,7 @@ mod profiles;
 mod updater;
 mod windows;
 
-use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 
 /// A window's session (open tabs, unsaved text, layout, folder), per profile and window.
 #[tauri::command]
@@ -37,18 +37,17 @@ fn core_log(level: String, message: String) {
 /// A folder or file opened from AICode, for the Dock icon's "recent" list.
 #[tauri::command]
 fn recent_add(app: tauri::AppHandle, path: String) {
+    // File ▸ Open Recent keeps its own list; the Dock's is the system's.
+    menu::recent_add(&app, path.clone());
     #[cfg(target_os = "macos")]
     dock::note_recent(&app, path);
-    #[cfg(not(target_os = "macos"))]
-    let _ = (app, path);
 }
 
 #[tauri::command]
 fn recent_clear(app: tauri::AppHandle) {
+    menu::recent_clear(&app);
     #[cfg(target_os = "macos")]
     dock::clear_recent(&app);
-    #[cfg(not(target_os = "macos"))]
-    let _ = app;
 }
 
 #[tauri::command]
@@ -62,77 +61,6 @@ fn core_info() -> serde_json::Value {
         // AICODE_DIAG_RUN="cmd.a,cmd.b": commands the diagnostics run, for checks without a screen.
         "diagRun": std::env::var("AICODE_DIAG_RUN").unwrap_or_default(),
     })
-}
-
-fn build_menu(app: &tauri::App) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
-    let item = |id: &str, text: &str, accel: Option<&str>| {
-        let mut b = MenuItemBuilder::with_id(id, text);
-        if let Some(a) = accel {
-            b = b.accelerator(a);
-        }
-        b.build(app)
-    };
-    let app_menu = SubmenuBuilder::new(app, "AICode")
-        .about(None)
-        .item(&item("update.check", "Check for Updates…", None)?)
-        .separator()
-        .item(&item("preferences.settings", "Settings…", Some("CmdOrCtrl+,"))?)
-        .item(&item("profiles.manage", "Profiles…", None)?)
-        .item(&item("mods.manage", "Mods…", Some("CmdOrCtrl+Shift+X"))?)
-        .item(&item("preferences.theme", "Color Theme…", None)?)
-        .item(&item("workbench.keybindings", "Keyboard Shortcuts", None)?)
-        .separator()
-        .hide()
-        .hide_others()
-        .show_all()
-        .separator()
-        .quit()
-        .build()?;
-    let file = SubmenuBuilder::new(app, "File")
-        .item(&item("file.new", "New File", Some("CmdOrCtrl+N"))?)
-        .item(&item("workbench.newWindow", "New Window", Some("CmdOrCtrl+Shift+N"))?)
-        .separator()
-        .item(&item("file.open", "Open File…", Some("CmdOrCtrl+O"))?)
-        .item(&item("workbench.openFolderNewWindow", "Open Folder in New Window…", None)?)
-        .item(&item("workbench.reopenLastSession", "Reopen Last Session", None)?)
-        .separator()
-        .item(&item("file.save", "Save", Some("CmdOrCtrl+S"))?)
-        .item(&item("file.saveAs", "Save As…", Some("CmdOrCtrl+Shift+S"))?)
-        .separator()
-        .item(&item("editor.close", "Close Editor", Some("CmdOrCtrl+W"))?)
-        .item(&item("window.close", "Close Window", Some("CmdOrCtrl+Shift+W"))?)
-        .build()?;
-    // Undo/Redo are the editor's own (Monaco keeps the undo stack), so they are plain items routed
-    // to the window; Cut/Copy/Paste/Select All stay the system's, which is what makes the clipboard
-    // work inside the web view.
-    let edit = SubmenuBuilder::new(app, "Edit")
-        .item(&item("edit.undo", "Undo", Some("CmdOrCtrl+Z"))?)
-        .item(&item("edit.redo", "Redo", Some("CmdOrCtrl+Shift+Z"))?)
-        .separator()
-        .cut()
-        .copy()
-        .paste()
-        .select_all()
-        .separator()
-        .item(&item("edit.find", "Find", Some("CmdOrCtrl+F"))?)
-        .item(&item("edit.replace", "Replace", Some("CmdOrCtrl+Alt+F"))?)
-        .build()?;
-    let view = SubmenuBuilder::new(app, "View")
-        .item(&item("workbench.commandPalette", "Command Palette…", Some("CmdOrCtrl+Shift+P"))?)
-        .item(&item("workbench.quickOpen", "Go to File…", Some("CmdOrCtrl+P"))?)
-        .separator()
-        .item(&item("workbench.toggleSidebar", "Toggle Primary Side Bar", Some("CmdOrCtrl+B"))?)
-        .item(&item("workbench.togglePanel", "Toggle Panel", Some("CmdOrCtrl+J"))?)
-        .item(&item("workbench.toggleSecondary", "Toggle Secondary Side Bar", Some("CmdOrCtrl+Alt+B"))?)
-        .separator()
-        .item(&item("editor.zoomIn", "Zoom In", Some("CmdOrCtrl+="))?)
-        .item(&item("editor.zoomOut", "Zoom Out", Some("CmdOrCtrl+-"))?)
-        .item(&item("editor.zoomReset", "Reset Zoom", Some("CmdOrCtrl+0"))?)
-        .separator()
-        .item(&item("workbench.reload", "Reload Window", Some("CmdOrCtrl+R"))?)
-        .build()?;
-    let window = SubmenuBuilder::new(app, "Window").minimize().fullscreen().build()?;
-    MenuBuilder::new(app).items(&[&app_menu, &file, &edit, &view, &window]).build()
 }
 
 pub fn run() {
@@ -172,14 +100,9 @@ pub fn run() {
             let profile = state.profile.lock().unwrap().clone();
             let name = state.profile_name.lock().unwrap().clone();
             *state.mods.lock().unwrap() = mods::scan(app.handle(), &name, &profile);
-            let menu = build_menu(app)?;
-            app.set_menu(menu)?;
-            // A menu command is for the window in front.
-            app.on_menu_event(|app, event| {
-                if let Some(label) = windows::front_label(app) {
-                    let _ = app.emit_to(label.as_str(), "menu", event.id().0.clone());
-                }
-            });
+            app.set_menu(menu::build(app.handle())?)?;
+            // A menu command is for the window in front (Open Recent and the profiles are handled in Rust).
+            app.on_menu_event(menu::on_event);
             // Paths given on the command line open in the first window.
             let args: Vec<String> = std::env::args().skip(1).filter(|a| !a.starts_with('-')).collect();
             let mut initial = windows::to_paths(args.into_iter().map(|a| {
@@ -203,6 +126,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            menu::menu_context,
             core_info,
             core_log,
             recent_add,

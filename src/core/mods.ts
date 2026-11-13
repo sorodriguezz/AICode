@@ -487,7 +487,7 @@ export class ModHost {
         showInfo: (message: string, ...actions: { label: string; run: () => void }[]) => notify("info", message, actions),
         showWarning: (message: string, ...actions: { label: string; run: () => void }[]) => notify("warning", message, actions),
         showError: (message: string, ...actions: { label: string; run: () => void }[]) => notify("error", message, actions),
-        showQuickPick: <T extends QuickItem>(items: T[], opts?: { placeholder?: string; matchDescription?: boolean }) => pick(items, opts),
+        showQuickPick: <T extends QuickItem>(items: T[], opts?: Parameters<typeof pick<T>>[1]) => pick(items, opts),
         showInputBox: (opts: { prompt?: string; placeholder?: string; value?: string; password?: boolean; validate?: (v: string) => string | null }) => inputBox(opts),
         confirm: (message: string, detail?: string, primary?: string) => confirm(message, detail, primary),
         contextMenu: (x: number, y: number, items: MenuItem[]) => contextMenu(x, y, items),

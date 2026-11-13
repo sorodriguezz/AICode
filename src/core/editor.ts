@@ -288,6 +288,7 @@ export class EditorService {
         this.renderTabs();
         this.updatePlaceholder();
         this.onDidChangeContent.fire(this.info(doc));
+        this.scheduleAutoSave(doc);
       }
     });
 
@@ -442,7 +443,25 @@ export class EditorService {
       render: (el) => {
         const inner = h("div", { style: { position: "absolute", inset: "0", overflow: "auto" } });
         el.append(inner);
-        return spec.render(inner);
+        // The vertical scrollbar takes its width on the right: the same on the left keeps the
+        // page centered, with equal margins on both sides (0 while nothing scrolls).
+        const balance = () => {
+          const bar = inner.offsetWidth - inner.clientWidth;
+          inner.style.paddingLeft = bar > 0 ? `${bar}px` : "";
+        };
+        const sizes = new ResizeObserver(balance);
+        sizes.observe(inner);
+        const watchChildren = () => { for (const c of inner.children) sizes.observe(c); };
+        const kids = new MutationObserver(() => { watchChildren(); balance(); });
+        kids.observe(inner, { childList: true });
+        const disposable = spec.render(inner);
+        watchChildren();
+        balance();
+        return toDisposable(() => {
+          sizes.disconnect();
+          kids.disconnect();
+          disposable?.dispose();
+        });
       },
     });
   }
@@ -658,6 +677,8 @@ export class EditorService {
     if (!this.restoringPage) closeModal();
     if (this.active === doc) return this.show(doc);
     if (this.active?.kind === "text") this.active.viewState = this.editor.saveViewState();
+    // Auto Save "when the editor loses focus": the editor being left is saved.
+    if (this.autoSave === "onFocusChange" && this.active?.kind === "text") this.autoSaveNow(this.active);
     this.active = doc;
     if (recordHistory) {
       this.history = this.history.slice(0, this.historyIndex + 1).filter((id) => id !== doc.id);
@@ -673,6 +694,10 @@ export class EditorService {
 
   /** "Enable Preview Editors": a single click opens a file in a tab the next one replaces. */
   previewEnabled = true;
+  /** files.autoSave: when files on disk save by themselves. */
+  autoSave: "off" | "afterDelay" | "onFocusChange" | "onWindowChange" = "off";
+  autoSaveDelay = 1000;
+  private autoSaveTimers = new Map<string, number>();
 
   /** The ··· of the tab bar, as in VS Code. */
   private moreMenu(e: MouseEvent) {
@@ -1001,6 +1026,14 @@ export class EditorService {
               e.preventDefault();
               this.close(doc);
             } else if (e.button === 0) {
+              // Double-click keeps a preview tab open, as in VS Code. Detected here, not with
+              // `dblclick`: the first press re-renders the tabs, so the second lands on a new element.
+              if (e.detail >= 2 && doc.kind === "text" && doc.preview) {
+                e.preventDefault();
+                doc.preview = false;
+                this.renderTabs();
+                return;
+              }
               this.activate(doc);
               this.dragTab(e, doc);
             }
@@ -1008,12 +1041,6 @@ export class EditorService {
           oncontextmenu: (e: MouseEvent) => {
             e.preventDefault();
             this.tabMenu(e, doc);
-          },
-          ondblclick: () => {
-            if (doc.kind === "text") {
-              doc.preview = false;
-              this.renderTabs();
-            }
           },
         },
         h("span", { class: "tab-flare", "aria-hidden": "true" }),
@@ -1074,6 +1101,34 @@ export class EditorService {
   }
 
   // ---------- saving & closing ----------
+
+  /** What the File menu needs to know: which of its items have something to act on. */
+  menuContext() {
+    const a = this.active;
+    const text = a?.kind === "text" ? a : null;
+    return { editor: !!a, text: !!text, file: !!text?.path, dirty: this.docs.some((d) => d.kind === "text" && this.isDirty(d)) };
+  }
+
+  /** Auto Save "after a delay": each file on disk saves `autoSaveDelay` ms after its last change. */
+  private scheduleAutoSave(doc: TextDoc) {
+    if (this.autoSave !== "afterDelay" || !doc.path) return;
+    clearTimeout(this.autoSaveTimers.get(doc.id));
+    this.autoSaveTimers.set(doc.id, window.setTimeout(() => {
+      this.autoSaveTimers.delete(doc.id);
+      this.autoSaveNow(doc);
+    }, this.autoSaveDelay));
+  }
+
+  /** Saves a file that is on disk and has changes, if it is still open. Untitled text waits for Save. */
+  private autoSaveNow(doc: TextDoc) {
+    if (doc.path && this.docs.includes(doc) && this.isDirty(doc)) void this.save(doc);
+  }
+
+  /** The window lost focus: Auto Save "when the editor/window loses focus" saves every changed file. */
+  autoSaveOnBlur() {
+    if (this.autoSave !== "onFocusChange" && this.autoSave !== "onWindowChange") return;
+    for (const d of this.docs) if (d.kind === "text") this.autoSaveNow(d);
+  }
 
   async save(doc: TextDoc | null = this.activeText()): Promise<boolean> {
     if (!doc) return false;

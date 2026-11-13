@@ -96,6 +96,18 @@ export async function exportProfile(name: string, to?: string) {
   }
 }
 
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** One line on what a profile holds: "3 mods on · 1 of its own · 2 windows". */
+function summaryLine(p: ProfileSummary) {
+  return [
+    p.enabled ? `${plural(p.enabled, "mod")} on` : "no mods",
+    p.own.length ? `${p.own.length} of its own` : "",
+    p.keybindings ? plural(p.keybindings, "shortcut") : "",
+    plural(p.windows, "window"),
+  ].filter(Boolean).join(" · ");
+}
+
 export function openProfiles(editors: EditorService) {
   editors.openPage({
     title: "Profiles",
@@ -103,115 +115,188 @@ export function openProfiles(editors: EditorService) {
     key: "profiles",
     restore: "profiles",
     render: (root) => {
-      const page = h("div", { class: "mods-page" });
+      const page = h("div", { class: "mods-page mods-manager profiles-page" });
       root.append(page);
       let first = true;
 
-      const refresh = async () => {
-        const list = await invoke<ProfileSummary[]>("profile_list");
-        clear(page);
-        page.append(
-          h("h1", null, "Profiles"),
-          h("div", { class: "muted" }, "Each profile is a space of its own: which mods are on and the mods installed only in it, settings, keyboard shortcuts, windows and open files. Export one to a file to take it to another machine or share it."),
-          h(
-            "div",
-            { class: "mods-toolbar" },
-            h("button", { class: "btn", onclick: async () => ((await createProfile()) ? refresh() : null) }, icon("add"), "New Profile…"),
-            h("button", { class: "btn secondary", onclick: async () => ((await importProfile()) ? refresh() : null) }, icon("cloud-download"), "Import Profile…"),
-          ),
-          ...list.map((p, i) => card(p, i)),
-        );
-        first = false;
+      const act = async (fn: () => Promise<unknown>) => {
+        try {
+          await fn();
+        } catch (e) {
+          notify("error", String(e));
+        }
+        refresh();
       };
 
-      const card = (p: ProfileSummary, i: number) => {
-        const act = async (fn: () => Promise<unknown>) => {
-          try {
-            await fn();
-          } catch (e) {
-            notify("error", String(e));
-          }
-          refresh();
-        };
-        return h(
-          "div",
-          { class: `mod-card profile-card${first ? " card-enter" : ""}${p.active ? " active-profile" : ""}`, style: { animationDelay: first ? `${Math.min(i, 12) * 30}ms` : "0ms" } },
-          h("div", { class: "mod-icon" }, icon(p.icon || (p.active ? "account" : "person"))),
+      /** Only what applies to that profile: its description can be edited only while it's the
+       * active one, and the active one can't be deleted. */
+      const moreItems = (p: ProfileSummary) => [
+        {
+          label: "Rename…",
+          icon: "edit",
+          run: () =>
+            act(async () => {
+              const to = await inputBox({ prompt: `New name for "${p.name}"`, value: p.name, validate: NAME_RULE });
+              if (to && to !== p.name) await invoke("profile_rename", { from: p.name, to });
+            }),
+        },
+        ...(p.active
+          ? [{
+              label: p.description ? "Edit Description…" : "Add Description…",
+              icon: "note",
+              run: () =>
+                act(async () => {
+                  const d = await inputBox({ prompt: "What is this profile for?", value: p.description, placeholder: "Notes and Markdown, no dev tools" });
+                  if (d !== undefined) await invoke("profile_set_info", { description: d });
+                }),
+            }]
+          : []),
+        {
+          label: "Duplicate…",
+          icon: "copy",
+          run: () =>
+            act(async () => {
+              const name = await inputBox({ prompt: `Name of the copy of "${p.name}"`, value: `${p.name}-copy`, validate: NAME_RULE });
+              if (name) await invoke("profile_create", { name, copyFrom: p.name, description: p.description || null });
+            }),
+        },
+        { label: "Export…", icon: "export", run: () => exportProfile(p.name) },
+        ...(p.active ? [{ separator: true, label: "" }, { label: "Open profile.json", icon: "json", run: () => commands.execute("preferences.openProfileJson") }] : []),
+        ...(!p.active
+          ? [
+              { separator: true, label: "" },
+              {
+                label: "Delete…",
+                icon: "trash",
+                run: () =>
+                  act(async () => {
+                    if (await confirm(`Delete the profile "${p.name}"?`, `Its settings, ${p.own.length ? `its ${plural(p.own.length, "own mod")}, ` : ""}and the unsaved text of its windows are deleted. Export it first to keep a copy.`, "Delete")) await invoke("profile_delete", { name: p.name });
+                  }),
+              },
+            ]
+          : []),
+      ];
+      const more = (p: ProfileSummary, cls = "btn secondary icon-only") =>
+        h(
+          "button",
+          {
+            class: cls,
+            title: "More Actions…",
+            "aria-label": "More Actions",
+            onclick: (e: MouseEvent) => {
+              e.stopPropagation();
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              import("./widgets").then((w) => w.contextMenu(r.left - 140, r.bottom + 4, moreItems(p)));
+            },
+          },
+          icon("ellipsis"),
+        );
+
+      /** A labelled number, as on the Mods page. */
+      const fact = (value: number, label: string, title: string, iconName: string) =>
+        h("div", { class: "profile-fact", title }, icon(iconName), h("b", null, String(value)), h("span", null, label));
+
+      /** The profile in use: what it holds and the places to change it. */
+      const current = (p: ProfileSummary) =>
+        h(
+          "section",
+          { class: `profile-current${first ? " card-enter" : ""}`, "aria-label": `Current profile: ${p.name}` },
           h(
             "div",
-            null,
-            h("div", { class: "title" }, h("b", null, p.name), p.active ? h("span", { class: "chip" }, icon("check"), "active") : null),
-            p.description || !p.enabled ? h("div", { class: "desc" }, p.description || "A plain notepad.") : null,
+            { class: "profile-current-head" },
+            h("div", { class: "mod-icon large on" }, icon(p.icon || "account")),
             h(
               "div",
-              { class: "meta" },
-              h("span", { class: "chip outline", title: "Mods turned on" }, icon("extensions"), `${p.enabled} on`),
-              p.own.length ? h("span", { class: "chip outline", title: `Installed only in this profile: ${p.own.join(", ")}` }, icon("package"), `${p.own.length} own`) : null,
-              p.keybindings ? h("span", { class: "chip outline", title: "Keyboard shortcuts of its own" }, icon("record-keys"), String(p.keybindings)) : null,
-              h("span", { class: "chip outline", title: "Windows it opens" }, icon("window"), String(p.windows)),
+              { class: "profile-current-name" },
+              h("div", { class: "eyebrow" }, "Current profile"),
+              h("div", { class: "name" }, p.name),
+              p.description
+                ? h("div", { class: "desc" }, p.description)
+                : h("a", { href: "#", class: "desc add", onclick: (e: Event) => { e.preventDefault(); moreItems(p).find((i) => i.label === "Add Description…")?.run?.(); } }, icon("add"), "Add a description"),
             ),
+            more(p),
           ),
           h(
             "div",
-            { class: "side-actions" },
-            p.active
-              ? h("button", { class: "btn secondary", onclick: () => commands.execute("preferences.settings") }, "Settings")
-              : h("button", { class: "btn", onclick: () => askSwitch(p.name) }, "Switch"),
-            h("button", { class: "btn secondary", onclick: () => exportProfile(p.name) }, "Export…"),
-            h(
-              "button",
-              {
-                class: "icon-button",
-                title: "More",
-                onclick: (e: MouseEvent) => {
-                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                  const items = [
-                    {
-                      label: "Rename…",
-                      run: () =>
-                        act(async () => {
-                          const to = await inputBox({ prompt: `New name for "${p.name}"`, value: p.name, validate: NAME_RULE });
-                          if (to && to !== p.name) await invoke("profile_rename", { from: p.name, to });
-                        }),
-                    },
-                    {
-                      label: "Edit Description…",
-                      run: () =>
-                        act(async () => {
-                          if (!p.active) return notify("info", "Switch to the profile to edit its description.");
-                          const d = await inputBox({ prompt: "What is this profile for?", value: p.description });
-                          if (d !== undefined) await invoke("profile_set_info", { description: d });
-                        }),
-                    },
-                    {
-                      label: "Duplicate…",
-                      run: () =>
-                        act(async () => {
-                          const name = await inputBox({ prompt: `Name of the copy of "${p.name}"`, value: `${p.name}-copy`, validate: NAME_RULE });
-                          if (name) await invoke("profile_create", { name, copyFrom: p.name, description: p.description || null });
-                        }),
-                    },
-                    ...(p.active ? [{ label: "Open profile.json", run: () => commands.execute("preferences.openProfileJson") }] : []),
-                    ...(!p.active
-                      ? [
-                          { separator: true, label: "" },
-                          {
-                            label: "Delete…",
-                            run: () =>
-                              act(async () => {
-                                if (await confirm(`Delete the profile "${p.name}"?`, `Its settings, its ${p.own.length} own mod${p.own.length === 1 ? "" : "s"}, and the unsaved text of its windows are deleted. Export it first to keep a copy.`, "Delete")) await invoke("profile_delete", { name: p.name });
-                              }),
-                          },
-                        ]
-                      : []),
-                  ];
-                  import("./widgets").then((w) => w.contextMenu(r.left - 120, r.bottom + 2, items));
-                },
-              },
-              icon("ellipsis"),
-            ),
+            { class: "profile-facts" },
+            fact(p.enabled, p.enabled === 1 ? "mod on" : "mods on", "Mods turned on in this profile", "extensions"),
+            fact(p.own.length, "of its own", p.own.length ? `Installed only in this profile: ${p.own.join(", ")}` : "No mods installed only in this profile", "package"),
+            fact(p.keybindings, p.keybindings === 1 ? "shortcut" : "shortcuts", "Keyboard shortcuts of its own", "record-keys"),
+            fact(p.windows, p.windows === 1 ? "window" : "windows", "Windows it opens", "window"),
+          ),
+          h(
+            "div",
+            { class: "profile-current-actions" },
+            h("button", { class: "btn secondary", onclick: () => commands.execute("mods.manage") }, icon("extensions"), "Mods"),
+            h("button", { class: "btn secondary", onclick: () => commands.execute("preferences.settings") }, icon("settings-gear"), "Settings"),
+            h("button", { class: "btn secondary", onclick: () => commands.execute("workbench.keybindings") }, icon("record-keys"), "Keyboard Shortcuts"),
+            h("div", { class: "toolbar-spacer" }),
+            h("button", { class: "btn secondary", onclick: () => exportProfile(p.name) }, icon("export"), "Export…"),
           ),
         );
+
+      /** Another profile: the same size as every other tile, with Switch as its one action. */
+      const tile = (p: ProfileSummary, i: number) =>
+        h(
+          "div",
+          {
+            class: `mod-tile profile-tile${first ? " card-enter" : ""}`,
+            style: { animationDelay: first ? `${Math.min(i + 1, 12) * 30}ms` : "0ms" },
+            tabindex: "0",
+            onkeydown: (e: KeyboardEvent) => { if (e.key === "Enter" && e.target === e.currentTarget) askSwitch(p.name); },
+          },
+          h(
+            "div",
+            { class: "mod-tile-head" },
+            h("div", { class: "mod-icon" }, icon(p.icon || "person")),
+            h("div", { class: "mod-tile-name" }, h("div", { class: "name", title: p.name }, p.name), h("div", { class: "sub", title: summaryLine(p) }, summaryLine(p))),
+            more(p, "icon-button"),
+          ),
+          h("div", { class: `mod-tile-desc${p.description ? "" : " empty"}` }, p.description || (p.enabled ? "No description." : "A plain notepad.")),
+          h(
+            "div",
+            { class: "mod-tile-foot" },
+            p.own.length ? h("span", { class: "state-dot idle", title: p.own.join(", ") }, `${p.own.length} of its own`) : h("span"),
+            h("button", { class: "btn", onclick: () => askSwitch(p.name) }, icon("arrow-swap"), "Switch"),
+          ),
+        );
+
+      const refresh = async () => {
+        const list = await invoke<ProfileSummary[]>("profile_list");
+        const active = list.find((p) => p.active);
+        const others = list.filter((p) => !p.active).sort((a, b) => a.name.localeCompare(b.name));
+        const create = async () => ((await createProfile()) ? refresh() : null);
+        const importIt = async () => ((await importProfile()) ? refresh() : null);
+        const scroller = page.parentElement;
+        const top = scroller?.scrollTop ?? 0;
+        clear(page);
+        page.append(
+          h(
+            "header",
+            { class: "mods-hero" },
+            h("div", null, h("h1", null, "Profiles"), h("p", null, "Each profile is a space of its own — mods, settings, keyboard shortcuts, windows and open files. Export one to take it to another machine or share it.")),
+            h(
+              "div",
+              { class: "mods-toolbar profile-toolbar" },
+              h("button", { class: "btn", onclick: create }, icon("add"), "New Profile…"),
+              h("button", { class: "btn secondary", onclick: importIt }, icon("cloud-download"), "Import…"),
+            ),
+          ),
+          ...(active ? [current(active)] : []),
+          h("h2", null, "Other Profiles", others.length ? h("span", { class: "count" }, String(others.length)) : null),
+          others.length
+            ? h("div", { class: "mod-grid" }, others.map(tile))
+            : h(
+                "div",
+                { class: "mods-empty profile-empty" },
+                icon("account"),
+                h("b", null, "Only one profile so far"),
+                h("span", null, "Make one for another kind of work — writing, a language, a client — each with its own mods and settings. Switching keeps your open files."),
+                h("div", { class: "row" }, h("button", { class: "btn", onclick: create }, icon("add"), "New Profile…"), h("button", { class: "btn secondary", onclick: importIt }, icon("cloud-download"), "Import…")),
+              ),
+        );
+        if (scroller) scroller.scrollTop = top;
+        first = false;
       };
 
       refresh();

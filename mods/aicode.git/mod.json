@@ -10,7 +10,8 @@
   "activation": [
     "onView:scm",
     "onFolder",
-    "onCommand:git.commit"
+    "onCommand:git.commit",
+    "onCommand:git.clone"
   ],
   "permissions": [
     "process",
@@ -107,6 +108,151 @@
       {
         "id": "git.acceptCommitMessage",
         "title": "Accept Commit Message",
+        "category": "Git"
+      },
+      {
+        "id": "git.showOutput",
+        "title": "Show Git Output",
+        "category": "Git"
+      },
+      {
+        "id": "git.clone",
+        "title": "Clone",
+        "category": "Git"
+      },
+      {
+        "id": "git.pullRebase",
+        "title": "Pull (Rebase)",
+        "category": "Git"
+      },
+      {
+        "id": "git.pullFrom",
+        "title": "Pull from…",
+        "category": "Git"
+      },
+      {
+        "id": "git.pushTo",
+        "title": "Push to…",
+        "category": "Git"
+      },
+      {
+        "id": "git.fetchPrune",
+        "title": "Fetch (Prune)",
+        "category": "Git"
+      },
+      {
+        "id": "git.fetchAll",
+        "title": "Fetch From All Remotes",
+        "category": "Git"
+      },
+      {
+        "id": "git.merge",
+        "title": "Merge…",
+        "category": "Git"
+      },
+      {
+        "id": "git.rebase",
+        "title": "Rebase Branch…",
+        "category": "Git"
+      },
+      {
+        "id": "git.createBranchFrom",
+        "title": "Create Branch From…",
+        "category": "Git"
+      },
+      {
+        "id": "git.renameBranch",
+        "title": "Rename Branch…",
+        "category": "Git"
+      },
+      {
+        "id": "git.deleteBranch",
+        "title": "Delete Branch…",
+        "category": "Git"
+      },
+      {
+        "id": "git.publish",
+        "title": "Publish Branch…",
+        "category": "Git"
+      },
+      {
+        "id": "git.addRemote",
+        "title": "Add Remote…",
+        "category": "Git"
+      },
+      {
+        "id": "git.removeRemote",
+        "title": "Remove Remote",
+        "category": "Git"
+      },
+      {
+        "id": "git.stashIncludeUntracked",
+        "title": "Stash (Include Untracked)",
+        "category": "Git"
+      },
+      {
+        "id": "git.stashStaged",
+        "title": "Stash Staged",
+        "category": "Git"
+      },
+      {
+        "id": "git.stashApplyLatest",
+        "title": "Apply Latest Stash",
+        "category": "Git"
+      },
+      {
+        "id": "git.stashApply",
+        "title": "Apply Stash…",
+        "category": "Git"
+      },
+      {
+        "id": "git.stashPopPick",
+        "title": "Pop Stash…",
+        "category": "Git"
+      },
+      {
+        "id": "git.stashDrop",
+        "title": "Drop Stash…",
+        "category": "Git"
+      },
+      {
+        "id": "git.stashDropAll",
+        "title": "Drop All Stashes…",
+        "category": "Git"
+      },
+      {
+        "id": "git.viewStash",
+        "title": "View Stash…",
+        "category": "Git"
+      },
+      {
+        "id": "git.createTag",
+        "title": "Create Tag",
+        "category": "Git"
+      },
+      {
+        "id": "git.deleteTag",
+        "title": "Delete Tag",
+        "category": "Git"
+      },
+      {
+        "id": "git.deleteRemoteTag",
+        "title": "Delete Remote Tag",
+        "category": "Git"
+      },
+      {
+        "id": "git.pushTags",
+        "title": "Push Tags",
+        "category": "Git"
+      },
+      {
+        "id": "git.commitStaged",
+        "title": "Commit Staged",
+        "category": "Git"
+      },
+      {
+        "id": "git.commitAll",
+        "title": "Commit All",
         "category": "Git"
       }
     ]

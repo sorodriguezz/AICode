@@ -4,7 +4,7 @@ import "./styles.css";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as monaco from "monaco-editor";
 import { invoke, prepareStreams, streamCounts, type ModInfo } from "./core/ipc";
 import * as commands from "./core/commands";
@@ -15,7 +15,7 @@ import { ModHost, decorations } from "./core/mods";
 import { registerModManager } from "./core/modManager";
 import { applyTheme, BUILTIN_DARK, BUILTIN_LIGHT, ThemeEntry } from "./core/theme";
 import { configureFileIcons, setIconTheme, iconThemes, currentIconTheme } from "./core/fileIcons";
-import { quickInput, fuzzyScore, highlight, pick, notify, QuickItem, dialog } from "./core/widgets";
+import { quickInput, fuzzyScore, highlight, pick, notify, QuickItem, dialog, inputBox } from "./core/widgets";
 import { basename, h, icon } from "./core/ui";
 import { motionEnabled, setMotion } from "./core/motion";
 import { openProfiles, openSettings, switchProfile, createProfile, importProfile, exportProfile, ProfileView } from "./core/profiles";
@@ -137,6 +137,8 @@ async function boot() {
     }
     document.documentElement.dataset.iconSize = config.core("workbench.iconSize", "normal");
     editors.previewEnabled = config.core<boolean>("workbench.previewEditors", true) !== false;
+    editors.autoSave = config.core<string>("files.autoSave", "off") as typeof editors.autoSave;
+    editors.autoSaveDelay = Math.max(0, Number(config.core("files.autoSaveDelay", 1000)) || 0);
     editors.useModal = config.core<string>("workbench.editor.useModal", "some") !== "off";
     editors.dragTabsToWindow = config.core("workbench.tabs.dragToWindow", true) !== false;
     if (has("workbench.iconTheme")) {
@@ -299,7 +301,9 @@ async function boot() {
   });
 
   // ---------- opening files and folders from outside ----------
-  const openPaths = async (paths: string[]) => {
+  /** `dropped`: dragged onto this window, so a folder replaces this one (VS Code's drop); otherwise
+   *  (the Dock icon, `open -a`, the command line) a window with a folder keeps it. */
+  const openPaths = async (paths: string[], dropped = false) => {
     const folders: string[] = [];
     for (const path of paths) {
       const st = await invoke<{ exists: boolean; is_dir: boolean }>("fs_stat", { modId: "core", path }).catch(() => null);
@@ -308,14 +312,16 @@ async function boot() {
         continue;
       }
       if (st.is_dir) folders.push(path);
-      else if (await editors.openFile(path)) invoke("recent_add", { path });
+      // Files open here as regular tabs (never a preview), next to what is open: nothing is replaced.
+      else if (await editors.openFile(path, { preview: false })) invoke("recent_add", { path });
     }
     // As in VS Code, a window without a folder takes the first one; a window that already has one
-    // keeps it, and every other folder gets a window of its own.
-    const mine = workspace.folder === null ? folders[0] : folders.find((f) => f === workspace.folder);
+    // keeps it, and every other folder gets a window of its own. Dropped onto the window, the first
+    // folder replaces this one.
+    const mine = workspace.folder === null || dropped ? folders[0] : folders.find((f) => f === workspace.folder);
     for (const other of folders.filter((f) => f !== mine)) invoke("window_new", { paths: [other] });
     if (mine) {
-      workspace.set(mine);
+      if (mine !== workspace.folder) workspace.set(mine);
       if (wb.hasView("explorer")) wb.showView("explorer", false);
       else
         notify("info", `Opened ${basename(mine)}. Turn on the Explorer mod to browse it (⌘P already finds its files).`, [
@@ -334,7 +340,7 @@ async function boot() {
     const p = e.payload;
     if (p.type === "enter" || p.type === "over") dropHint.classList.add("visible");
     else dropHint.classList.remove("visible");
-    if (p.type === "drop" && p.paths.length) openPaths(p.paths);
+    if (p.type === "drop" && p.paths.length) openPaths(p.paths, true);
   });
 
   // Hot exit: the session (unsaved text included) is written as you type, so quitting, a crash or
@@ -371,6 +377,21 @@ async function boot() {
   // GPU memory at idle, for any field, Monaco or not). When the window is in the background
   // nobody sees the caret: let go of the focus, and give it back on return.
   let focusedBeforeBlur: HTMLElement | null = null;
+  window.addEventListener("blur", () => editors.autoSaveOnBlur());
+
+  // The File menu follows the window in front: no folder, no Close Folder; no editor, no Save…
+  let menuSent = "";
+  const reportMenu = (force = false) => {
+    const context = { folder: workspace.folder !== null, ...editors.menuContext() };
+    const key = JSON.stringify(context);
+    if (!force && key === menuSent) return;
+    menuSent = key;
+    invoke("menu_context", { context }).catch(() => {});
+  };
+  for (const ev of [editors.onDidChangeActive, editors.onDidChangeDocs, editors.onDidSave, editors.onDidChangeContent, workspace.onDidChange]) ev.event(() => reportMenu());
+  // Coming to the front: this window's state replaces the last one's.
+  window.addEventListener("focus", () => reportMenu(true));
+  reportMenu(true);
   window.addEventListener("blur", () => {
     const el = document.activeElement as HTMLElement | null;
     if (el && el !== document.body) {
@@ -761,6 +782,37 @@ function registerWorkbenchCommands(
     const folder = await openDialog({ directory: true, multiple: false });
     if (typeof folder === "string") await invoke("window_new", { paths: [folder] });
   }, "File");
+  // Open a folder in this window (replacing the one it has), as VS Code's File ▸ Open Folder.
+  reg("workbench.openFolder", "Open Folder…", async (path?: string) => {
+    const folder = typeof path === "string" ? path : await openDialog({ directory: true, multiple: false });
+    if (typeof folder !== "string") return;
+    workspace.set(folder);
+    if (wb.hasView("explorer")) wb.showView("explorer", false);
+  }, "File");
+  reg("workbench.closeFolder", "Close Folder", () => workspace.set(null), "File");
+  commands.bind("mod+k f", "workbench.closeFolder");
+  reg("workbench.duplicateWindow", "Duplicate Window", () => invoke("window_new", { paths: workspace.folder ? [workspace.folder] : [] }), "File");
+  // A named file on disk (a text file is ⌘N): in the open folder, or wherever the user picks.
+  reg("file.newFile", "New File…", async () => {
+    let path: string | null = null;
+    if (workspace.folder) {
+      const name = (await inputBox({ prompt: `New file in ${workspace.name} (folders are created as needed)`, placeholder: "src/notes.md" }))?.trim();
+      if (!name) return;
+      path = name.startsWith("/") ? name : `${workspace.folder}/${name.replace(/^(\.\/)+/, "")}`;
+    } else {
+      path = await saveDialog({ title: "New File" });
+      if (!path) return;
+    }
+    try {
+      const st = await invoke<{ exists: boolean }>("fs_stat", { modId: "core", path });
+      if (!st.exists) await invoke("fs_create", { modId: "core", path, dir: false });
+    } catch (e) {
+      return notify("error", `Could not create ${basename(path)}: ${e}`);
+    }
+    if (await editors.openFile(path)) invoke("recent_add", { path });
+  }, "File");
+  // Like VS Code's File ▸ Auto Save: on (after a delay) or off; the setting has the other modes.
+  reg("files.toggleAutoSave", "Toggle Auto Save", () => config.update("core", "files.autoSave", config.core<string>("files.autoSave", "off") === "off" ? "afterDelay" : "off"), "File");
   reg("window.close", "Close Window", () => getCurrentWindow().close(), "Window");
   reg("window.toggleMaximize", "Toggle Maximize", () => getCurrentWindow().toggleMaximize(), "Window");
   reg("preferences.theme", "Color Theme", async () => {

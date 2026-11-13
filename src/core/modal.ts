@@ -1,7 +1,7 @@
 // The modal editor: a page (Settings, Mods, Keyboard Shortcuts…) shown over the workbench instead of
 // in a tab, the way VS Code opens them (`workbench.editor.useModal`). 80% of the window, at most
-// 1400×900, centered; the header drags it, its edges resize it, and it can be maximized or moved
-// into a regular tab. Escape or a click outside closes it.
+// 1400×900, centered and fixed in place (it can't be dragged); its edges resize it, and it can be
+// maximized or moved into a regular tab. Escape or a click outside closes it.
 
 import { h, icon, Disposable } from "./ui";
 
@@ -109,19 +109,10 @@ export function openModal(spec: ModalSpec) {
     const onUp = () => {
       target.removeEventListener("pointermove", onMove);
       target.removeEventListener("pointerup", onUp);
-      header.classList.remove("dragging");
     };
     target.addEventListener("pointermove", onMove);
     target.addEventListener("pointerup", onUp);
   };
-  header.addEventListener("pointerdown", (e) => {
-    if (maximized || (e.target as HTMLElement).closest("button")) return;
-    header.classList.add("dragging");
-    drag(e, (dx, dy, s) => {
-      box.left = s.left + dx;
-      box.top = s.top + dy;
-    });
-  });
   header.addEventListener("dblclick", (e) => {
     if (!(e.target as HTMLElement).closest("button")) setMaximized(!maximized);
   });
