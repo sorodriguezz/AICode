@@ -1,0 +1,11 @@
+{
+  "id": "aicode.git-core",
+  "name": "Git Core",
+  "version": "1.0.0",
+  "description": "Shared Git command runner, repository status, change notifications and diff tools for Git mods.",
+  "author": "AICode",
+  "icon": "git-branch",
+  "api": 1,
+  "main": "main.js",
+  "permissions": ["process", "fs:read"]
+}

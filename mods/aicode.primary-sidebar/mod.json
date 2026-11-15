@@ -1,0 +1,10 @@
+{
+  "id": "aicode.primary-sidebar",
+  "name": "Primary Side Bar",
+  "version": "1.0.0",
+  "description": "Adds the primary side bar for Explorer, Search and other views. Dock any view here or set its location to sidebar.",
+  "author": "AICode",
+  "icon": "layout-sidebar-left",
+  "api": 1,
+  "contributes": { "viewContainers": ["sidebar"] }
+}

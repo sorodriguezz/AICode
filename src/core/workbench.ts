@@ -10,7 +10,8 @@ import { contextMenu, type MenuItem } from "./widgets";
 import { motionEnabled, play } from "./motion";
 import { OWN_TITLE_BAR, menuBar, windowControls } from "./titlebar";
 
-export type ViewLocation = "sidebar" | "secondary" | "panel";
+export const VIEW_LOCATIONS = ["sidebar", "secondary", "panel"] as const;
+export type ViewLocation = (typeof VIEW_LOCATIONS)[number];
 
 export interface ViewDescriptor {
   id: string;
@@ -91,10 +92,13 @@ export interface EdgeSpec {
 /** Where a view was put; a floating one may leave `location` out (docking puts it back where its mod put it). */
 type Placement = { location?: ViewLocation; order?: number; float?: FloatRect & { open: boolean } };
 
-/** A view's descriptor with what its placement changes. */
-function placed(desc: ViewDescriptor, p: Placement | undefined): ViewDescriptor {
-  if (!p) return { ...desc };
-  return { ...desc, ...(p.location ? { location: p.location } : {}), ...(typeof p.order === "number" ? { order: p.order } : {}) };
+/** A view's effective position. Keep its preferred placement when that container is off. */
+function placed(desc: ViewDescriptor, p: Placement | undefined, locations: readonly ViewLocation[]): ViewDescriptor {
+  const preferred = p?.location ?? desc.location;
+  const location = locations.includes(preferred) ? preferred
+    : locations.includes(desc.location) ? desc.location
+      : locations[0] ?? preferred;
+  return { ...desc, location, order: p?.order ?? desc.order };
 }
 
 interface ViewEntry {
@@ -277,7 +281,7 @@ export class Workbench {
     panel: { visible: false, active: null, size: 260 },
   };
 
-  constructor(mount: HTMLElement) {
+  constructor(mount: HTMLElement, readonly viewLocations: readonly ViewLocation[]) {
     this.commandCenterLabel = h("span", null, "Search");
     const commandCenter = h(
       "div",
@@ -345,9 +349,9 @@ export class Workbench {
     this.dropZones = h(
       "div",
       { class: "view-drop-zones" },
-      h("div", { class: "zone left", dataset: { drop: "sidebar", zone: "1" } }, h("span", null, "Primary Side Bar")),
-      h("div", { class: "zone bottom", dataset: { drop: "panel", zone: "1" } }, h("span", null, "Panel")),
-      h("div", { class: "zone right", dataset: { drop: "secondary", zone: "1" } }, h("span", null, "Secondary Side Bar")),
+      viewLocations.includes("sidebar") ? h("div", { class: "zone left", dataset: { drop: "sidebar", zone: "1" } }, h("span", null, "Primary Side Bar")) : null,
+      viewLocations.includes("panel") ? h("div", { class: "zone bottom", dataset: { drop: "panel", zone: "1" } }, h("span", null, "Panel")) : null,
+      viewLocations.includes("secondary") ? h("div", { class: "zone right", dataset: { drop: "secondary", zone: "1" } }, h("span", null, "Secondary Side Bar")) : null,
       h("div", { class: "zone float", dataset: { drop: "floating", zone: "1" } }, h("span", null, "Float")),
     );
     // A pane beside the editor (a Markdown preview "to the side"), with its own header and a sash.
@@ -415,7 +419,7 @@ export class Workbench {
 
   registerView(desc: ViewDescriptor): Disposable {
     const moved = this.placement[desc.id];
-    this.views.set(desc.id, { desc: placed(desc, moved), original: desc, rendered: false, badge: 0, float: moved?.float ? { ...moved.float } : undefined });
+    this.views.set(desc.id, { desc: placed(desc, moved, this.viewLocations), original: desc, rendered: false, badge: 0, float: moved?.float ? { ...moved.float } : undefined });
     this.renderChrome();
     return toDisposable(() => {
       const entry = this.views.get(desc.id);
@@ -438,6 +442,7 @@ export class Workbench {
   }
 
   viewsAt(loc: ViewLocation): ViewDescriptor[] {
+    if (!this.viewLocations.includes(loc)) return [];
     return [...this.views.values()]
       .filter((v) => !v.float && !v.external)
       .map((v) => v.desc)
@@ -509,7 +514,7 @@ export class Workbench {
     return list[0]?.id ?? null;
   }
 
-  async showView(id: string, focus = true) {
+  async showView(id: string, focus = true): Promise<void> {
     const entry = this.views.get(id);
     if (!entry) return;
     if (id === this.centerView) {
@@ -535,6 +540,9 @@ export class Workbench {
       return;
     }
     const loc = entry.desc.location;
+    if (!this.viewLocations.includes(loc)) {
+      return this.floatView(id, undefined, focus);
+    }
     const previous = this.activeAt(loc);
     this.state[loc].active = id;
     this.state[loc].visible = true;
@@ -737,7 +745,7 @@ export class Workbench {
     for (const entry of this.views.values()) {
       const moved = this.placement[entry.desc.id];
       const float = moved?.float;
-      entry.desc = placed(entry.original, moved);
+      entry.desc = placed(entry.original, moved, this.viewLocations);
       const wasFloating = !!entry.float;
       entry.float = float ? { ...float } : undefined;
       if (wasFloating && !entry.float) this.removeFrame(entry);
@@ -760,7 +768,7 @@ export class Workbench {
   /** Moves a view to a part, before another view there (or last). */
   moveView(id: string, to: ViewLocation, beforeId?: string) {
     const entry = this.views.get(id);
-    if (!entry || beforeId === id) return;
+    if (!entry || beforeId === id || !this.viewLocations.includes(to)) return;
     const where = this.whereIs(id)!;
     // Out of a frame or a mod's element, back into a part.
     if (entry.float) {
@@ -780,7 +788,11 @@ export class Workbench {
     list.forEach((d, i) => {
       const e = this.views.get(d.id)!;
       e.desc = { ...e.desc, location: to, order: (i + 1) * 10 };
-      this.placement[d.id] = { location: to, order: (i + 1) * 10 };
+      const preferred = this.placement[d.id]?.location ?? e.original.location;
+      // Keep the preferred placement of a neighbor temporarily docked here.
+      if (d.id === id || this.viewLocations.includes(preferred)) {
+        this.placement[d.id] = { location: to, order: (i + 1) * 10 };
+      }
     });
     if (from !== to && wasActiveThere) this.state[from].active = this.viewsAt(from)[0]?.id ?? null;
     if (previousAtTarget && previousAtTarget !== id) this.views.get(previousAtTarget)?.provider?.onHide?.();
@@ -792,7 +804,7 @@ export class Workbench {
   // ---------- floating views ----------
 
   /** Takes a view out of its part into a frame over the workbench (where `rect` says, or centered). */
-  floatView(id: string, rect?: Partial<FloatRect>) {
+  floatView(id: string, rect?: Partial<FloatRect>, focus = true) {
     const entry = this.views.get(id);
     if (!entry || this.hiddenViews.has(id) || id === this.centerView) return;
     const where = this.whereIs(id)!;
@@ -816,8 +828,9 @@ export class Workbench {
     }
     this.savePlacement(entry);
     this.placeFrame(entry);
-    void this.showView(id, true);
+    const opened = this.showView(id, focus);
     if (where !== "floating") this.onDidMoveView.fire({ id, from: where, to: "floating" });
+    return opened;
   }
 
   /** A floating view back into a part (its own, or `to`). */
@@ -927,7 +940,7 @@ export class Workbench {
         { class: "part-actions" },
         (entry.provider?.actions ?? []).map((a) => iconButton(a.icon, a.title, (e) => a.run(e))),
         h("span", { class: "action-divider" }),
-        iconButton("pinned", "Dock", () => this.dockView(id)),
+        this.viewLocations.length ? iconButton("pinned", "Dock", () => this.dockView(id)) : null,
         iconButton("close", "Close", () => this.closeFloating(id)),
       ),
     );
@@ -1062,7 +1075,7 @@ export class Workbench {
   resetPlacement() {
     this.placement = {};
     for (const entry of this.views.values()) {
-      entry.desc = { ...entry.original };
+      entry.desc = placed(entry.original, undefined, this.viewLocations);
       if (entry.float) {
         entry.float = undefined;
         this.removeFrame(entry);
@@ -1079,12 +1092,13 @@ export class Workbench {
     const entry = this.views.get(id);
     if (!entry) return;
     const names: Record<ViewLocation, string> = { sidebar: "Primary Side Bar", secondary: "Secondary Side Bar", panel: "Panel" };
-    const moved = entry.desc.location !== entry.original.location;
+    const originalLocation = placed(entry.original, undefined, this.viewLocations).location;
+    const moved = entry.desc.location !== originalLocation;
     contextMenu(e.clientX, e.clientY, [
-      ...(["sidebar", "secondary", "panel"] as ViewLocation[]).filter((l) => !!entry.float || l !== entry.desc.location).map((l) => ({ label: `Move to ${names[l]}`, run: () => this.moveView(id, l) })),
+      ...this.viewLocations.filter((l) => !!entry.float || l !== entry.desc.location).map((l) => ({ label: `Move to ${names[l]}`, run: () => this.moveView(id, l) })),
       ...(entry.float ? [] : [{ label: "Float", run: () => this.floatView(id) }]),
       ...(this.detachView ? [{ label: "Move to New Window", run: () => this.detachView!(id) }] : []),
-      ...(moved || entry.float ? [{ separator: true, label: "" }, { label: "Reset Location", run: () => this.moveView(id, entry.original.location) }] : []),
+      ...(moved || entry.float ? [{ separator: true, label: "" }, { label: "Reset Location", run: () => this.moveView(id, originalLocation) }] : []),
       { separator: true, label: "" },
       { label: "Reset All View Locations", run: () => this.resetPlacement() },
     ], { menu: "view/title", context: { viewId: id } });
@@ -1109,7 +1123,7 @@ export class Workbench {
     const items: MenuItem[] = [];
     if (entry) {
       items.push({ label: `Hide '${entry.desc.title}'`, disabled: shownCount <= 1, run: () => setHidden(entry.desc.id, true) });
-      for (const l of ["secondary", "panel"] as ViewLocation[]) items.push({ label: `Move to ${names[l]}`, run: () => this.moveView(entry.desc.id, l) });
+      for (const l of this.viewLocations) if (l !== "sidebar") items.push({ label: `Move to ${names[l]}`, run: () => this.moveView(entry.desc.id, l) });
       if (this.detachView) items.push({ label: "Move to New Window", run: () => this.detachView!(entry.desc.id) });
       items.push({ separator: true, label: "" });
     }
@@ -1302,6 +1316,7 @@ export class Workbench {
 
   /** Maximize (or restore) the panel or the secondary side bar. */
   toggleMaximized(loc: "panel" | "secondary") {
+    if (!this.viewLocations.includes(loc)) return;
     this.maximized = this.maximized === loc ? null : loc;
     if (this.maximized && !this.state[loc].visible) this.toggle(loc);
     this.renderChrome();

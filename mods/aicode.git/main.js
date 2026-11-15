@@ -1,6 +1,4 @@
-// Source Control: git for the open folder — changes, commits, branches, diffs and gutter markers.
-
-import { makeGit, parseStatus, groups, lineChanges, decorationMap, LOG_FORMAT, parseLog, layoutGraph, parseNameStatus } from "./git.js";
+// Source Control: git for the open folder — changes, commits, branches and diffs.
 
 const STYLE = `
 .scm { position: relative; height: 100%; display: flex; flex-direction: column; padding: 6px 0 4px; }
@@ -48,52 +46,18 @@ const STYLE = `
 .scm .list-row .scm-label .name, .scm .list-row .scm-label .hint { overflow: visible; }
 /* Tree view: folder rows. */
 .scm .scm-dir .codicon { flex: 0 0 auto; }
-/* The graph (VS Code's Source Control Graph): lanes, the subject, its author, and the refs at the end. */
-.scm-graph {
-  --git-lane-0: var(--aicode-scmGraph-foreground1, #59a4f9); --git-lane-1: var(--aicode-scmGraph-foreground2, #b180d7);
-  --git-lane-2: var(--aicode-scmGraph-foreground3, #ffb000); --git-lane-3: var(--aicode-scmGraph-foreground4, #40b0a6);
-  --git-lane-4: var(--aicode-scmGraph-foreground5, #dc267f); --git-lane-5: #e2c08d;
-  flex: 0 1 auto; max-height: max(26px, 50%); display: flex; flex-direction: column; margin-top: 6px;
-}
-.scm-graph > .section-header { flex: 0 0 auto; }
-.scm-graph-rows { min-height: 0; overflow: auto; }
-.scm-graph .list-row { gap: 4px; padding-left: 4px; }
-.scm-graph .graph-lanes { flex: 0 0 auto; height: 100%; overflow: visible; }
-.scm-graph .graph-text { display: flex; gap: 6px; align-items: baseline; flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; }
-/* Short of room, the author gives way first (down to nothing), then the subject. */
-.scm-graph .subject { overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 40px; }
-.scm-graph .author { color: var(--aicode-descriptionForeground); font-size: 12px; flex: 0 1000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.scm-graph .graph-row.head .subject { font-weight: 600; }
-.scm-graph .graph-row.open { background: var(--aicode-list-inactiveSelectionBackground, var(--aicode-list-hoverBackground)); }
-.scm-graph .ref-pills { display: flex; gap: 3px; flex: 0 0 auto; margin-left: 4px; }
-/* Icon-only pills are round; the current branch's carries its name (cut only past 120px). */
-.scm-graph .ref-pill {
-  display: inline-flex; align-items: center; justify-content: center; gap: 3px; height: 18px; min-width: 18px; padding: 0 3px; border-radius: 9px; flex: 0 0 auto;
-  box-sizing: border-box; font-size: 11px; line-height: 18px; color: #fff; white-space: nowrap;
-}
-.scm-graph .ref-pill.current { padding: 0 7px 0 4px; }
-.scm-graph .ref-pill > span { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
-.scm-graph .ref-pill .codicon { font-size: 12px; flex: 0 0 auto; }
-.scm-graph .ref-pill.local { background: var(--aicode-scmGraph-historyItemRefColor, #3b82c4); }
-.scm-graph .ref-pill.remote { background: var(--aicode-scmGraph-historyItemRemoteRefColor, #8d6bbd); }
-.scm-graph .ref-pill.tag { background: var(--aicode-badge-background); color: var(--aicode-badge-foreground); }
-.scm-graph .graph-file { gap: 6px; }
-.scm-graph .graph-file .letter { margin-left: auto; }
-.scm-graph .graph-more { color: var(--aicode-textLink-foreground); gap: 6px; padding-left: 12px; }
 /* "Show Git Output". */
 .git-output { margin: 0; padding: 10px 14px; height: 100%; overflow: auto; box-sizing: border-box; font: 12px/1.5 var(--aicode-editor-font-family, ui-monospace, Menlo, monospace); white-space: pre-wrap; user-select: text; -webkit-user-select: text; }
 .scm .list-row .scm-label .hint { margin-left: 5px; }
 .scm .list-row .letter { flex: 0 0 auto; }
 .scm .list-row .row-actions { flex: 0 0 auto; }
 .scm .list-row.deleted .name { text-decoration: line-through; }
-.git-gutter-added { border-left: 3px solid var(--aicode-editorGutter-addedBackground, #2ea043); margin-left: 3px; }
-.git-gutter-modified { border-left: 3px solid var(--aicode-editorGutter-modifiedBackground, #0078d4); margin-left: 3px; }
-.git-gutter-deleted { border-left: 0; margin-left: 3px; width: 0 !important; height: 0 !important; border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-left: 5px solid var(--aicode-editorGutter-deletedBackground, #f85149); }
 `;
 
 export async function activate(ctx) {
   const { h, icon, iconButton, clear, basename, dirname, fileIcon } = ctx.ui;
-  const monaco = ctx.monaco;
+  const service = await ctx.mods.get("aicode.git-core");
+  const { makeGit, groups, parseNameStatus } = service;
   // "Show Git Output": every git command this mod ran, with how long it took and what it said.
   const output = [];
   const outputWatchers = new Set();
@@ -103,17 +67,16 @@ export async function activate(ctx) {
     if (output.length > 3000) output.splice(0, 1000);
     outputWatchers.forEach((f) => f());
   });
+  const { diffTab, openCommitDiff } = service.makeDiffTools(ctx, git);
   const style = document.createElement("style");
   style.textContent = STYLE;
   document.head.append(style);
 
-  if (!(await ctx.process.which("git"))) {
+  if (!service.available) {
     ctx.views.provide("scm", { render: (el) => el.append(h("div", { class: "notice" }, "git is not installed or not on your PATH.")) });
     return;
   }
 
-  let lookup = () => undefined;
-  const deco = ctx.decorations.register((path) => lookup(path));
   let root = null; // repository top level
   let status = null;
   let view = null;
@@ -125,71 +88,22 @@ export async function activate(ctx) {
   // View & Sort, as VS Code: the changes as a list (each with its folder) or a tree of folders.
   let viewMode = await ctx.settings.get("viewMode", "list"); // "list" | "tree"
   let sortBy = await ctx.settings.get("sortBy", "path"); // "name" | "path" | "status"
-  // The graph: the current branch and its upstream (VS Code's "Auto"), newest first.
-  const GRAPH_PAGE = 50;
-  let graphLimit = GRAPH_PAGE;
-  let graph = [];
-  let graphLayout = [];
-  let graphMore = false;
-  let openCommit = null; // { hash, files: [] | null }
   const branchItem = ctx.statusBar.add({ align: "left", priority: 100, icon: "source-control", text: "", command: "git.checkout", tooltip: "Checkout Branch/Tag…", animate: true });
   const syncItem = ctx.statusBar.add({ align: "left", priority: 99, icon: "sync", text: "", command: "git.sync", tooltip: "Synchronize Changes", animate: true });
 
-  const repoFor = async (folder) => {
-    if (!folder) return null;
-    const r = await git.run(["rev-parse", "--show-toplevel"], { cwd: folder, quiet: true });
-    return r.code === 0 ? r.stdout.trim() : null;
-  };
-
-  // The repository's top folder and .git (index, HEAD) are watched: commits, checkouts and files
-  // made from a terminal show up without coming back to the window.
-  let watched = null;
-  let soonTimer = null;
-  const soon = () => {
-    clearTimeout(soonTimer);
-    soonTimer = setTimeout(refresh, 400);
-  };
-  const watchRepo = () => {
-    if (watched?.root === root) return;
-    watched?.subs.forEach((d) => d.dispose());
-    watched = root ? { root, subs: [ctx.fs.watch(root, soon), ctx.fs.watch(`${root}/.git`, soon)] } : null;
-  };
-  let refreshing = null;
+  const refresh = () => service.refreshStatus();
   let lastRefreshKey = "";
-  let queued = null;
-  const refresh = () => {
-    if (!refreshing) return (refreshing = doRefresh().finally(() => (refreshing = null)));
-    // One is running, with what it read before (say, "Fetching…" while the fetch was still on):
-    // run once more after it, so whoever asked now sees the state as it is now.
-    return (queued ??= refreshing.catch(() => {}).then(() => {
-      queued = null;
-      return refresh();
-    }));
-  };
-  const doRefresh = async () => {
-    root = await repoFor(ctx.workspace.folder());
-    watchRepo();
-    if (root) {
-      const r = await git.run(["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"], { cwd: root, quiet: true });
-      status = r.code === 0 ? parseStatus(r.stdout) : null;
-      // Ignored files show faded in the explorer: folders come back whole (node_modules/, not its files).
-      const ign = status ? await git.run(["status", "--porcelain=v2", "-z", "--ignored=traditional", "--untracked-files=normal"], { cwd: root, quiet: true }) : null;
-      if (status && ign?.code === 0) status.ignored = ign.stdout.split("\0").filter((f) => f.startsWith("! ")).map((f) => f.slice(2).replace(/\/$/, ""));
-      if (status && !collapsed.has("graph")) await loadGraph();
-    } else status = null;
-    if (!status) graph = graphLayout = [];
+  const updateStatus = (snapshot) => {
+    ({ root, status } = snapshot);
     headCache.clear();
-    lookup = status && root ? decorationMap(status, root) : () => undefined;
-    deco.fire();
     paintStatus();
     // Showing the view refreshes it: repaint only when something changed, so it doesn't redraw
     // (and jump) right after it appears.
-    const key = JSON.stringify([ctx.workspace.folder(), root, status, busy, [...collapsed], graph.map((c) => [c.hash, c.refs])]);
+    const key = JSON.stringify([ctx.workspace.folder(), root, status, busy, [...collapsed]]);
     if (key !== lastRefreshKey || !view?.childElementCount) {
       lastRefreshKey = key;
       render();
     }
-    updateGutter();
     ctx.editor.refreshTitleActions?.();
   };
 
@@ -226,7 +140,7 @@ export async function activate(ctx) {
     } finally {
       busy = "";
       busyRemote = false;
-      await refresh();
+      await service.refreshAfterChange();
     }
   };
 
@@ -546,7 +460,7 @@ export async function activate(ctx) {
     const files = parseNameStatus(await git.ok(["diff", "--name-status", "-z", "-M", `${hash}^1`, hash], { cwd: root }));
     if (!files.length) return ctx.window.showInfo("That stash changes no tracked files.");
     const f = await ctx.window.showQuickPick(files.map((x) => ({ label: basename(x.path), description: dirname(x.path) === x.path ? x.letter : `${dirname(x.path)} · ${x.letter}`, fileIcon: basename(x.path), file: x })), { placeholder: `${s.label} — pick a file to see its changes`, matchDescription: true });
-    if (f) await openCommitDiff({ hash, parents: [`${hash}^1`], subject: s.label }, f.file);
+    if (f) await openCommitDiff(root, { hash, parents: [`${hash}^1`], subject: s.label }, f.file);
   };
 
   // Tags
@@ -893,76 +807,6 @@ export async function activate(ctx) {
     });
   };
 
-  /** A read-only side-by-side diff in a tab, under a bar naming the file and the two sides. */
-  const diffTab = ({ title, key, path, what, original, modified, buttons = () => [] }) => {
-    const language = monaco.languages.getLanguages().find((l) => (l.extensions ?? []).some((e) => path.toLowerCase().endsWith(e)))?.id ?? "plaintext";
-    ctx.editor.openCustom({
-      title,
-      icon: "diff",
-      key,
-      render: (el) => {
-        const bar = h("div", { class: "proposal-bar" }, icon("source-control"), h("div", { class: "what" }, h("b", null, path), h("span", { class: "muted" }, what)), ...buttons());
-        const host = h("div", { class: "proposal-diff monaco-component" });
-        el.append(h("div", { class: "proposal" }, bar, host));
-        const a = monaco.editor.createModel(original, language);
-        const b = monaco.editor.createModel(modified, language);
-        const diff = monaco.editor.createDiffEditor(host, { automaticLayout: true, readOnly: true, originalEditable: false, renderSideBySide: true, minimap: { enabled: false }, disableLayerHinting: true });
-        diff.setModel({ original: a, modified: b });
-        return { dispose: () => { diff.dispose(); a.dispose(); b.dispose(); } };
-      },
-    });
-  };
-
-  /** A file as one commit changed it: its parent's version ↔ the commit's. */
-  const openCommitDiff = async (c, f) => {
-    const short = c.hash.slice(0, 7);
-    const parent = c.parents[0];
-    const original = f.letter === "A" || !parent ? "" : (await show(parent, f.from ?? f.path)) ?? "";
-    const modified = f.letter === "D" ? "" : await show(c.hash, f.path);
-    if (modified === null) return ctx.window.showInfo(`${f.path} is a binary file.`);
-    diffTab({
-      title: `${basename(f.path)} (${short})`,
-      key: `git-commit:${c.hash}:${f.path}`,
-      path: f.path,
-      what: `  ${parent ? parent.slice(0, 7) : "(none)"} ↔ ${short} · ${c.subject}`,
-      original,
-      modified,
-      buttons: () => [f.letter !== "D" ? h("button", { class: "btn secondary", onclick: () => ctx.editor.open(`${root}/${f.path}`) }, icon("go-to-file"), "Open File") : null],
-    });
-  };
-
-
-  // ---------- gutter ----------
-
-  const editor = ctx.editor.monacoEditor();
-  const decorations = editor.createDecorationsCollection();
-  let gutterTimer;
-  const updateGutter = () => {
-    clearTimeout(gutterTimer);
-    gutterTimer = setTimeout(async () => {
-      const active = ctx.editor.active();
-      const model = editor.getModel();
-      if (!root || !active?.path || !model || !active.path.startsWith(root + "/")) return decorations.clear();
-      const rel = active.path.slice(root.length + 1);
-      const base = await show("HEAD", rel);
-      if (editor.getModel() !== model) return;
-      const current = model.getValue();
-      if (base === null) {
-        // New file: every line is added.
-        return decorations.set([{ range: new monaco.Range(1, 1, model.getLineCount(), 1), options: { isWholeLine: true, linesDecorationsClassName: "git-gutter-added" } }]);
-      }
-      if (base.length + current.length > 3_000_000) return decorations.clear();
-      const changes = lineChanges(base.replace(/\r\n/g, "\n"), current.replace(/\r\n/g, "\n"));
-      if (!changes) return decorations.clear();
-      const deco = (from, to, cls) => ({ range: new monaco.Range(from, 1, to, 1), options: { isWholeLine: true, linesDecorationsClassName: cls, overviewRuler: { color: cls === "git-gutter-added" ? "#2ea04399" : cls === "git-gutter-modified" ? "#0078d499" : "#f8514999", position: monaco.editor.OverviewRulerLane.Left } } });
-      decorations.set([
-        ...changes.added.map(([a, b]) => deco(a, b, "git-gutter-added")),
-        ...changes.modified.map(([a, b]) => deco(a, b, "git-gutter-modified")),
-        ...changes.deleted.map((l) => deco(Math.min(l, model.getLineCount()), Math.min(l, model.getLineCount()), "git-gutter-deleted")),
-      ]);
-    }, 250);
-  };
-
   // ---------- view ----------
 
   const fileRow = (file, depth = 0, inTree = false) => {
@@ -1057,151 +901,9 @@ export async function activate(ctx) {
     return rows;
   };
 
-  // ---------- graph ----------
-
-  const loadGraph = async () => {
-    const revs = ["HEAD", ...(status?.upstream ? [status.upstream] : [])];
-    const r = await git.run(["log", "--topo-order", `-n${graphLimit + 1}`, `--format=${LOG_FORMAT}`, ...revs, "--"], { cwd: root, quiet: true });
-    const list = r.code === 0 ? parseLog(r.stdout) : [];
-    graphMore = list.length > graphLimit;
-    graph = list.slice(0, graphLimit);
-    graphLayout = layoutGraph(graph);
-  };
-
-  const SVG_NS = "http://www.w3.org/2000/svg";
-  const svg = (tag, attrs, ...kids) => {
-    const el = document.createElementNS(SVG_NS, tag);
-    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
-    el.append(...kids);
-    return el;
-  };
-  const LANE = 11;
-  const ROW = 22;
-  const laneX = (j) => 8 + j * LANE;
-  const laneColor = (j) => `var(--git-lane-${j % 6})`;
-  const laneSvg = (width, draw) => {
-    const w = laneX(Math.max(0, width - 1)) + 8;
-    const el = svg("svg", { class: "graph-lanes", width: w, height: ROW, viewBox: `0 0 ${w} ${ROW}` });
-    draw(el);
-    return el;
-  };
-  const line = (d, j) => svg("path", { d, stroke: laneColor(j), "stroke-width": 1.5, fill: "none" });
-
-  const commitLanes = (L, isHead) =>
-    laneSvg(L.width, (el) => {
-      const m = ROW / 2;
-      const x = laneX(L.lane);
-      for (const j of L.through) el.append(line(`M ${laneX(j)} 0 V ${ROW}`, j));
-      for (const j of L.into) el.append(line(`M ${laneX(j)} 0 C ${laneX(j)} ${m} ${x} ${m * 0.6} ${x} ${m}`, j));
-      if (L.up) el.append(line(`M ${x} 0 V ${m}`, L.lane));
-      if (L.down) el.append(line(`M ${x} ${m} V ${ROW}`, L.lane));
-      for (const k of L.out) el.append(line(`M ${x} ${m} C ${x} ${m * 1.4} ${laneX(k)} ${m} ${laneX(k)} ${ROW}`, k));
-      el.append(
-        isHead
-          ? svg("circle", { cx: x, cy: m, r: 4, fill: "var(--aicode-sideBar-background, #181818)", stroke: laneColor(L.lane), "stroke-width": 2 })
-          : svg("circle", { cx: x, cy: m, r: 4, fill: laneColor(L.lane) }),
-      );
-    });
-  // Under an open commit, its files sit between the lanes that go on.
-  const passLanes = (L) => laneSvg(L.width, (el) => L.after.forEach((j) => el.append(line(`M ${laneX(j)} 0 V ${ROW}`, j))));
-
-  const refPills = (refs) => {
-    const pills = [];
-    const pill = (kind, ic, text, title) => h("span", { class: `ref-pill ${kind}`, title }, icon(ic), text ? h("span", null, text) : null);
-    // As VS Code: only the current branch is named; every other ref is its icon, named on hover.
-    for (const b of refs.branches) pills.push(b === refs.head ? pill("local current", "target", b, `${b} (current branch)`) : pill("local", "git-branch", "", `branch ${b}`));
-    for (const r of refs.remotes) pills.push(pill("remote", "cloud", "", `remote branch ${r}`));
-    for (const t of refs.tags) pills.push(pill("tag", "tag", "", `tag ${t}`));
-    return pills.length ? h("span", { class: "ref-pills" }, pills) : null;
-  };
-
-  const toggleCommit = async (c) => {
-    if (openCommit?.hash === c.hash) {
-      openCommit = null;
-      return render();
-    }
-    openCommit = { hash: c.hash, files: null };
-    render();
-    try {
-      const out = c.parents[0]
-        ? await git.ok(["diff", "--name-status", "-z", "-M", c.parents[0], c.hash], { cwd: root })
-        : await git.ok(["diff-tree", "--root", "--no-commit-id", "-r", "--name-status", "-z", "-M", c.hash], { cwd: root });
-      if (openCommit?.hash === c.hash) openCommit.files = parseNameStatus(out);
-    } catch (e) {
-      if (openCommit?.hash === c.hash) openCommit.files = [];
-      ctx.window.showError(`Git: ${String(e.message ?? e)}`);
-    }
-    render();
-  };
-
-  const graphSection = () => {
-    const closed = collapsed.has("graph");
-    const rows = [];
-    if (!closed) {
-      graph.forEach((c, i) => {
-        const L = graphLayout[i];
-        const isHead = !!c.refs.head;
-        const date = c.date ? new Date(c.date).toLocaleString() : c.when;
-        rows.push(
-          h(
-            "div",
-            {
-              class: `list-row graph-row${isHead ? " head" : ""}${openCommit?.hash === c.hash ? " open" : ""}`,
-              title: `${c.subject}\n\n${c.author}, ${c.when} (${date})\n${c.hash.slice(0, 10)}`,
-              onclick: () => toggleCommit(c),
-            },
-            commitLanes(L, isHead),
-            h("span", { class: "graph-text" }, h("span", { class: "subject" }, c.subject), h("span", { class: "author" }, c.author)),
-            refPills(c.refs),
-          ),
-        );
-        if (openCommit?.hash !== c.hash) return;
-        if (!openCommit.files) {
-          rows.push(h("div", { class: "list-row graph-file muted" }, passLanes(L), icon("loading", "codicon-modifier-spin"), "Loading…"));
-          return;
-        }
-        for (const f of openCommit.files)
-          rows.push(
-            h(
-              "div",
-              { class: "list-row graph-file", title: `${f.path}${f.from ? ` ← ${f.from}` : ""}`, onclick: () => openCommitDiff(c, f) },
-              passLanes(L),
-              ctx.ui.fileIconEl ? ctx.ui.fileIconEl(basename(f.path)) : icon(fileIcon(f.path)),
-              h("span", { class: "scm-label" }, h("span", { class: "name" }, basename(f.path)), dirname(f.path) === f.path ? null : h("span", { class: "hint" }, dirname(f.path))),
-              h("span", { class: `letter l-${f.letter}` }, f.letter),
-            ),
-          );
-      });
-      if (graphMore) rows.push(h("div", { class: "list-row graph-more", onclick: () => { graphLimit += GRAPH_PAGE; refresh(); } }, icon("fold-down"), "Load More Commits"));
-      if (!graph.length) rows.push(h("div", { class: "pad muted" }, "No commits yet."));
-    }
-    return h(
-      "div",
-      { class: "scm-graph" },
-      h(
-        "div",
-        // Opening draws now (with what was loaded before) and then brings the commits up to date.
-        { class: "section-header", onclick: () => { closed ? collapsed.delete("graph") : collapsed.add("graph"); render(); if (closed) refresh(); } },
-        icon(closed ? "chevron-right" : "chevron-down"),
-        h("span", null, "Graph"),
-        h(
-          "div",
-          { class: "actions", onclick: (e) => e.stopPropagation() },
-          iconButton("repo-fetch", "Fetch", () => sync("fetch")),
-          iconButton("repo-pull", "Pull", () => sync("pull")),
-          iconButton("repo-push", "Push", () => sync("push")),
-          iconButton("refresh", "Refresh", () => refresh()),
-        ),
-      ),
-      closed ? null : h("div", { class: "scm-graph-rows" }, rows),
-    );
-  };
-
-
   const render = () => {
     if (!view) return;
     const changesScroll = view.querySelector(".scm-changes")?.scrollTop ?? 0;
-    const graphScroll = view.querySelector(".scm-graph-rows")?.scrollTop ?? 0;
     clear(view);
     const folder = ctx.workspace.folder();
     if (!folder) {
@@ -1256,19 +958,15 @@ export async function activate(ctx) {
       ]),
       !status.files.length ? h("div", { class: "pad muted" }, "No changes.") : null,
     );
-    const graph = graphSection();
     view.append(
       h(
         "div",
         { class: "scm" },
         busy ? h("div", { class: "scm-progress", title: busy }) : null,
         changes,
-        graph,
       ),
     );
     changes.scrollTop = changesScroll;
-    const graphRows = graph.querySelector(".scm-graph-rows");
-    if (graphRows) graphRows.scrollTop = graphScroll;
   };
 
   ctx.views.provide("scm", {
@@ -1357,15 +1055,7 @@ export async function activate(ctx) {
     run: () => ctx.commands.execute("git.openChange"),
   });
 
-  ctx.workspace.onDidChangeFolder(refresh);
-  ctx.editor.onDidSave(refresh);
-  ctx.editor.onDidChangeActive(updateGutter);
-  ctx.editor.onDidChangeContent(updateGutter);
-  // Coming back to the window is when files most often changed behind our back.
-  const onFocus = () => refresh();
-  window.addEventListener("focus", onFocus);
-  ctx.subscriptions.push({ dispose: () => window.removeEventListener("focus", onFocus) });
-
+  ctx.subscriptions.push(service.onDidChangeStatus(updateStatus));
   await refresh();
   return { refresh, status: () => status, root: () => root };
 }

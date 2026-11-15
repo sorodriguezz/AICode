@@ -1,0 +1,16 @@
+{
+  "id": "aicode.git-decorations",
+  "name": "Git Decorations",
+  "version": "1.0.0",
+  "description": "Show Git file badges and colors in the Explorer and line changes in the editor gutter.",
+  "author": "AICode",
+  "icon": "diff",
+  "api": 1,
+  "main": "main.js",
+  "activation": [
+    "onStartup"
+  ],
+  "dependencies": [
+    "aicode.git-core"
+  ]
+}

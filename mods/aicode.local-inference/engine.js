@@ -1,7 +1,7 @@
 // The built-in engine: llama.cpp's `llama-server`, run by this mod, with GGUF models it downloads
 // itself. Nothing to install: the first time it is needed, the mod fetches the engine for this
 // system (~25–60 MB, from llama.cpp's GitHub releases) and the models (from Hugging Face) into its
-// own folder (ctx.storage.dir() → AICode/data/aicode.local-autocomplete/). Each model runs as a
+// own folder under AICode/data. Each model runs as a
 // server on 127.0.0.1 with a random port, started on first use and stopped when idle.
 //
 // Machines differ, so the engine looks at this one first (hardware()): with a dedicated GPU it uses
@@ -122,7 +122,10 @@ export function createEngine(ctx, { settings, onChange }) {
 
   const data = async () => {
     if (dataDir) return dataDir;
-    const dir = await ctx.storage.dir();
+    const own = await ctx.storage.dir();
+    // Reuse models and binaries downloaded before the inference mod was split out.
+    const legacy = joinPath(dirname(own), "aicode.local-autocomplete");
+    const dir = (await ctx.fs.stat(legacy).catch(() => null))?.is_dir ? legacy : own;
     // 1.1.0 could save the engine archive as a file named "engine" (and a model as "models"),
     // where folders belong: remove those so the next download goes to the right place.
     for (const name of ["engine", "models"]) {

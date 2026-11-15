@@ -1349,7 +1349,8 @@ function httpRequest(call: <T>(cmd: string, args?: Record<string, unknown>) => P
       const offEnd = onStream("http://end", id, (p) => {
         offHead();
         offData();
-        offEnd();
+        // Buffered events can run during onStream(), before offEnd is assigned.
+        queueMicrotask(() => offEnd());
         if (p.error) return reject(Object.assign(new Error(p.error), { cancelled: !!p.cancelled, status: head?.status }));
         const size = chunks.reduce((n, c) => n + c.length, 0);
         const all = new Uint8Array(size);

@@ -7,7 +7,7 @@
   "icon": "comment-discussion",
   "api": 1,
   "dependencies": ["aicode.agents"],
-  "optionalDependencies": ["aicode.explorer", "aicode.git", "aicode.search", "aicode.terminal"],
+  "optionalDependencies": ["aicode.explorer", "aicode.git", "aicode.git-graph", "aicode.search", "aicode.terminal"],
   "contributes": {
     "windowLayouts": {
       "agents": {
@@ -21,6 +21,7 @@
         "views": {
           "explorer": "secondary",
           "scm": "secondary",
+          "git.graph": "secondary",
           "search": "secondary",
           "terminal": "panel"
         },

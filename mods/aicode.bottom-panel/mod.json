@@ -1,0 +1,10 @@
+{
+  "id": "aicode.bottom-panel",
+  "name": "Bottom Panel",
+  "version": "1.0.0",
+  "description": "Adds a panel below the editor for terminals, logs, test results and other views from mods.",
+  "author": "AICode",
+  "icon": "layout-panel",
+  "api": 1,
+  "contributes": { "viewContainers": ["panel"] }
+}

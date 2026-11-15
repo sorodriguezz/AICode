@@ -108,10 +108,15 @@ pub struct Profile {
 /// is expected to): the file icons (Seti) were built in before they became `aicode.icons`, the
 /// JSON/YAML keys in the breadcrumbs before they became `aicode.json-yaml`, and images open as
 /// images with `aicode.image-preview`. `aicode.motion` gives the whole window its fluid animations.
-pub const DEFAULT_ON: &[&str] = &["aicode.icons", "aicode.json-yaml", "aicode.image-preview", "aicode.motion"];
+/// The docking containers used to be built in, so existing layouts keep their locations.
+pub const DEFAULT_ON: &[&str] = &[
+    "aicode.icons", "aicode.json-yaml", "aicode.image-preview", "aicode.motion",
+    "aicode.primary-sidebar", "aicode.secondary-sidebar", "aicode.bottom-panel",
+];
 
 /// Mods split out of another one: a profile that had the first on gets the others, once, so it
-/// keeps what it had (the AI Chat carried every agent; Glass carried pill tabs and the cursor).
+/// keeps what it had (AI Chat carried every agent, Glass the pill tabs and cursor, and Source
+/// Control the graph and decorations).
 pub const SPLIT_FROM: &[(&str, &[&str])] = &[
     (
         "aicode.agents",
@@ -127,12 +132,15 @@ pub const SPLIT_FROM: &[(&str, &[&str])] = &[
         ],
     ),
     ("aicode.glass", &["aicode.soft-look"]),
+    ("aicode.git", &["aicode.git-core", "aicode.git-graph", "aicode.git-decorations"]),
 ];
 
 impl Profile {
     /// Turns on the default mods this profile was never given. True when something changed.
     pub fn offer_defaults(&mut self) -> bool {
         let mut changed = false;
+        let split_graph = self.enabled.iter().any(|id| id == "aicode.git")
+            && !self.defaults_offered.iter().any(|id| id == "aicode.git-graph");
         for id in DEFAULT_ON {
             if self.defaults_offered.iter().any(|d| d == id) {
                 continue;
@@ -157,6 +165,53 @@ impl Profile {
                 }
                 changed = true;
             }
+        }
+        if split_graph {
+            if let Some(views) = self.settings.get_mut("core").and_then(|core| core.get_mut("workbench.viewPlacement")).and_then(Value::as_object_mut) {
+                let location = views.get("scm").and_then(|scm| scm.get("location")).cloned();
+                if let Some(location) = location {
+                    views.entry("git.graph").or_insert_with(|| serde_json::json!({ "location": location }));
+                }
+            }
+        }
+        self.split_local_autocomplete() || changed
+    }
+
+    fn split_local_autocomplete(&mut self) -> bool {
+        const LEGACY: &str = "aicode.local-autocomplete";
+        const INFERENCE: &str = "aicode.local-inference";
+        const COMMITS: &str = "aicode.commit-assistant";
+        let autocomplete = self.enabled.iter().any(|id| id == LEGACY);
+        let git = self.enabled.iter().any(|id| id == "aicode.git");
+        let legacy = self.settings.get(LEGACY).and_then(Value::as_object).cloned().unwrap_or_default();
+        let mut changed = false;
+        for (id, had_feature, keys) in [
+            (INFERENCE, autocomplete, &[
+                "provider", "builtinCodeModel", "builtinCommitModel", "engineBackend",
+                "engineVersion", "gpu", "threads", "contextSize", "idleMinutes", "endpoint",
+                "codeModel", "commitModel", "fimFormat", "keepAlive",
+            ][..]),
+            (COMMITS, autocomplete && git, &[
+                "commitInline", "commitStyle", "commitLanguage", "debounceMs", "temperature",
+            ][..]),
+        ] {
+            if self.defaults_offered.iter().any(|offered| offered == id) {
+                continue;
+            }
+            self.defaults_offered.push(id.to_string());
+            if had_feature && !self.enabled.iter().any(|on| on == id) {
+                self.enabled.push(id.to_string());
+            }
+            for key in keys {
+                if let Some(value) = legacy.get(*key) {
+                    if let Some(settings) = self.settings.entry(id.to_string())
+                        .or_insert_with(|| Value::Object(Map::new())).as_object_mut()
+                    {
+                        settings.entry(key.to_string()).or_insert_with(|| value.clone());
+                    }
+                }
+            }
+            changed = true;
         }
         changed
     }
@@ -311,7 +366,27 @@ pub fn scan(app: &AppHandle, profile_name: &str, profile: &Profile) -> Vec<ModIn
             }
         }
     }
+    check_enabled_dependencies(&mut found);
     found.into_values().collect()
+}
+
+/// Profiles can also be edited or imported directly. Block contributions if a required mod
+/// cannot load, including when the missing or disabled dependency is farther down the chain.
+fn check_enabled_dependencies(mods: &mut BTreeMap<String, ModInfo>) {
+    let mut unavailable: HashSet<String> = mods.values().filter(|m| !m.enabled || !m.problems.is_empty()).map(|m| m.manifest.id.clone()).collect();
+    loop {
+        let mut changed = false;
+        for info in mods.values_mut().filter(|m| m.enabled && m.problems.is_empty()) {
+            if let Some(dep) = info.manifest.dependencies.iter().find(|d| unavailable.contains(*d)) {
+                info.problems.push(format!("needs {dep} enabled and loadable"));
+                unavailable.insert(info.manifest.id.clone());
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
 }
 
 pub fn refresh(app: &AppHandle, state: &ModsState) -> Vec<ModInfo> {
@@ -348,6 +423,22 @@ pub fn mods_permissions() -> Vec<(String, String)> {
     PERMISSIONS.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect()
 }
 
+fn enable_with_dependencies(id: &str, mods: &BTreeMap<&str, &ModInfo>, on: &mut Vec<String>) -> Result<(), String> {
+    let mut pending = vec![id];
+    let mut visited = HashSet::new();
+    while let Some(next) = pending.pop() {
+        if !visited.insert(next) {
+            continue;
+        }
+        let info = mods.get(next).ok_or_else(|| format!("{next} is needed but not installed"))?;
+        if !on.iter().any(|id| id == next) {
+            on.push(next.to_string());
+        }
+        pending.extend(info.manifest.dependencies.iter().map(String::as_str));
+    }
+    Ok(())
+}
+
 /// Turns a mod on or off. Turning one on also turns on what it needs; turning one off also turns
 /// off what needs it. Returns the ids whose state changed, so the window can say so.
 #[tauri::command]
@@ -366,16 +457,7 @@ pub fn profile_set_enabled(
     let mut on: Vec<String> = profile.enabled.clone();
     let before: HashSet<String> = on.iter().cloned().collect();
     if enabled {
-        let mut stack = vec![id.clone()];
-        while let Some(next) = stack.pop() {
-            let Some(info) = by_id.get(next.as_str()) else {
-                return Err(format!("{next} is needed but not installed"));
-            };
-            if !on.contains(&next) {
-                on.push(next.clone());
-            }
-            stack.extend(info.manifest.dependencies.iter().filter(|d| !on.contains(d)).cloned());
-        }
+        enable_with_dependencies(&id, &by_id, &mut on)?;
     } else {
         let mut off = vec![id.clone()];
         let mut i = 0;
@@ -395,9 +477,10 @@ pub fn profile_set_enabled(
     }
     let after: HashSet<String> = on.iter().cloned().collect();
     let changed: Vec<String> = before.symmetric_difference(&after).cloned().collect();
-    profile.enabled = on;
+    let updated = Profile { enabled: on, ..profile.clone() };
     let name = state.profile_name.lock().unwrap().clone();
-    write_profile(&name, &profile)?;
+    write_profile(&name, &updated)?;
+    *profile = updated;
     drop(profile);
     refresh(&app, &state);
     Ok(changed)
@@ -627,6 +710,86 @@ mod tests {
         assert!(!p.offer_defaults());
         assert!(!p.enabled.contains(&"aicode.soft-look".to_string()));
         assert!(!p.enabled.contains(&"aicode.agent-claude".to_string()));
+    }
+
+    #[test]
+    fn claude_requires_chat_and_the_secondary_side_bar() {
+        const PANEL: &str = "aicode.secondary-sidebar";
+        const CHAT: &str = "aicode.agents";
+        const CLAUDE: &str = "aicode.agent-claude";
+        let mut mods = BTreeMap::new();
+        for manifest in [
+            include_str!("../../mods/aicode.secondary-sidebar/mod.json"),
+            include_str!("../../mods/aicode.agents/mod.json"),
+            include_str!("../../mods/aicode.agent-claude/mod.json"),
+        ] {
+            let manifest: Manifest = serde_json::from_str(manifest).unwrap();
+            let enabled = manifest.id != PANEL;
+            mods.insert(manifest.id.clone(), ModInfo { manifest, source: "bundled", dir: String::new(), enabled, problems: vec![] });
+        }
+        assert!(mods[PANEL].manifest.dependencies.is_empty());
+        check_enabled_dependencies(&mut mods);
+        assert_eq!(mods[CHAT].problems, [format!("needs {PANEL} enabled and loadable")]);
+        assert_eq!(mods[CLAUDE].problems, [format!("needs {CHAT} enabled and loadable")]);
+
+        let by_id = mods.iter().map(|(id, m)| (id.as_str(), m)).collect();
+        let mut enabled = vec![CHAT.to_string()];
+        enable_with_dependencies(CLAUDE, &by_id, &mut enabled).unwrap();
+        assert_eq!(enabled, [CHAT, CLAUDE, PANEL]);
+    }
+
+    #[test]
+    fn existing_git_profiles_keep_the_graph_and_its_docking_location() {
+        let mut profile: Profile = serde_json::from_value(serde_json::json!({
+            "enabled": ["aicode.git", "aicode.terminal"],
+            "settings": { "core": { "workbench.viewPlacement": { "scm": { "location": "secondary", "order": 30 } } } }
+        })).unwrap();
+        assert!(profile.offer_defaults());
+        for id in ["aicode.git-core", "aicode.git-graph", "aicode.git-decorations", "aicode.primary-sidebar", "aicode.bottom-panel"] {
+            assert!(profile.enabled.iter().any(|on| on == id), "{id}");
+        }
+        let views = &profile.settings["core"]["workbench.viewPlacement"];
+        assert_eq!(views["git.graph"]["location"], "secondary");
+        assert_eq!(views["scm"]["order"], 30);
+        profile.enabled.retain(|id| id != "aicode.git-graph");
+        assert!(!profile.offer_defaults());
+        assert!(!profile.enabled.iter().any(|id| id == "aicode.git-graph"));
+    }
+
+    #[test]
+    fn local_autocomplete_migrates_models_and_commit_settings_once() {
+        let mut profile: Profile = serde_json::from_value(serde_json::json!({
+            "enabled": ["aicode.local-autocomplete", "aicode.git"],
+            "settings": {
+                "aicode.local-autocomplete": {
+                    "provider": "ollama", "endpoint": "http://127.0.0.1:9999",
+                    "debounceMs": 400, "commitLanguage": "Español", "enabled": false
+                },
+                "aicode.local-inference": { "provider": "openai" }
+            }
+        })).unwrap();
+        assert!(profile.offer_defaults());
+        assert!(profile.enabled.iter().any(|id| id == "aicode.local-inference"));
+        assert!(profile.enabled.iter().any(|id| id == "aicode.commit-assistant"));
+        assert_eq!(profile.settings["aicode.local-inference"]["provider"], "openai");
+        assert_eq!(profile.settings["aicode.local-inference"]["endpoint"], "http://127.0.0.1:9999");
+        assert_eq!(profile.settings["aicode.commit-assistant"]["commitLanguage"], "Español");
+        assert_eq!(profile.settings["aicode.commit-assistant"]["debounceMs"], 400);
+        assert_eq!(profile.settings["aicode.local-autocomplete"]["enabled"], false);
+        profile.enabled.retain(|id| id != "aicode.commit-assistant");
+        assert!(!profile.offer_defaults());
+        assert!(!profile.enabled.iter().any(|id| id == "aicode.commit-assistant"));
+    }
+
+    #[test]
+    fn local_autocomplete_without_git_enables_only_inference() {
+        let mut profile = Profile {
+            enabled: vec!["aicode.local-autocomplete".into()],
+            ..Profile::default()
+        };
+        profile.offer_defaults();
+        assert!(profile.enabled.iter().any(|id| id == "aicode.local-inference"));
+        assert!(!profile.enabled.iter().any(|id| id == "aicode.commit-assistant"));
     }
 
     #[test]

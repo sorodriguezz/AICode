@@ -8,7 +8,7 @@ import { open as openDialog, save as saveDialog } from "./core/dialog";
 import * as monaco from "monaco-editor";
 import { invoke, prepareStreams, streamCounts, type ModInfo } from "./core/ipc";
 import * as commands from "./core/commands";
-import { Workbench } from "./core/workbench";
+import { VIEW_LOCATIONS, Workbench } from "./core/workbench";
 import { EditorService, DEFAULT_FONT_SIZE } from "./core/editor";
 import { Workspace } from "./core/workspace";
 import { ModHost, decorations } from "./core/mods";
@@ -53,7 +53,12 @@ window.addEventListener("unhandledrejection", (e) => console.error(`unhandled re
 
 async function boot() {
   await prepareStreams();
-  const wb = new Workbench(document.getElementById("app")!);
+  const modList = await invoke<ModInfo[]>("mods_list");
+  const containers = new Set(modList.filter((m) => m.enabled && !m.problems.length).flatMap((m) => {
+    const declared = m.contributes?.viewContainers;
+    return Array.isArray(declared) ? declared : [];
+  }));
+  const wb = new Workbench(document.getElementById("app")!, VIEW_LOCATIONS.filter((loc) => containers.has(loc)));
   const workspace = new Workspace();
   const editors = new EditorService(wb);
   editors.breadcrumbRoot = () => workspace.folder;
@@ -66,7 +71,6 @@ async function boot() {
   const session = await invoke<string | null>("session_load").then((s) => (s ? JSON.parse(s) : null)).catch(() => null);
   // The configuration's layers: the profile's values, and the defaults the enabled mods set.
   await config.loadUser();
-  const modList = await invoke<ModInfo[]>("mods_list");
   config.setModLayers(ModHostClass.configurationLayers(modList));
 
   const profile = await invoke<ProfileView>("profile_get");
@@ -927,12 +931,12 @@ function registerWorkbenchCommands(
   reg("profiles.export", "Export Profile…", async (name?: string, path?: string) => exportProfile(typeof name === "string" && name ? name : (await invoke<ProfileView>("profile_get")).name, path), "Preferences");
   reg("workbench.resetViewLocations", "Reset View Locations", () => wb.resetPlacement());
   reg("workbench.moveView", "Move View…", async () => {
-    const all = (["sidebar", "secondary", "panel"] as const).flatMap((loc) => wb.viewsAt(loc));
+    const all = wb.viewLocations.flatMap((loc) => wb.viewsAt(loc));
     const view = await pick(all.map((d) => ({ label: d.title, description: d.location, icon: d.icon, id: d.id })), { placeholder: "Select a view to move" });
     if (!view) return;
     const names = { sidebar: "Primary Side Bar", secondary: "Secondary Side Bar", panel: "Panel" } as const;
-    const to = await pick((Object.keys(names) as (keyof typeof names)[]).filter((l) => l !== view.description).map((l) => ({ label: names[l], loc: l })), { placeholder: `Move ${view.label} to…` });
-    if (to) wb.moveView(view.id as string, to.loc as any);
+    const to = await pick(wb.viewLocations.filter((l) => l !== view.description).map((l) => ({ label: names[l], loc: l })), { placeholder: `Move ${view.label} to…` });
+    if (to) wb.moveView(view.id, to.loc);
   });
   editors.restorers.set("profiles", () => openProfiles(editors));
   const settingsPage = () => openSettings({ host, editors, themes });

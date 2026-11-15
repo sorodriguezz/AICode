@@ -459,6 +459,12 @@
     "contributes": {
       "type": "object",
       "properties": {
+        "viewContainers": {
+          "type": "array",
+          "description": "Docking areas made available while this mod is enabled.",
+          "uniqueItems": true,
+          "items": { "enum": ["sidebar", "secondary", "panel"] }
+        },
         "commands": {
           "type": "array",
           "items": {

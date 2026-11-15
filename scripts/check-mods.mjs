@@ -36,6 +36,9 @@ for (const dir of ids) {
   }
   for (const d of [...(m.dependencies ?? []), ...(m.optionalDependencies ?? [])]) if (!ids.has(d)) fail(dir, `depends on missing ${d}`);
   const c = m.contributes ?? {};
+  if (c.viewContainers !== undefined && (!Array.isArray(c.viewContainers) || c.viewContainers.some((loc) => !LOCATIONS.has(loc)) || new Set(c.viewContainers).size !== c.viewContainers.length)) {
+    fail(dir, `viewContainers must list distinct docking locations`);
+  }
   for (const v of c.views ?? []) {
     if (!v.id || !v.title) fail(dir, `view without id/title`);
     if (v.location && !LOCATIONS.has(v.location)) fail(dir, `view ${v.id}: bad location ${v.location}`);

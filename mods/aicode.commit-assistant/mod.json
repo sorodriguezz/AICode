@@ -1,0 +1,60 @@
+{
+  "id": "aicode.commit-assistant",
+  "name": "Commit Assistant",
+  "version": "1.0.0",
+  "description": "Suggest and generate Git commit messages with Local Inference, using the diff and recent commit history.",
+  "author": "AICode",
+  "icon": "git-commit",
+  "main": "main.js",
+  "api": 1,
+  "activation": [
+    "onStartup"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "autocomplete.generateCommit",
+        "title": "Generate Commit Message",
+        "category": "Git",
+        "keybinding": "mod+alt+m"
+      }
+    ],
+    "settings": {
+      "commitInline": {
+        "type": "boolean",
+        "default": true,
+        "description": "Ghost text suggestions in the Source Control message box (Tab accepts)."
+      },
+      "commitStyle": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "conventional",
+          "plain"
+        ],
+        "default": "auto",
+        "description": "auto: follows the repository's recent commits. conventional: feat:, fix:, chore:… plain: a short imperative sentence."
+      },
+      "commitLanguage": {
+        "type": "string",
+        "default": "",
+        "description": "Language for generated commit messages (English, Español…). Empty: the one the recent commits use."
+      },
+      "debounceMs": {
+        "type": "number",
+        "default": 0,
+        "description": "Delay in milliseconds before requesting a commit subject suggestion. 0 uses the automatic delay."
+      },
+      "temperature": {
+        "type": "number",
+        "default": 0.1,
+        "description": "Lower is more predictable."
+      }
+    }
+  },
+  "dependencies": [
+    "aicode.local-inference",
+    "aicode.git",
+    "aicode.git-core"
+  ]
+}

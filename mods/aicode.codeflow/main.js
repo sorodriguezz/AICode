@@ -3,12 +3,16 @@
 // AICode → CodeFlow: `codeflow://flow/<name>?input=<json>` starts one of the user's CodeFlow flows
 //   (CodeFlow asks before running a link-triggered flow, by default). The input carries the active
 //   file and selection.
-// CodeFlow → AICode: AICode's MCP server (the dependency) is what CodeFlow's agents connect to —
+// CodeFlow → AICode: CodeFlow's agents can connect to the optional AICode MCP server —
 //   CodeFlow › Settings › MCP servers, transport "http", the URL and the Authorization header.
 
 export async function activate(ctx) {
-  const { h, icon, clear, basename } = ctx.ui;
-  const mcp = await ctx.mods.get("aicode.mcp-server");
+  const { h, icon, clear } = ctx.ui;
+  const hasMcp = () => ctx.mods.isEnabled("aicode.mcp-server");
+  const mcpConnection = async () => {
+    const mcp = hasMcp() ? await ctx.mods.get("aicode.mcp-server") : null;
+    return mcp?.connection();
+  };
   let recent = await ctx.settings.get("recentFlows", []);
   let root;
 
@@ -53,7 +57,9 @@ export async function activate(ctx) {
   };
 
   const copyMcp = async () => {
-    const info = await mcp.connection();
+    if (!hasMcp()) return ctx.window.showInfo("Enable the AICode MCP Server mod to connect CodeFlow's agents.");
+    const info = await mcpConnection().catch(() => null);
+    if (!info) return ctx.window.showError("The AICode MCP server is unavailable.");
     await ctx.window.copy(JSON.stringify({ name: "aicode", transport: "http", url: info.url, headers: { Authorization: `Bearer ${info.token}` } }, null, 2));
     ctx.window.showInfo("Copied. In CodeFlow: Settings › MCP servers › add one with transport http, this URL and the Authorization header.");
   };
@@ -61,8 +67,8 @@ export async function activate(ctx) {
   const render = async () => {
     if (!root) return;
     const isInstalled = await installed();
-    const info = await mcp.connection().catch(() => null);
     clear(root);
+    const connection = h("div", { class: "stack" }, h("div", { class: "muted" }, "Connecting to MCP…"));
     let what = "selection";
     const flowName = h("input", { class: "input", placeholder: "flow name", value: recent[0] ?? "", onkeydown: (e) => e.key === "Enter" && runFlow(flowName.value, what) });
     const whatSelect = h(
@@ -89,7 +95,7 @@ export async function activate(ctx) {
           { style: { display: "flex", alignItems: "center", gap: "8px" } },
           icon("git-merge"),
           h("b", null, "CodeFlow"),
-          h("span", { class: `state-dot${isInstalled ? " active" : ""}` }, isInstalled ? "installed" : "not found in /Applications"),
+          h("span", { class: `state-dot${isInstalled ? " active" : ""}` }, isInstalled ? "installed" : "not found"),
         ),
         h("button", { class: "btn block", disabled: !isInstalled, onclick: () => ctx.external.open("", "CodeFlow") }, icon("link-external"), "Open CodeFlow"),
 
@@ -100,18 +106,26 @@ export async function activate(ctx) {
         h("button", { class: "btn block", disabled: !isInstalled, onclick: () => runFlow(flowName.value, what) }, icon("play"), "Run in CodeFlow"),
         recent.length ? h("div", null, recent.map((r) => h("div", { class: "list-row", onclick: () => runFlow(r, what), title: `codeflow://flow/${r}` }, icon("history"), h("span", { class: "name" }, r)))) : null,
 
-        h("div", { class: "section-header", style: { marginTop: "18px" } }, h("span", null, "Let CodeFlow's agents use AICode")),
-        h(
-          "div",
-          { class: "muted", style: { fontSize: "12px" } },
-          "Add AICode as an MCP server in CodeFlow (Settings › MCP servers, transport http). Its agents can then list your open editors, read unsaved text, and propose edits that open here as a diff.",
-        ),
-        info ? [copyRow("URL", info.url), copyRow("Header", `Bearer ${info.token}`, true)] : h("div", { class: "err" }, "The MCP server is not running."),
-        h("button", { class: "btn secondary block", onclick: copyMcp }, icon("copy"), "Copy server settings (JSON)"),
-        h("div", { class: "muted", style: { fontSize: "11px" } }, "The header holds a secret token for this machine. Only programs that have it can reach the editor."),
+        hasMcp() ? h(
+          "div", { class: "stack", style: { marginTop: "18px" } },
+          h("div", { class: "section-header" }, h("span", null, "Let CodeFlow's agents use AICode")),
+          h(
+            "div",
+            { class: "muted", style: { fontSize: "12px" } },
+            "Add AICode as an MCP server in CodeFlow (Settings › MCP servers, transport http). Its agents can then list your open editors, read unsaved text, and propose edits that open here as a diff.",
+          ),
+          connection,
+          h("button", { class: "btn secondary block", onclick: copyMcp }, icon("copy"), "Copy server settings (JSON)"),
+          h("div", { class: "muted", style: { fontSize: "11px" } }, "The header holds a secret token for this machine. Only programs that have it can reach the editor."),
+        ) : null,
       ),
     );
-    void basename;
+    if (connection.isConnected) {
+      const info = await mcpConnection().catch(() => null);
+      clear(connection);
+      if (info) connection.append(copyRow("URL", info.url), copyRow("Header", `Bearer ${info.token}`, true));
+      else connection.append(h("div", { class: "err" }, "The MCP server is unavailable."));
+    }
   };
 
   ctx.views.provide("codeflow", {

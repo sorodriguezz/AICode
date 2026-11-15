@@ -73,23 +73,31 @@ and the Mods page.
 |---|---|---|
 | **Explorer** | file tree like VS Code's: new/rename in place, delete to the Trash, cut/copy/paste, drag to move (⌥ copies), keyboard navigation, git colors, follows changes on disk; open editors | fs:read, fs:write |
 | **Search** | find and replace across the folder (regex with `$1`, case, whole word, preserve case), files to include/exclude, only open editors, unsaved editors searched as they are, .gitignore on or off | fs:read, fs:write |
-| **Terminal** | integrated terminals (xterm.js + a real PTY): tabs, side-by-side splits, a shell picker, ⌘-click on paths and URLs, ⌘K clears | pty, fs:read, open-external |
-| **AI Chat** | the chat panel only: attach files and selections, slash commands, edit/retry, chat history, file links and *Run in Terminal* in answers. The agents are the mods below | fs:read, open-external |
+| **Terminal** | integrated terminals (xterm.js + a real PTY): tabs, side-by-side splits, a shell picker, ⌘-click on paths and URLs, ⌘K clears. Requires Bottom Panel | pty, fs:read, open-external |
+| **Primary Side Bar** | an independent docking area for views from any mod, on the left by default | — |
+| **Secondary Side Bar** | an independent docking area for views from any mod, on the right by default | — |
+| **Bottom Panel** | an independent docking area below the editor for terminals, logs, test results and other views | — |
+| **AI Chat** | a view for chats with attachments, slash commands, edit/retry, history, file links and *Run in Terminal* in answers. Requires Secondary Side Bar. The agents are the mods below | fs:read, open-external |
 | **Claude**, **Codex (OpenAI)**, **Gemini**, **Grok (xAI)** | one agent each for the AI Chat, through its CLI (your subscription — reads the folder; Claude and Codex also propose edits through the MCP server) or its API with an API key kept in the system's password store (Keychain, Credential Manager, Secret Service) (no CLI needed). *Configure …* in the agent picker switches | process, open-external |
 | **OpenCode**, **Cline** | an agent each, through its CLI (which keeps its own providers and keys) | process, open-external |
 | **Ollama** | local models: `ollama run`, or the local Ollama server with the conversation as messages | process, open-external |
 | **Custom Agent Commands** | any program that takes a message and prints an answer (aider, llm, a script) as an agent | process |
 | **Agents Window** | a window made for agents: the chat in the middle, files/changes/search on the right, the terminal below (⌥⇧⌘A; configuration only) | — |
 | **MCP Server** | AICode's open editors as MCP tools (read unsaved text, propose edits as diffs) on 127.0.0.1 with a token | mcp-server |
-| **CodeFlow** | run CodeFlow flows with the file/selection as input; connect CodeFlow's agents to AICode | open-external |
-| **Source Control** | git: changes, stage/unstage/discard, commit, diffs, branches, fetch/pull/push, gutter markers | process, fs:read |
+| **CodeFlow** | run CodeFlow flows with the file or selection as input. Enable MCP Server to let CodeFlow's agents connect to AICode | open-external |
+| **Source Control** | changes, stage/unstage/discard, commit, diffs, branches and fetch/pull/push. Requires Git Core | process, fs:read, fs:write |
+| **Git Graph** | dockable commit history and file diffs for the current branch and its upstream. Requires Git Core | — |
+| **Git Decorations** | file badges and colors in the Explorer, plus line change markers in the editor gutter. Requires Git Core | — |
+| **Git Core** | shared Git command runner, repository status and diff tools | process, fs:read |
 | **Themes** | 39 color themes for the whole window (editor, side bars, tabs, terminal, widgets): CodeFlow Dark/Light, Dracula, Monokai, One Dark/Light, Tokyo Night (+Light), Catppuccin Mocha/Latte, Night Owl (+Light), Omni Owl, Nord, Gruvbox, GitHub, Solarized, Darcula, Kiro Dark, Rosé Pine Dawn, Ayu Light… (declarative) | — |
 | **File Icon Themes** | Seti (the default) and VS Code Icons, with packs for Angular, React, Next.js, Vue/Nuxt, NestJS, Bun, Spring Boot, .NET, FastAPI, Django and Laravel — or *Auto*, which picks the pack each folder calls for (*Preferences: File Icon Theme…*) | fs:read |
 | **JSON & YAML Paths** | the keys down to the cursor in the breadcrumbs (`dependencies › react`), click to jump | — |
 | **Glass (Acrylic)** | the system's frosted glass behind the window (macOS vibrancy, Windows Acrylic/Mica; opaque on Linux, which has no blur), tinted with the theme so nothing turns invisible (configuration only) | — |
 | **Soft Look** | pill tabs, rounded corners, themed tooltips, a smooth cursor (configuration only) | — |
 | **Fluid Motion** | smooth animations for the whole window: softer easing, tabs and activity bar icons that glide when they move, cross-fading views and editors, menus/pickers/hovers/suggestions/find that ease in, a smooth caret, ghost text that fades in; Subtle / Fluid / Expressive (*Motion: Animation Intensity…*); off with *Toggle Animations* or Reduce motion. On by default | — |
-| **Local Autocomplete** | code completion and commit messages from small local models — nothing to install: the mod brings its own engine (llama.cpp), picks the GPU (Vulkan, Metal) or the CPU and the model size that suit each machine (Qwen2.5-Coder 7B on a big GPU, 1.5B on a laptop CPU), downloads it the first time and falls back to the CPU if the GPU fails. Ghost text that completes whole blocks, with your other open tabs as context; Tab accepts, ⌥ asks. Also JetBrains Mellum, StarCoder2, CodeGemma and DeepSeek-Coder. With Source Control on: ghost text in the commit box and a ✨ button that writes the message from the staged diff. Can also use an Ollama or OpenAI-compatible server; nothing leaves the machine | network, process, fs:read, fs:write, open-external |
+| **Local Inference** | manages llama.cpp and model downloads, picks GPU (Vulkan, Metal) or CPU, and supports Ollama and OpenAI-compatible servers | network, process, fs:read, fs:write, open-external |
+| **Code Completion (Local)** | inline code suggestions with neighboring editor tabs as context. Tab accepts. Requires Local Inference | — |
+| **Commit Assistant** | inline suggestions and a button to generate a commit message from Git changes and recent commits. Requires Local Inference, Source Control and Git Core | — |
 | **Syntax Highlighting** | VS Code's own TextMate grammars (TypeScript, JavaScript, Python, Rust, Go, C/C++, …), so code is colored exactly as in VS Code | — |
 | **Markdown Preview** | preview .md files to the side or in their own tab (⌘K V, ⇧⌘V), live while typing, scrolling with the editor, maximized over the editor; the headings above the cursor in the breadcrumbs; Markdown snippets; raw HTML is shown as text | open-external |
 | **Image Preview** | images open as images, never as code (PNG, JPEG, GIF, WebP, AVIF, BMP, ICO, TIFF, SVG): zoom with buttons, ⌘-scroll, pinch, click/⌥-click and + − 0 1, drag to pan, fit or actual size, checkerboard/dark/light background, sharp pixels when zoomed, size in the status bar, reloads on change; SVG keeps *Open Source* and previews its code live. On by default | fs:read, open-external |
@@ -110,7 +118,7 @@ AICode is a separate app; the **CodeFlow** mod connects the two:
 
 - **AICode → CodeFlow**: *CodeFlow: Run a Flow…* opens `codeflow://flow/<name>?input=<json>` with the
   active file or selection as input. CodeFlow asks before running a flow a link started.
-- **CodeFlow → AICode**: add AICode as an MCP server in CodeFlow (Settings › MCP servers, transport
+- **CodeFlow → AICode**: enable the **MCP Server** mod, then add AICode as an MCP server in CodeFlow (Settings › MCP servers, transport
   `http`). The CodeFlow side bar view has the URL and header to copy. CodeFlow's agents can then
   list open editors, read unsaved buffers, open files and propose edits that appear in AICode as a
   diff to accept or reject.

@@ -83,6 +83,8 @@ pub fn http_request(
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let label = window.label().to_string();
     let task_app = app.clone();
+    // A fast request can finish as soon as it is spawned.
+    let mut running = state.running.lock().unwrap();
     let handle = tauri::async_runtime::spawn(async move {
         let app = task_app;
         let start = Instant::now();
@@ -124,7 +126,7 @@ pub fn http_request(
         }
         end(json!({ "id": id, "totalMs": ms(start), "size": size }));
     });
-    state.running.lock().unwrap().insert(id, (window.label().to_string(), handle));
+    running.insert(id, (window.label().to_string(), handle));
     Ok(id)
 }
 

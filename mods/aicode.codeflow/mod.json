@@ -7,9 +7,9 @@
   "icon": "git-merge",
   "main": "main.js",
   "api": 1,
-  "activation": ["onView:codeflow", "onCommand:codeflow.runFlow", "onCommand:codeflow.open"],
+  "activation": ["onView:codeflow", "onCommand:codeflow.runFlow", "onCommand:codeflow.open", "onCommand:codeflow.copyMcp"],
   "permissions": ["open-external"],
-  "dependencies": ["aicode.mcp-server"],
+  "optionalDependencies": ["aicode.mcp-server"],
   "contributes": {
     "views": [{ "id": "codeflow", "title": "CodeFlow", "icon": "git-merge", "location": "sidebar", "order": 20 }],
     "commands": [

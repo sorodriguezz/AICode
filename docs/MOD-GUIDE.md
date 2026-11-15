@@ -145,6 +145,11 @@ A panel with a list of launchers and/or notes, in the side bar (`"sidebar"`, the
 secondary side bar (`"secondary"`, the right) or the bottom panel (`"panel"`). A side bar view
 gets an icon in the activity bar on the far left.
 
+If a utility requires the right side bar, declare `"dependencies": ["aicode.secondary-sidebar"]`
+and set its view's `"location": "secondary"`. Use `aicode.primary-sidebar` for `sidebar` or
+`aicode.bottom-panel` for `panel` if either slot is required. A mod can also provide a slot directly
+with `contributes.viewContainers`, for example `["panel"]`.
+
 ```json
 "views": [
   {

@@ -18,6 +18,7 @@
     "fs:read",
     "fs:write"
   ],
+  "dependencies": ["aicode.git-core"],
   "contributes": {
     "views": [
       {

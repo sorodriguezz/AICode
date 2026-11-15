@@ -1,0 +1,21 @@
+{
+  "id": "aicode.git-graph",
+  "name": "Git Graph",
+  "version": "1.0.0",
+  "description": "Browse the current branch and its upstream, inspect commits and open file diffs from Git history.",
+  "author": "AICode",
+  "icon": "git-commit",
+  "main": "main.js",
+  "api": 1,
+  "dependencies": ["aicode.git-core"],
+  "optionalDependencies": ["aicode.git"],
+  "activation": ["onView:git.graph", "onCommand:git.graph.refresh"],
+  "contributes": {
+    "views": [
+      { "id": "git.graph", "title": "Graph", "location": "sidebar", "order": 4 }
+    ],
+    "commands": [
+      { "id": "git.graph.refresh", "title": "Refresh Graph", "category": "Git" }
+    ]
+  }
+}

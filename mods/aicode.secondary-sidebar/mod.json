@@ -1,0 +1,10 @@
+{
+  "id": "aicode.secondary-sidebar",
+  "name": "Secondary Side Bar",
+  "version": "1.0.0",
+  "description": "Adds a secondary side bar for views from any mod. Dock tools there or declare a view with location set to secondary.",
+  "author": "AICode",
+  "icon": "layout-sidebar-right",
+  "api": 1,
+  "contributes": { "viewContainers": ["secondary"] }
+}

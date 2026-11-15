@@ -23,6 +23,9 @@
     "fs:read",
     "open-external"
   ],
+  "dependencies": [
+    "aicode.secondary-sidebar"
+  ],
   "optionalDependencies": [
     "aicode.mcp-server",
     "aicode.terminal"
