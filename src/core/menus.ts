@@ -85,7 +85,7 @@ export function menuItems(menu: string, context: any): MenuItem[] {
         label: String(val(item.label, context) ?? ""),
         icon: item.icon,
         keybinding: item.keybinding ?? (item.command ? commands.keybindingFor(item.command) ?? undefined : undefined),
-        checked: !!val(item.checked, context),
+        checked: val(item.checked, context),
         disabled: !!val(item.disabled, context),
         run: () => void Promise.resolve(runItem(item, context)).catch((e) => console.error(`[menu ${menu}]`, e)),
       });

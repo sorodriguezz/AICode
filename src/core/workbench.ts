@@ -1585,7 +1585,7 @@ export class Workbench {
           { icon: "layout-centered", label: "Compact", checked: o().density === "compact", run: () => this.setOptions({ density: "compact" }) },
         ]],
         ["Modes", [
-          { icon: "screen-full", label: "Full Screen", keys: "ctrl+mod+f", run: () => commands.execute("workbench.toggleFullScreen") },
+          { icon: "screen-full", label: "Full Screen", keys: commands.keybindingFor("workbench.toggleFullScreen"), run: () => commands.execute("workbench.toggleFullScreen") },
           { icon: "target", label: "Zen Mode", keys: "mod+k z", run: () => { close(); commands.execute("workbench.toggleZenMode"); } },
         ]],
       ];

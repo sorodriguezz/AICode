@@ -1093,7 +1093,7 @@ body .modal-editor-title .codicon { font-size: 14px; }
    and the window buttons, laid out as VS Code's (titlebar.ts). macOS is untouched. */
 :root:not([data-platform="mac"]) .titlebar { grid-template-columns: 1fr minmax(160px, 500px) 1fr; }
 :root:not([data-platform="mac"]) .titlebar-left { padding-left: 0; }
-:root:not([data-platform="mac"]) .titlebar-right { padding-right: 0; }
+:root:not([data-platform="mac"]) .titlebar-right { justify-content: flex-end; padding-right: 0; }
 :root:not([data-platform="mac"]) .titlebar-right > [data-part="titleBar.layoutControls"] { margin-right: 6px; }
 .menubar { display: flex; align-items: center; height: 100%; margin-right: auto; min-width: 0; overflow: hidden; }
 .menubar-icon { flex: 0 0 auto; width: 35px; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--aicode-focusBorder, #0078d4); }
@@ -1106,6 +1106,11 @@ body .modal-editor-title .codicon { font-size: 14px; }
 .menubar-item:hover, .menubar-item.open { background: var(--aicode-toolbar-hoverBackground); }
 .menubar-more { display: none; width: 30px; padding: 0; align-items: center; justify-content: center; }
 .menubar-more .codicon { font-size: 16px; }
+.context-menu.titlebar-menu {
+  max-width: calc(100vw - 8px); max-height: calc(100vh - var(--titlebar-h) - 4px);
+  overflow: auto; animation: none;
+}
+.titlebar-menu .item .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* Too narrow for the names: one ☰ opens all the menus, as in VS Code. */
 @media (max-width: 1180px) {
   .menubar-items { display: none; }

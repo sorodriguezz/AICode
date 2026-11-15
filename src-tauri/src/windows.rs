@@ -39,6 +39,8 @@ pub struct WindowsState {
     pub transparent: Mutex<HashSet<String>>,
     /// "Reopen Last Session" was already offered in this run (once per launch, not per reload).
     pub previous_offered: AtomicBool,
+    /// Serialize webview IPC requests that allocate new window labels and write the registry.
+    ipc_window_creation: tauri::async_runtime::Mutex<()>,
 }
 
 fn profile_name(app: &AppHandle) -> String {
@@ -309,8 +311,11 @@ pub fn session_previous_info(app: AppHandle) -> Value {
 
 /// Brings the last session back: the first window's session is returned for the asking window to
 /// load; every other window of it opens again on its own.
+/// The command runs off the webview's IPC thread because creating WebView2 can block that thread.
 #[tauri::command]
-pub fn session_restore_previous(app: AppHandle) -> Result<Option<String>, String> {
+pub async fn session_restore_previous(app: AppHandle) -> Result<Option<String>, String> {
+    let state = app.state::<WindowsState>();
+    let _creation = state.ipc_window_creation.lock().await;
     let profile = profile_name(&app);
     let dir = previous_dir(&profile);
     let mut labels = previous_labels(&profile);
@@ -321,22 +326,27 @@ pub fn session_restore_previous(app: AppHandle) -> Result<Option<String>, String
         let main = labels.remove(i);
         labels.insert(0, main);
     }
-    let first = std::fs::read_to_string(dir.join(format!("{}.json", labels[0]))).ok();
+    let first = std::fs::read_to_string(dir.join(format!("{}.json", labels[0]))).map_err(|e| e.to_string())?;
     for label in labels.iter().skip(1) {
         let new_label = next_label(&app);
         let from = dir.join(format!("{label}.json"));
-        if std::fs::rename(&from, session_path(&app, &new_label)).is_err() && std::fs::copy(&from, session_path(&app, &new_label)).is_err() {
-            continue;
+        let to = session_path_for(&profile, &new_label);
+        // The new window reads this session at startup. Keep the previous copy until it opens.
+        let data = std::fs::read(&from).map_err(|e| e.to_string())?;
+        crate::fsops::write_atomic(&to, &data)?;
+        if let Err(e) = create(&app, &new_label) {
+            let _ = std::fs::remove_file(&to);
+            return Err(e.to_string());
         }
-        create(&app, &new_label).map_err(|e| e.to_string())?;
         let mut open = open_labels(&app);
         if !open.contains(&new_label) {
             open.push(new_label);
         }
         write_registry(&app, &open);
+        let _ = std::fs::remove_file(&from);
     }
     let _ = std::fs::remove_dir_all(&dir);
-    Ok(first)
+    Ok(Some(first))
 }
 
 /// At launch: every window of the last session, or one fresh window.
@@ -387,26 +397,25 @@ pub fn open_new_with(app: &AppHandle, paths_to_open: Vec<String>, spec: Option<V
 
 /// Paths the OS asked us to open while running: the window in front opens them.
 pub fn open_in_front(app: &AppHandle, paths_to_open: Vec<String>) {
+    if let Some(label) = front_label(app) {
+        open_in_window(app, &label, paths_to_open);
+    } else {
+        let _ = open_new(app, paths_to_open);
+    }
+}
+
+pub fn open_in_window(app: &AppHandle, label: &str, paths_to_open: Vec<String>) {
     let state = app.state::<WindowsState>();
-    let target = state
-        .last_focused
-        .lock()
-        .unwrap()
-        .clone()
-        .filter(|l| app.get_webview_window(l).is_some())
-        .or_else(|| open_labels(app).into_iter().next());
-    match target {
-        Some(label) if state.ready.lock().unwrap().contains(&label) => {
-            let _ = app.emit_to(label.as_str(), "open-paths", json!(paths_to_open));
-            if let Some(w) = app.get_webview_window(&label) {
-                let _ = w.unminimize();
-                let _ = w.set_focus();
-            }
-        }
-        Some(label) => state.pending.lock().unwrap().entry(label).or_default().extend(paths_to_open),
-        None => {
-            let _ = open_new(app, paths_to_open);
-        }
+    let ready = state.ready.lock().unwrap();
+    if !ready.iter().any(|l| l == label) {
+        state.pending.lock().unwrap().entry(label.to_string()).or_default().extend(paths_to_open);
+        return;
+    }
+    drop(ready);
+    let _ = app.emit_to(label, "open-paths", paths_to_open);
+    if let Some(w) = app.get_webview_window(label) {
+        let _ = w.unminimize();
+        let _ = w.set_focus();
     }
 }
 
@@ -426,6 +435,7 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         }
         tauri::WindowEvent::Destroyed => {
             let label = window.label().to_string();
+            crate::menu::forget_window(&label);
             // Its mods' icons in the menu bar go with it.
             crate::background::drop_owned_by(app, &label);
             crate::native::drop_owned_by(app, &label);
@@ -530,8 +540,11 @@ fn percent_decode(s: &str) -> String {
 
 // ---------- commands ----------
 
+// Creating WebView2 from a synchronous webview IPC handler can deadlock on Windows.
 #[tauri::command]
-pub fn window_new(app: AppHandle, paths: Option<Vec<String>>, spec: Option<Value>) -> Result<String, String> {
+pub async fn window_new(app: AppHandle, paths: Option<Vec<String>>, spec: Option<Value>) -> Result<String, String> {
+    let state = app.state::<WindowsState>();
+    let _creation = state.ipc_window_creation.lock().await;
     open_new_with(&app, paths.unwrap_or_default(), spec)
 }
 

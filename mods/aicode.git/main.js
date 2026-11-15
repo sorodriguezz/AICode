@@ -3,7 +3,8 @@
 import { makeGit, parseStatus, groups, lineChanges, decorationMap, LOG_FORMAT, parseLog, layoutGraph, parseNameStatus } from "./git.js";
 
 const STYLE = `
-.scm { position: relative; padding: 6px 0 12px; }
+.scm { position: relative; height: 100%; display: flex; flex-direction: column; padding: 6px 0 4px; }
+.scm-changes { flex: 1 1 0; min-height: 0; overflow: auto; }
 /* While an operation runs (fetch, pull, push, commit…): VS Code's thin sliding bar at the view's top. */
 .scm-progress { position: absolute; top: 0; left: 0; right: 0; height: 2px; overflow: hidden; pointer-events: none; }
 .scm-progress::before {
@@ -52,8 +53,10 @@ const STYLE = `
   --git-lane-0: var(--aicode-scmGraph-foreground1, #59a4f9); --git-lane-1: var(--aicode-scmGraph-foreground2, #b180d7);
   --git-lane-2: var(--aicode-scmGraph-foreground3, #ffb000); --git-lane-3: var(--aicode-scmGraph-foreground4, #40b0a6);
   --git-lane-4: var(--aicode-scmGraph-foreground5, #dc267f); --git-lane-5: #e2c08d;
-  margin-top: 6px;
+  flex: 0 1 auto; max-height: max(26px, 50%); display: flex; flex-direction: column; margin-top: 6px;
 }
+.scm-graph > .section-header { flex: 0 0 auto; }
+.scm-graph-rows { min-height: 0; overflow: auto; }
 .scm-graph .list-row { gap: 4px; padding-left: 4px; }
 .scm-graph .graph-lanes { flex: 0 0 auto; height: 100%; overflow: visible; }
 .scm-graph .graph-text { display: flex; gap: 6px; align-items: baseline; flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; }
@@ -1190,13 +1193,15 @@ export async function activate(ctx) {
           iconButton("refresh", "Refresh", () => refresh()),
         ),
       ),
-      rows,
+      closed ? null : h("div", { class: "scm-graph-rows" }, rows),
     );
   };
 
 
   const render = () => {
     if (!view) return;
+    const changesScroll = view.querySelector(".scm-changes")?.scrollTop ?? 0;
+    const graphScroll = view.querySelector(".scm-graph-rows")?.scrollTop ?? 0;
     clear(view);
     const folder = ctx.workspace.folder();
     if (!folder) {
@@ -1234,27 +1239,36 @@ export async function activate(ctx) {
       },
     });
     const unstagedAll = [...g.changes, ...g.untracked];
+    const changes = h(
+      "div",
+      { class: "scm-changes" },
+      h("div", { class: "scm-input" }, textarea, h(
+        "div",
+        { class: "scm-commit" },
+        h("button", { class: "btn commit-main", disabled: !!busy, onclick: () => commit() }, icon(busy ? "loading" : "check", busy ? "codicon-modifier-spin" : ""), busy || "Commit"),
+        h("button", { class: "btn commit-more", title: "More Actions…", disabled: !!busy, onclick: commitMenu }, icon("chevron-down")),
+      )),
+      section("merge", "Merge Changes", g.merge, [iconButton("add", "Stage All Merge Changes", () => stage(g.merge.map((f) => f.path)))]),
+      section("staged", "Staged Changes", g.staged, [iconButton("remove", "Unstage All Changes", () => unstage(g.staged.map((f) => f.path)))]),
+      section("changes", "Changes", unstagedAll, [
+        iconButton("discard", "Discard All Changes", () => discard(unstagedAll)),
+        iconButton("add", "Stage All Changes", () => stage(unstagedAll.map((f) => f.path))),
+      ]),
+      !status.files.length ? h("div", { class: "pad muted" }, "No changes.") : null,
+    );
+    const graph = graphSection();
     view.append(
       h(
         "div",
         { class: "scm" },
         busy ? h("div", { class: "scm-progress", title: busy }) : null,
-        h("div", { class: "scm-input" }, textarea, h(
-          "div",
-          { class: "scm-commit" },
-          h("button", { class: "btn commit-main", disabled: !!busy, onclick: () => commit() }, icon(busy ? "loading" : "check", busy ? "codicon-modifier-spin" : ""), busy || "Commit"),
-          h("button", { class: "btn commit-more", title: "More Actions…", disabled: !!busy, onclick: commitMenu }, icon("chevron-down")),
-        )),
-        section("merge", "Merge Changes", g.merge, [iconButton("add", "Stage All Merge Changes", () => stage(g.merge.map((f) => f.path)))]),
-        section("staged", "Staged Changes", g.staged, [iconButton("remove", "Unstage All Changes", () => unstage(g.staged.map((f) => f.path)))]),
-        section("changes", "Changes", unstagedAll, [
-          iconButton("discard", "Discard All Changes", () => discard(unstagedAll)),
-          iconButton("add", "Stage All Changes", () => stage(unstagedAll.map((f) => f.path))),
-        ]),
-        !status.files.length ? h("div", { class: "pad muted" }, "No changes.") : null,
-        graphSection(),
+        changes,
+        graph,
       ),
     );
+    changes.scrollTop = changesScroll;
+    const graphRows = graph.querySelector(".scm-graph-rows");
+    if (graphRows) graphRows.scrollTop = graphScroll;
   };
 
   ctx.views.provide("scm", {

@@ -2,10 +2,11 @@
 //! the parts that change (Open Recent, the profiles, the Auto Save check) are rebuilt with
 //! [`refresh`] whenever what they show changes.
 
+use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
-use tauri::menu::{CheckMenuItemBuilder, Menu, MenuBuilder, MenuEvent, MenuItemBuilder, Submenu, SubmenuBuilder};
+use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuEvent, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
 use crate::{fsops, mods, paths, profiles, windows};
@@ -19,6 +20,7 @@ const SHOWN_RECENT: usize = 10;
 // ---------- what the window in front has open (items that do nothing are off, as in VS Code) ----------
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(default)]
 pub struct Context {
     /// A folder is open (Close Folder, Duplicate Window).
     pub folder: bool,
@@ -30,14 +32,31 @@ pub struct Context {
     pub file: bool,
     /// Some text has unsaved changes (Save All).
     pub dirty: bool,
+    pub sidebar: bool,
+    pub panel: bool,
+    pub secondary: bool,
 }
 
-static CONTEXT: Mutex<Context> = Mutex::new(Context { folder: false, editor: false, text: false, file: false, dirty: false });
+static CONTEXT: Mutex<Context> = Mutex::new(Context { folder: false, editor: false, text: false, file: false, dirty: false, sidebar: false, panel: false, secondary: false });
+static WINDOW_CONTEXTS: LazyLock<Mutex<HashMap<String, Context>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn window_context(label: &str) -> Context {
+    WINDOW_CONTEXTS.lock().unwrap().get(label).copied().unwrap_or_default()
+}
+
+pub fn forget_window(label: &str) {
+    WINDOW_CONTEXTS.lock().unwrap().remove(label);
+}
 
 /// The window reports what it has open when that changes and when it comes to the front.
 #[tauri::command]
 pub fn menu_context(app: AppHandle, window: tauri::Window, context: Context) {
-    // Only the window in front decides (a background window's change must not repaint the menu).
+    // Each workbench menu follows its own window, including when another window is in front.
+    let changed = WINDOW_CONTEXTS.lock().unwrap().insert(window.label().to_string(), context) != Some(context);
+    if changed && !cfg!(target_os = "macos") {
+        let _ = app.emit_to(window.label(), "menu-entries", entries(&app, context));
+    }
+    // Native accelerators still follow the foreground window.
     if !window.is_focused().unwrap_or(false) && windows::front_label(&app).as_deref() != Some(window.label()) {
         return;
     }
@@ -48,7 +67,7 @@ pub fn menu_context(app: AppHandle, window: tauri::Window, context: Context) {
         }
         *current = context;
     }
-    refresh(&app);
+    rebuild(&app, false);
 }
 
 // ---------- items mods add to the menu bar ----------
@@ -81,68 +100,28 @@ pub fn menu_set_extra(app: AppHandle, items: Vec<ExtraItem>) {
     refresh(&app);
 }
 
-/// Appends the mods' items for `menu` (after a separator).
-fn add_extra<'a>(app: &'a AppHandle, mut sub: SubmenuBuilder<'a, Wry, AppHandle>, menu: &str) -> tauri::Result<SubmenuBuilder<'a, Wry, AppHandle>> {
-    let items: Vec<ExtraItem> = EXTRA.lock().unwrap().iter().filter(|i| i.menu.eq_ignore_ascii_case(menu)).cloned().collect();
-    if items.is_empty() {
-        return Ok(sub);
-    }
-    sub = sub.separator();
-    for (n, it) in items.iter().enumerate() {
-        if it.separator_before && n > 0 {
-            sub = sub.separator();
+/// Menus of the mods' own (any name that is not one of the app's), in the order first seen.
+fn extra_menus(extra: &[ExtraItem]) -> Vec<MenuEntry> {
+    let built_in = ["AICode", "File", "Edit", "View", "Window", "Help"];
+    // macOS has no built-in Help menu, but mods can contribute one.
+    let built_in = if cfg!(target_os = "macos") { &built_in[..5] } else { &built_in[..] };
+    let mut names: Vec<&str> = Vec::new();
+    for it in extra {
+        if !built_in.iter().chain(&names).any(|n| n.eq_ignore_ascii_case(&it.menu)) {
+            names.push(&it.menu);
         }
-        let mut b = MenuItemBuilder::with_id(it.command.as_str(), it.label.as_str());
-        if let Some(a) = it.accelerator.as_deref().filter(|a| !a.is_empty()) {
-            b = b.accelerator(a);
-        }
-        // A bad accelerator must not take the whole menu bar down: the item goes without it.
-        let built = match b.build(app) {
-            Ok(i) => i,
-            Err(e) => {
-                eprintln!("[aicode] menu item {:?}: shortcut {:?} rejected ({e}); shown without it", it.label, it.accelerator);
-                MenuItemBuilder::with_id(it.command.as_str(), it.label.as_str()).build(app)?
-            }
-        };
-        sub = sub.item(&built);
     }
-    Ok(sub)
+    names.into_iter().map(|name| with_extras(name, Vec::new(), extra)).collect()
 }
 
-/// Menus of the mods' own (any name that is not one of the app's), in the order first seen.
-fn extra_menus(app: &AppHandle) -> tauri::Result<Vec<Submenu<Wry>>> {
-    const BUILT_IN: &[&str] = &["aicode", "file", "edit", "view", "window"];
-    let mut names: Vec<String> = Vec::new();
-    for it in EXTRA.lock().unwrap().iter() {
-        if !BUILT_IN.contains(&it.menu.to_ascii_lowercase().as_str()) && !names.iter().any(|n| n.eq_ignore_ascii_case(&it.menu)) {
-            names.push(it.menu.clone());
+fn with_extras(label: &str, mut items: Vec<MenuEntry>, extra: &[ExtraItem]) -> MenuEntry {
+    for (n, it) in extra.iter().filter(|i| i.menu.eq_ignore_ascii_case(label)).enumerate() {
+        if !items.is_empty() && (n == 0 || it.separator_before) {
+            items.push(MenuEntry::Separator);
         }
+        items.push(item(&it.command, &it.label, it.accelerator.as_deref().filter(|a| !a.is_empty())));
     }
-    let mut out = Vec::new();
-    for name in names {
-        // `add_extra` starts with a separator; a menu of its own has nothing above it to separate.
-        let items: Vec<ExtraItem> = EXTRA.lock().unwrap().iter().filter(|i| i.menu.eq_ignore_ascii_case(&name)).cloned().collect();
-        let mut sub = SubmenuBuilder::new(app, name.as_str());
-        for (n, it) in items.iter().enumerate() {
-            if it.separator_before && n > 0 {
-                sub = sub.separator();
-            }
-            let mut b = MenuItemBuilder::with_id(it.command.as_str(), it.label.as_str());
-            if let Some(a) = it.accelerator.as_deref().filter(|a| !a.is_empty()) {
-                b = b.accelerator(a);
-            }
-            let built = match b.build(app) {
-                Ok(i) => i,
-                Err(e) => {
-                    eprintln!("[aicode] menu item {:?}: shortcut {:?} rejected ({e}); shown without it", it.label, it.accelerator);
-                    MenuItemBuilder::with_id(it.command.as_str(), it.label.as_str()).build(app)?
-                }
-            };
-            sub = sub.item(&built);
-        }
-        out.push(sub.build()?);
-    }
-    Ok(out)
+    submenu(label, items)
 }
 
 // ---------- the recent list (folders and files opened from AICode, newest first) ----------
@@ -174,6 +153,96 @@ pub fn recent_clear(app: &AppHandle) {
 
 // ---------- building ----------
 
+// The native menu owns keyboard shortcuts. Windows and Linux render the same entries in the
+// workbench so the menus follow its theme and can switch as the pointer moves across the bar.
+#[derive(Clone, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum MenuEntry {
+    Command { id: String, label: String, accelerator: Option<String>, enabled: bool },
+    Check { id: String, label: String, checked: bool },
+    Submenu { label: String, items: Vec<Self> },
+    Separator,
+    Role { role: MenuRole },
+}
+
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MenuRole {
+    About, Cut, Copy, Paste, SelectAll, Minimize, Fullscreen,
+    #[cfg(target_os = "macos")]
+    Hide,
+    #[cfg(target_os = "macos")]
+    HideOthers,
+    #[cfg(target_os = "macos")]
+    ShowAll,
+    #[cfg(target_os = "macos")]
+    Quit,
+}
+
+fn item_if(id: &str, label: &str, accelerator: Option<&str>, enabled: bool) -> MenuEntry {
+    MenuEntry::Command { id: id.into(), label: label.into(), accelerator: accelerator.map(String::from), enabled }
+}
+
+fn item(id: &str, label: &str, accelerator: Option<&str>) -> MenuEntry {
+    item_if(id, label, accelerator, true)
+}
+
+fn check(id: &str, label: &str, checked: bool) -> MenuEntry {
+    MenuEntry::Check { id: id.into(), label: label.into(), checked }
+}
+
+fn submenu(label: &str, items: Vec<MenuEntry>) -> MenuEntry {
+    MenuEntry::Submenu { label: label.into(), items }
+}
+
+fn role(role: MenuRole) -> MenuEntry {
+    MenuEntry::Role { role }
+}
+
+fn native_item(app: &AppHandle, entry: &MenuEntry) -> tauri::Result<MenuItemKind<Wry>> {
+    Ok(match entry {
+        MenuEntry::Command { id, label, accelerator, enabled } => {
+            let builder = || MenuItemBuilder::with_id(id.as_str(), label.as_str()).enabled(*enabled);
+            let item = match accelerator {
+                Some(a) => builder().accelerator(a).build(app).or_else(|e| {
+                    eprintln!("[aicode] menu item {label:?}: shortcut {a:?} rejected ({e}); shown without it");
+                    builder().build(app)
+                })?,
+                None => builder().build(app)?,
+            };
+            MenuItemKind::MenuItem(item)
+        }
+        MenuEntry::Check { id, label, checked } => {
+            MenuItemKind::Check(CheckMenuItemBuilder::with_id(id.as_str(), label).checked(*checked).build(app)?)
+        }
+        MenuEntry::Submenu { label, items } => {
+            let mut sub = SubmenuBuilder::new(app, label);
+            for entry in items {
+                sub = sub.item(&native_item(app, entry)?);
+            }
+            MenuItemKind::Submenu(sub.build()?)
+        }
+        MenuEntry::Separator => MenuItemKind::Predefined(PredefinedMenuItem::separator(app)?),
+        MenuEntry::Role { role } => MenuItemKind::Predefined(match role {
+            MenuRole::About => PredefinedMenuItem::about(app, None, None)?,
+            MenuRole::Cut => PredefinedMenuItem::cut(app, None)?,
+            MenuRole::Copy => PredefinedMenuItem::copy(app, None)?,
+            MenuRole::Paste => PredefinedMenuItem::paste(app, None)?,
+            MenuRole::SelectAll => PredefinedMenuItem::select_all(app, None)?,
+            MenuRole::Minimize => PredefinedMenuItem::minimize(app, None)?,
+            MenuRole::Fullscreen => PredefinedMenuItem::fullscreen(app, None)?,
+            #[cfg(target_os = "macos")]
+            MenuRole::Hide => PredefinedMenuItem::hide(app, None)?,
+            #[cfg(target_os = "macos")]
+            MenuRole::HideOthers => PredefinedMenuItem::hide_others(app, None)?,
+            #[cfg(target_os = "macos")]
+            MenuRole::ShowAll => PredefinedMenuItem::show_all(app, None)?,
+            #[cfg(target_os = "macos")]
+            MenuRole::Quit => PredefinedMenuItem::quit(app, None)?,
+        }),
+    })
+}
+
 fn home_relative(path: &str) -> String {
     match std::env::var("HOME") {
         Ok(home) if !home.is_empty() && path.starts_with(&home) => format!("~{}", &path[home.len()..]),
@@ -186,8 +255,7 @@ fn auto_save_on(app: &AppHandle) -> bool {
     mods::effective_core_setting(&state, "files.autoSave").and_then(|v| v.as_str().map(String::from)).is_some_and(|v| v != "off")
 }
 
-fn open_recent(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
-    let item = |id: &str, text: &str| MenuItemBuilder::with_id(id, text).build(app);
+fn open_recent() -> MenuEntry {
     let (mut folders, mut files) = (Vec::new(), Vec::new());
     for p in recent_list() {
         match std::fs::metadata(&p) {
@@ -196,21 +264,22 @@ fn open_recent(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
             Err(_) => {} // gone from disk: not offered
         }
     }
-    let mut b = SubmenuBuilder::new(app, "Open Recent").item(&item("workbench.reopenLastSession", "Reopen Last Session")?);
+    let mut items = vec![item("workbench.reopenLastSession", "Reopen Last Session", None)];
     for group in [&folders, &files] {
         if group.is_empty() {
             continue;
         }
-        b = b.separator();
+        items.push(MenuEntry::Separator);
         for p in group.iter().take(SHOWN_RECENT) {
-            b = b.item(&item(&format!("{RECENT}{p}"), &home_relative(p))?);
+            items.push(item(&format!("{RECENT}{p}"), &home_relative(p), None));
         }
     }
-    let clear = MenuItemBuilder::with_id("workbench.clearRecentlyOpened", "Clear Recently Opened").enabled(!folders.is_empty() || !files.is_empty()).build(app)?;
-    b.separator().item(&clear).build()
+    items.push(MenuEntry::Separator);
+    items.push(item_if("workbench.clearRecentlyOpened", "Clear Recently Opened", None, !folders.is_empty() || !files.is_empty()));
+    submenu("Open Recent", items)
 }
 
-fn switch_profile(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
+fn switch_profile(app: &AppHandle) -> MenuEntry {
     let state = app.state::<mods::ModsState>();
     let active = state.profile_name.lock().unwrap().clone();
     let mut names = mods::profile_names();
@@ -218,217 +287,205 @@ fn switch_profile(app: &AppHandle) -> tauri::Result<Submenu<Wry>> {
         names.push(active.clone());
         names.sort();
     }
-    let mut b = SubmenuBuilder::new(app, "Switch Profile");
-    for name in &names {
-        b = b.item(&CheckMenuItemBuilder::with_id(format!("{PROFILE}{name}"), name).checked(*name == active).build(app)?);
-    }
-    b.separator()
-        .item(&MenuItemBuilder::with_id("profiles.create", "New Profile…").build(app)?)
-        .item(&MenuItemBuilder::with_id("profiles.manage", "Manage Profiles…").build(app)?)
-        .build()
+    let mut items: Vec<_> = names.iter().map(|name| check(&format!("{PROFILE}{name}"), name, *name == active)).collect();
+    items.extend([
+        MenuEntry::Separator,
+        item("profiles.create", "New Profile…", None),
+        item("profiles.manage", "Manage Profiles…", None),
+    ]);
+    submenu("Switch Profile", items)
 }
 
-pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
-    let ctx = *CONTEXT.lock().unwrap();
-    let item_if = |id: &str, text: &str, accel: Option<&str>, enabled: bool| {
-        let mut b = MenuItemBuilder::with_id(id, text).enabled(enabled);
-        if let Some(a) = accel {
-            b = b.accelerator(a);
-        }
-        b.build(app)
-    };
-    let item = |id: &str, text: &str, accel: Option<&str>| item_if(id, text, accel, true);
-    // macOS: the app menu (About, Settings, Hide, Quit). Elsewhere there is no app menu: as in VS
-    // Code, its items are in File > Preferences, Exit ends File and About is under Help.
+#[tauri::command]
+pub fn menu_entries(app: AppHandle, window: tauri::Window) -> Vec<MenuEntry> {
+    entries(&app, window_context(window.label()))
+}
+
+fn entries(app: &AppHandle, ctx: Context) -> Vec<MenuEntry> {
+    use MenuEntry::Separator;
+    use MenuRole::*;
+
+    let extra = EXTRA.lock().unwrap().clone();
+    let mut menus = Vec::new();
     #[cfg(target_os = "macos")]
-    let app_menu = SubmenuBuilder::new(app, "AICode")
-        .about(None)
-        .item(&item("update.check", "Check for Updates…", None)?)
-        .separator()
-        .item(&item("preferences.settings", "Settings…", Some("CmdOrCtrl+,"))?)
-        .item(&item("profiles.manage", "Profiles…", None)?)
-        .item(&item("mods.manage", "Mods…", Some("CmdOrCtrl+Shift+X"))?)
-        .item(&item("preferences.theme", "Color Theme…", None)?)
-        .item(&item("workbench.keybindings", "Keyboard Shortcuts", None)?)
-        .separator()
-        .hide()
-        .hide_others()
-        .show_all()
-        .separator()
-        .quit()
-        .build()?;
-    // Laid out like VS Code's File menu. AICode has one folder per window (no multi-root
-    // workspaces), so "Duplicate Workspace" is "Duplicate Window", and profiles are app-wide, so
-    // "New Window with Profile" is "Switch Profile".
-    let share = SubmenuBuilder::new(app, "Share").item(&item("profiles.export", "Export Profile…", None)?).build()?;
-    let auto_save = CheckMenuItemBuilder::with_id("files.toggleAutoSave", "Auto Save").checked(auto_save_on(app)).build(app)?;
-    let mut file = SubmenuBuilder::new(app, "File")
-        .item(&item("file.new", "New Text File", Some("CmdOrCtrl+N"))?)
-        .item(&item("file.newFile", "New File…", Some("Ctrl+Alt+CmdOrCtrl+N"))?)
-        .item(&item("workbench.newWindow", "New Window", Some("CmdOrCtrl+Shift+N"))?)
-        .item(&switch_profile(app)?)
-        .separator()
-        .item(&item("file.open", "Open File…", Some("CmdOrCtrl+O"))?)
-        .item(&item("workbench.openFolder", "Open Folder…", None)?)
-        .item(&item("workbench.openFolderNewWindow", "Open Folder in New Window…", None)?)
-        .item(&open_recent(app)?)
-        .separator()
-        .item(&item_if("workbench.duplicateWindow", "Duplicate Window", None, ctx.folder)?)
-        .separator()
-        .item(&item_if("file.save", "Save", Some("CmdOrCtrl+S"), ctx.text)?)
-        .item(&item_if("file.saveAs", "Save As…", Some("CmdOrCtrl+Shift+S"), ctx.text)?)
-        .item(&item_if("file.saveAll", "Save All", Some("CmdOrCtrl+Alt+S"), ctx.dirty)?)
-        .separator()
-        .item(&share)
-        .separator()
-        .item(&auto_save)
-        .separator()
-        .item(&item_if("file.revert", "Revert File", None, ctx.file)?)
-        .item(&item_if("editor.close", "Close Editor", Some("CmdOrCtrl+W"), ctx.editor)?);
-    // Only with a folder open, as in VS Code. A chord (⌘K F) cannot be a menu accelerator: the
-    // window binds it and the title shows it.
+    menus.push(submenu("AICode", vec![
+        role(About),
+        item("update.check", "Check for Updates…", None),
+        Separator,
+        item("preferences.settings", "Settings…", Some("CmdOrCtrl+,")),
+        item("profiles.manage", "Profiles…", None),
+        item("mods.manage", "Mods…", Some("CmdOrCtrl+Shift+X")),
+        item("preferences.theme", "Color Theme…", None),
+        item("workbench.keybindings", "Keyboard Shortcuts", None),
+        Separator,
+        role(Hide),
+        role(HideOthers),
+        role(ShowAll),
+        Separator,
+        role(Quit),
+    ]));
+
+    let mut file = vec![
+        item("file.new", "New Text File", Some("CmdOrCtrl+N")),
+        item("file.newFile", "New File…", Some("Ctrl+Alt+CmdOrCtrl+N")),
+        item("workbench.newWindow", "New Window", Some("CmdOrCtrl+Shift+N")),
+        switch_profile(app),
+        Separator,
+        item("file.open", "Open File…", Some("CmdOrCtrl+O")),
+        item("workbench.openFolder", "Open Folder…", None),
+        item("workbench.openFolderNewWindow", "Open Folder in New Window…", None),
+        open_recent(),
+        Separator,
+        item_if("workbench.duplicateWindow", "Duplicate Window", None, ctx.folder),
+        Separator,
+        item_if("file.save", "Save", Some("CmdOrCtrl+S"), ctx.text),
+        item_if("file.saveAs", "Save As…", Some("CmdOrCtrl+Shift+S"), ctx.text),
+        item_if("file.saveAll", "Save All", Some("CmdOrCtrl+Alt+S"), ctx.dirty),
+        Separator,
+        submenu("Share", vec![item("profiles.export", "Export Profile…", None)]),
+        Separator,
+        check("files.toggleAutoSave", "Auto Save", auto_save_on(app)),
+        Separator,
+        item_if("file.revert", "Revert File", None, ctx.file),
+        item_if("editor.close", "Close Editor", Some("CmdOrCtrl+W"), ctx.editor),
+    ];
     if ctx.folder {
         let label = if cfg!(target_os = "macos") { "Close Folder [⌘K F]" } else { "Close Folder [Ctrl+K F]" };
-        file = file.item(&item("workbench.closeFolder", label, None)?);
+        file.push(item("workbench.closeFolder", label, None));
     }
-    file = file.item(&item("window.close", "Close Window", Some("CmdOrCtrl+Shift+W"))?);
+    file.push(item("window.close", "Close Window", Some("CmdOrCtrl+Shift+W")));
     #[cfg(not(target_os = "macos"))]
-    {
-        let preferences = SubmenuBuilder::new(app, "Preferences")
-            .item(&item("preferences.settings", "Settings", Some("CmdOrCtrl+,"))?)
-            .item(&item("profiles.manage", "Profiles", None)?)
-            .item(&item("mods.manage", "Mods", Some("CmdOrCtrl+Shift+X"))?)
-            .item(&item("workbench.keybindings", "Keyboard Shortcuts", None)?)
-            .separator()
-            .item(&item("preferences.theme", "Color Theme", None)?)
-            .build()?;
-        file = file.separator().item(&preferences).separator().item(&item("app.quit", "Exit", None)?);
+    file.extend([
+        Separator,
+        submenu("Preferences", vec![
+            item("preferences.settings", "Settings", Some("CmdOrCtrl+,")),
+            item("profiles.manage", "Profiles", None),
+            item("mods.manage", "Mods", Some("CmdOrCtrl+Shift+X")),
+            item("workbench.keybindings", "Keyboard Shortcuts", None),
+            Separator,
+            item("preferences.theme", "Color Theme", None),
+        ]),
+        Separator,
+        item("app.quit", "Exit", None),
+    ]);
+
+    let edit = vec![
+        item("edit.undo", "Undo", Some("CmdOrCtrl+Z")),
+        item("edit.redo", "Redo", Some("CmdOrCtrl+Shift+Z")),
+        Separator,
+        role(Cut),
+        role(Copy),
+        role(Paste),
+        role(SelectAll),
+        Separator,
+        item("edit.find", "Find", Some("CmdOrCtrl+F")),
+        item("edit.replace", "Replace", Some("CmdOrCtrl+Alt+F")),
+    ];
+    let view = vec![
+        item("workbench.commandPalette", "Command Palette…", Some("CmdOrCtrl+Shift+P")),
+        item("workbench.quickOpen", "Go to File…", Some("CmdOrCtrl+P")),
+        Separator,
+        item_if("workbench.toggleSidebar", "Toggle Primary Side Bar", Some("CmdOrCtrl+B"), ctx.sidebar),
+        item_if("workbench.togglePanel", "Toggle Panel", Some("CmdOrCtrl+J"), ctx.panel),
+        item_if("workbench.toggleSecondary", "Toggle Secondary Side Bar", Some("CmdOrCtrl+Alt+B"), ctx.secondary),
+        Separator,
+        item("editor.zoomIn", "Zoom In", Some("CmdOrCtrl+=")),
+        item("editor.zoomOut", "Zoom Out", Some("CmdOrCtrl+-")),
+        item("editor.zoomReset", "Reset Zoom", Some("CmdOrCtrl+0")),
+        Separator,
+        item("workbench.reload", "Reload Window", Some("CmdOrCtrl+R")),
+    ];
+    menus.extend([
+        with_extras("File", file, &extra),
+        with_extras("Edit", edit, &extra),
+        with_extras("View", view, &extra),
+    ]);
+    menus.extend(extra_menus(&extra));
+    menus.push(with_extras("Window", vec![role(Minimize), role(Fullscreen)], &extra));
+    #[cfg(not(target_os = "macos"))]
+    menus.push(with_extras("Help", vec![
+        item("workbench.commandPalette", "Show All Commands", Some("CmdOrCtrl+Shift+P")),
+        Separator,
+        item("update.check", "Check for Updates…", None),
+        Separator,
+        role(About),
+    ], &extra));
+    menus
+}
+
+fn set_native_menu(app: &AppHandle, items: &[MenuEntry]) -> tauri::Result<()> {
+    let mut builder = MenuBuilder::new(app);
+    for entry in items {
+        builder = builder.item(&native_item(app, entry)?);
     }
-    let file = add_extra(app, file, "File")?.build()?;
-    // Undo/Redo are the editor's own (Monaco keeps the undo stack), so they are plain items routed
-    // to the window; Cut/Copy/Paste/Select All stay the system's, which is what makes the clipboard
-    // work inside the web view.
-    let edit = SubmenuBuilder::new(app, "Edit")
-        .item(&item("edit.undo", "Undo", Some("CmdOrCtrl+Z"))?)
-        .item(&item("edit.redo", "Redo", Some("CmdOrCtrl+Shift+Z"))?)
-        .separator()
-        .cut()
-        .copy()
-        .paste()
-        .select_all()
-        .separator()
-        .item(&item("edit.find", "Find", Some("CmdOrCtrl+F"))?)
-        .item(&item("edit.replace", "Replace", Some("CmdOrCtrl+Alt+F"))?);
-    let edit = add_extra(app, edit, "Edit")?.build()?;
-    let view = SubmenuBuilder::new(app, "View")
-        .item(&item("workbench.commandPalette", "Command Palette…", Some("CmdOrCtrl+Shift+P"))?)
-        .item(&item("workbench.quickOpen", "Go to File…", Some("CmdOrCtrl+P"))?)
-        .separator()
-        .item(&item("workbench.toggleSidebar", "Toggle Primary Side Bar", Some("CmdOrCtrl+B"))?)
-        .item(&item("workbench.togglePanel", "Toggle Panel", Some("CmdOrCtrl+J"))?)
-        .item(&item("workbench.toggleSecondary", "Toggle Secondary Side Bar", Some("CmdOrCtrl+Alt+B"))?)
-        .separator()
-        .item(&item("editor.zoomIn", "Zoom In", Some("CmdOrCtrl+="))?)
-        .item(&item("editor.zoomOut", "Zoom Out", Some("CmdOrCtrl+-"))?)
-        .item(&item("editor.zoomReset", "Reset Zoom", Some("CmdOrCtrl+0"))?)
-        .separator()
-        .item(&item("workbench.reload", "Reload Window", Some("CmdOrCtrl+R"))?);
-    let view = add_extra(app, view, "View")?.build()?;
-    let window = add_extra(app, SubmenuBuilder::new(app, "Window").minimize().fullscreen(), "Window")?.build()?;
-    #[cfg(not(target_os = "macos"))]
-    let help = SubmenuBuilder::new(app, "Help")
-        .item(&item("workbench.commandPalette", "Show All Commands", Some("CmdOrCtrl+Shift+P"))?)
-        .separator()
-        .item(&item("update.check", "Check for Updates…", None)?)
-        .separator()
-        .about(None)
-        .build()?;
-    let extra = extra_menus(app)?;
-    let mut menus: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = Vec::new();
-    #[cfg(target_os = "macos")]
-    menus.push(&app_menu);
-    menus.extend([&file as &dyn tauri::menu::IsMenuItem<Wry>, &edit, &view]);
-    for m in &extra {
-        menus.push(m);
-    }
-    menus.push(&window);
-    #[cfg(not(target_os = "macos"))]
-    menus.push(&help);
-    MenuBuilder::new(app).items(&menus).build()
+    app.set_menu(builder.build()?)?;
+    Ok(())
+}
+
+pub fn install(app: &AppHandle) -> tauri::Result<()> {
+    set_native_menu(app, &entries(app, Context::default()))
 }
 
 /// Rebuilds the menu bar (the recent list, the profiles or Auto Save changed).
 pub fn refresh(app: &AppHandle) {
+    rebuild(app, true);
+}
+
+fn rebuild(app: &AppHandle, _shared_items_changed: bool) {
     let app2 = app.clone();
-    let _ = app.run_on_main_thread(move || match build(&app2) {
-        Ok(menu) => {
-            let _ = app2.set_menu(menu);
-            #[cfg(not(target_os = "macos"))]
-            {
-                // Setting the menu puts a menu bar back on every window: the title bar draws it.
-                for w in app2.webview_windows().values() {
-                    let _ = w.hide_menu();
+    let _ = app.run_on_main_thread(move || {
+        let context = *CONTEXT.lock().unwrap();
+        let items = entries(&app2, context);
+        if let Err(e) = set_native_menu(&app2, &items) {
+            eprintln!("[aicode] could not rebuild the menu: {e}");
+            return;
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            // Setting the menu puts a menu bar back on every window.
+            for (label, w) in app2.webview_windows() {
+                let _ = w.hide_menu();
+                if _shared_items_changed {
+                    let window = window_context(&label);
+                    let entries = if window == context { items.clone() } else { entries(&app2, window) };
+                    let _ = app2.emit_to(label.as_str(), "menu-entries", entries);
                 }
-                let _ = app2.emit("menu-titles", titles(&app2));
             }
         }
-        Err(e) => eprintln!("[aicode] could not rebuild the menu: {e}"),
     });
-}
-
-// ---------- the menu bar drawn in the title bar (Windows and Linux) ----------
-//
-// Outside macOS the window has no frame of its own: the title bar shows the menus' names (as VS
-// Code's does), and picking one opens that menu, the same native menu, under it. The menu is still
-// the app's (hidden on each window), so its accelerators keep working.
-
-fn titles(app: &AppHandle) -> Vec<String> {
-    let Some(menu) = app.menu() else { return Vec::new() };
-    menu.items().unwrap_or_default().iter().filter_map(|i| i.as_submenu().and_then(|s| s.text().ok())).collect()
-}
-
-/// The names of the menus, in order (empty on macOS, where the system shows them).
-#[tauri::command]
-pub fn menu_titles(app: AppHandle) -> Vec<String> {
-    if cfg!(target_os = "macos") {
-        return Vec::new();
-    }
-    titles(&app)
-}
-
-/// Opens the menu named `title` at (`x`, `y`), in physical pixels from the window's top left; no
-/// title opens all of them (the title bar's ☰ when there is no room for the names).
-#[tauri::command]
-pub fn menu_popup(app: AppHandle, window: tauri::Window, title: Option<String>, x: f64, y: f64) -> Result<(), String> {
-    let menu = app.menu().ok_or("no menu")?;
-    let at = tauri::PhysicalPosition::new(x, y);
-    match title {
-        None => window.popup_menu_at(&menu, at).map_err(|e| e.to_string()),
-        Some(title) => {
-            let items = menu.items().map_err(|e| e.to_string())?;
-            let sub = items.iter().filter_map(|i| i.as_submenu()).find(|s| s.text().ok().as_deref() == Some(title.as_str())).ok_or("no such menu")?;
-            window.popup_menu_at(sub, at).map_err(|e| e.to_string())
-        }
-    }
 }
 
 /// A menu item was picked.
 pub fn on_event(app: &AppHandle, event: MenuEvent) {
     let id = event.id().0.as_str();
-    if id == "app.quit" {
-        app.exit(0);
-        return;
-    }
     // A mod's icon in the menu bar: to the window that set it.
     if let Some(rest) = id.strip_prefix(crate::background::TRAY_PREFIX) {
         crate::background::on_menu(app, rest);
+        return;
+    }
+    select(app, id, windows::front_label(app).as_deref(), "menu");
+}
+
+#[tauri::command]
+pub async fn menu_select(app: AppHandle, window: tauri::Window, id: String) {
+    select(&app, &id, Some(window.label()), "menu-picked");
+}
+
+fn select(app: &AppHandle, id: &str, label: Option<&str>, command_event: &str) {
+    if id == "app.quit" {
+        app.exit(0);
         return;
     }
     if let Some(path) = id.strip_prefix(RECENT) {
         // Like a path dropped on the Dock icon: a folder goes to the window in front if it has
         // none (else to a window of its own), a file opens in it.
         if Path::new(path).exists() {
-            windows::open_in_front(app, vec![path.to_string()]);
+            let paths = vec![path.to_string()];
+            if let Some(label) = label {
+                windows::open_in_window(app, label, paths);
+            } else {
+                windows::open_in_front(app, paths);
+            }
         }
         return;
     }
@@ -445,7 +502,7 @@ pub fn on_event(app: &AppHandle, event: MenuEvent) {
         });
         return;
     }
-    if let Some(label) = windows::front_label(app) {
-        let _ = app.emit_to(label.as_str(), "menu", id.to_string());
+    if let Some(label) = label {
+        let _ = app.emit_to(label, command_event, id.to_string());
     }
 }

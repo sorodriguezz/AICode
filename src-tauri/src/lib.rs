@@ -113,7 +113,7 @@ pub fn run() {
             let profile = state.profile.lock().unwrap().clone();
             let name = state.profile_name.lock().unwrap().clone();
             *state.mods.lock().unwrap() = mods::scan(app.handle(), &name, &profile);
-            app.set_menu(menu::build(app.handle())?)?;
+            menu::install(app.handle())?;
             // A menu command is for the window in front (Open Recent and the profiles are handled in Rust).
             app.on_menu_event(menu::on_event);
             // Paths given on the command line open in the first window.
@@ -190,8 +190,8 @@ pub fn run() {
             procs::proc_kill,
             procs::proc_write,
             menu::menu_set_extra,
-            menu::menu_titles,
-            menu::menu_popup,
+            menu::menu_entries,
+            menu::menu_select,
             background::app_tray_set,
             background::app_tray_remove,
             background::app_tray_reset,

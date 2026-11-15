@@ -397,21 +397,41 @@ export interface MenuItem {
   submenu?: MenuItem[];
 }
 
+interface ContextMenuOptions {
+  above?: boolean;
+  menu?: string;
+  context?: unknown;
+  className?: string;
+  keepOpenWithin?: HTMLElement;
+  previousFocus?: HTMLElement | null;
+  focusFirst?: boolean;
+  onNavigate?: (direction: -1 | 1) => void;
+  onClose?: () => void;
+}
+
+let closeActiveMenu: (() => void) | undefined;
+
 /** `above`: y is where the menu's bottom goes (menus opened from the status bar grow upward).
  *  `menu`: this menu's id — what mods added to it (see menus.ts) is appended, given `context`. */
-export function contextMenu(x: number, y: number, items: MenuItem[], opts: { above?: boolean; menu?: string; context?: unknown } = {}) {
+export function contextMenu(x: number, y: number, items: MenuItem[], opts: ContextMenuOptions = {}) {
   if (opts.menu) items = [...items, ...menuItems(opts.menu, opts.context)];
-  document.querySelectorAll(".context-menu").forEach((m) => m.remove());
-  const previousFocus = document.activeElement as HTMLElement | null;
+  const previousFocus = opts.previousFocus === undefined ? document.activeElement as HTMLElement | null : opts.previousFocus;
+  closeActiveMenu?.();
   const menus: HTMLElement[] = [];
+  let root: Level;
 
   const closeAll = () => {
-    menus.splice(0).forEach((m) => m.remove());
+    if (closeActiveMenu !== closeAll) return;
+    closeActiveMenu = undefined;
+    root.remove();
     window.removeEventListener("mousedown", outside, true);
     window.removeEventListener("blur", closeAll);
+    window.removeEventListener("resize", closeAll);
+    opts.onClose?.();
   };
   const outside = (e: MouseEvent) => {
-    if (!menus.some((m) => m.contains(e.target as Node))) closeAll();
+    const target = e.target as Node;
+    if (!opts.keepOpenWithin?.contains(target) && !menus.some((m) => m.contains(target))) closeAll();
   };
 
   type Level = { menu: HTMLElement; remove: () => void; focusFirst: () => void };
@@ -455,20 +475,22 @@ export function contextMenu(x: number, y: number, items: MenuItem[], opts: { abo
     };
     const menu = h(
       "div",
-      { class: "context-menu", role: "menu", tabindex: "-1" },
+      { class: opts.className ? `context-menu ${opts.className}` : "context-menu", role: "menu", tabindex: "-1" },
       shown.map((i) => {
         if (i.separator) return h("div", { class: "sep" });
         const row = h(
           "div",
           {
             class: `item${i.disabled ? " disabled" : ""}${i.submenu ? " has-submenu" : ""}`,
-            role: "menuitem",
+            role: i.checked === undefined ? "menuitem" : "menuitemcheckbox",
+            "aria-checked": i.checked === undefined ? null : String(i.checked),
             "aria-disabled": i.disabled ? "true" : null,
             "aria-haspopup": i.submenu ? "menu" : null,
             onclick: () => {
               if (i.disabled) return;
               if (i.submenu) return openChild(row, i, false);
               closeAll();
+              opts.previousFocus?.focus({ preventScroll: true });
               i.run?.();
             },
             onmouseenter: () => {
@@ -493,9 +515,14 @@ export function contextMenu(x: number, y: number, items: MenuItem[], opts: { abo
       rows[focused]?.classList.add("active");
     };
     const step = (dir: number) => {
+      const start = focused === -1 && dir < 0 ? 0 : focused;
       for (let k = 1; k <= rows.length; k++) {
-        const n = (focused + dir * k + rows.length * 2) % rows.length;
-        if (!rows[n].classList.contains("disabled")) return focusRow(n);
+        const n = (start + dir * k + rows.length) % rows.length;
+        if (!rows[n].classList.contains("disabled")) {
+          focusRow(n);
+          rows[n].scrollIntoView({ block: "nearest" });
+          return;
+        }
       }
     };
     menu.addEventListener("keydown", (e) => {
@@ -505,6 +532,7 @@ export function contextMenu(x: number, y: number, items: MenuItem[], opts: { abo
       else if ((e.key === "ArrowRight" || e.key === "Enter" || e.key === " ") && item?.submenu && !item.disabled) openChild(rows[focused], item, true);
       else if (e.key === "Enter" || e.key === " ") rows[focused]?.click();
       else if ((e.key === "ArrowLeft" || e.key === "Escape") && back) back();
+      else if (!back && opts.onNavigate && (e.key === "ArrowLeft" || e.key === "ArrowRight")) opts.onNavigate(e.key === "ArrowLeft" ? -1 : 1);
       else if (e.key === "Escape" || e.key === "Tab") {
         closeAll();
         previousFocus?.focus();
@@ -531,23 +559,18 @@ export function contextMenu(x: number, y: number, items: MenuItem[], opts: { abo
       },
       focusFirst: () => {
         menu.focus({ preventScroll: true });
-        focused = -1;
+        focusRow(-1);
         step(1);
       },
     };
   };
 
-  open(items, (rect) => {
-    const root = menus[0];
-    root.style.left = `${Math.min(x, window.innerWidth - rect.width - 4)}px`;
-    const top = opts.above ? y - rect.height : y;
-    root.style.top = `${Math.max(4, Math.min(top, window.innerHeight - rect.height - 4))}px`;
-    if (opts.above) root.style.transformOrigin = "bottom left";
-  });
-  setTimeout(() => {
-    window.addEventListener("mousedown", outside, true);
-    window.addEventListener("blur", closeAll);
-  });
-  const close = closeAll;
-  return { close };
+  root = open(items, (rect) => ({ left: Math.max(4, Math.min(x, window.innerWidth - rect.width - 4)), top: opts.above ? y - rect.height : y }));
+  if (opts.above) root.menu.style.transformOrigin = "bottom left";
+  if (opts.focusFirst) root.focusFirst();
+  closeActiveMenu = closeAll;
+  window.addEventListener("mousedown", outside, true);
+  window.addEventListener("blur", closeAll);
+  if (opts.keepOpenWithin) window.addEventListener("resize", closeAll);
+  return { close: closeAll };
 }

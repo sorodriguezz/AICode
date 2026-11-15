@@ -205,13 +205,14 @@ export function keyCaps(key: string): string[] {
   return prettyKey(key).flatMap((chord) => (isMac ? chord.match(/[⌘⇧⌥⌃]|[^⌘⇧⌥⌃]+/g) ?? [chord] : chord.split("+")));
 }
 
-/** The command a menu item or a key press just ran, so the other route does not run it again. */
-let lastRun = { command: "", at: 0 };
+type CommandSource = "native-menu" | "keyboard";
+/** Suppress only a shortcut delivered by both the native menu and the webview. */
+let lastRun: { command: string; source: CommandSource; at: number } | undefined;
 
-export function runOnce(command: string, args?: unknown) {
+export function runOnce(command: string, source: CommandSource, args?: unknown) {
   const now = performance.now();
-  if (lastRun.command === command && now - lastRun.at < 250) return;
-  lastRun = { command, at: now };
+  if (lastRun?.command === command && lastRun.source !== source && now - lastRun.at < 250) return;
+  lastRun = { command, source, at: now };
   execute(command, ...(args === undefined ? [] : [args])).catch((e) => console.error(e));
 }
 
@@ -244,7 +245,7 @@ export function installKeyHandler() {
         e.preventDefault();
         e.stopPropagation();
         pendingChord = null;
-        runOnce(b.command, b.args);
+        runOnce(b.command, "keyboard", b.args);
         return true;
       }
       if (b.chords.length > sequence.length && b.chords.slice(0, sequence.length).every((c, j) => c === sequence[j])) partial = true;
@@ -256,7 +257,7 @@ export function installKeyHandler() {
         if (normalize(key)[0] === chord && has(command)) {
           e.preventDefault();
           e.stopPropagation();
-          runOnce(command);
+          runOnce(command, "keyboard");
           return true;
         }
       }

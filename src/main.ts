@@ -254,7 +254,10 @@ async function boot() {
   });
 
   // Native menu items arrive as commands.
-  await listen<string>("menu", (e) => commands.runOnce(e.payload));
+  const webview = getCurrentWebview();
+  await webview.listen<string>("menu", (e) => commands.runOnce(e.payload, "native-menu"));
+  // The workbench menu sends one event per click, including repeated clicks on the same action.
+  await webview.listen<string>("menu-picked", (e) => void commands.execute(e.payload).catch((error) => console.error(error)));
 
   // Layout and session. A window opened with a layout starts with its parts as the layout says.
   if (layout && !session?.layout) {
@@ -297,7 +300,7 @@ async function boot() {
   // marks the window ready, so the listener for later ones goes first and queues until we can open.
   let openLater: ((paths: string[]) => void) | null = null;
   const queued: string[][] = [];
-  await listen<string[]>("open-paths", (e) => (openLater ? openLater(e.payload) : queued.push(e.payload)));
+  await webview.listen<string[]>("open-paths", (e) => (openLater ? openLater(e.payload) : queued.push(e.payload)));
   const pending = await invoke<string[]>("window_take_pending");
   // Opened with nothing to show: the empty editor area (its watermark), as in VS Code. A new file
   // is a double click there, or ⌘N, away.
@@ -398,15 +401,22 @@ async function boot() {
   // The File menu follows the window in front: no folder, no Close Folder; no editor, no Save…
   let menuSent = "";
   const reportMenu = (force = false) => {
-    const context = { folder: workspace.folder !== null, ...editors.menuContext() };
+    const context = {
+      folder: workspace.folder !== null,
+      ...editors.menuContext(),
+      sidebar: wb.viewsAt("sidebar").length > 0,
+      panel: wb.viewsAt("panel").length > 0,
+      secondary: wb.viewsAt("secondary").length > 0,
+    };
     const key = JSON.stringify(context);
     if (!force && key === menuSent) return;
     menuSent = key;
     invoke("menu_context", { context }).catch(() => {});
   };
   for (const ev of [editors.onDidChangeActive, editors.onDidChangeDocs, editors.onDidSave, editors.onDidChangeContent, workspace.onDidChange]) ev.event(() => reportMenu());
+  wb.onDidRenderChrome.event(() => reportMenu());
   // Coming to the front: this window's state replaces the last one's.
-  window.addEventListener("focus", () => reportMenu(true));
+  await getCurrentWindow().onFocusChanged(({ payload: focused }) => { if (focused) reportMenu(true); });
   reportMenu(true);
   window.addEventListener("blur", () => {
     const el = document.activeElement as HTMLElement | null;
@@ -706,9 +716,15 @@ function registerWorkbenchCommands(
   let fileCache: { folder: string; files: string[]; at: number } | null = null;
   const quickOpen = async (initial = "") => {
     const folder = workspace.folder;
-    if (folder && (!fileCache || fileCache.folder !== folder || Date.now() - fileCache.at > 15000)) {
-      invoke<string[]>("fs_list_files", { modId: "core", root: folder, limit: 50000 }).then((files) => (fileCache = { folder, files, at: Date.now() }));
-    }
+    const filesForFolder = !folder ? Promise.resolve([]) : fileCache?.folder === folder && Date.now() - fileCache.at <= 15000
+      ? Promise.resolve(fileCache.files)
+      : invoke<string[]>("fs_list_files", { modId: "core", root: folder, limit: 50000 }).then((files) => {
+        fileCache = { folder, files, at: Date.now() };
+        return files;
+      }).catch((error) => {
+        console.warn("Could not list files for Quick Open", error);
+        return [];
+      });
     const result = await quickInput<QuickItem & { path?: string; docId?: string }>({
       placeholder: folder ? "Search files by name (append : to go to a line, or start with > for commands)" : "Open editors — or > for commands. Open a folder to search its files.",
       value: initial,
@@ -725,7 +741,7 @@ function registerWorkbenchCommands(
           return [{ label: `Go to line ${q.slice(1) || "…"}`, icon: "go-to-file", docId: "__line" }];
         }
         const open = editors.list().map((e) => ({ label: e.title, description: e.path ?? "", icon: "files", docId: e.id }));
-        const files = fileCache && fileCache.folder === folder ? fileCache.files : [];
+        const files = await filesForFolder;
         const scored: { item: any; score: number }[] = [];
         for (const e of open) {
           const m = fuzzyScore(q, e.label);
@@ -790,7 +806,7 @@ function registerWorkbenchCommands(
     if (now - lastEscape < 600) toggleZen();
     lastEscape = now;
   });
-  commands.bind("ctrl+mod+f", "workbench.toggleFullScreen");
+  commands.bind(document.documentElement.dataset.platform === "mac" ? "ctrl+mod+f" : "f11", "workbench.toggleFullScreen");
   commands.bind("mod+k z", "workbench.toggleZenMode");
   reg("workbench.toggleSecondary", "Toggle Secondary Side Bar Visibility", () => wb.toggle("secondary"));
   reg("workbench.reload", "Reload Window", () => location.reload(), "Developer");

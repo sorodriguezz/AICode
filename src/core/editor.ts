@@ -1680,7 +1680,10 @@ export class EditorService {
       return doc ? this.save(doc) : false;
     }, { title: "Save Editor", owner: "core", hidden: true });
     c("file.saveAll", "Save All", async () => {
-      for (const d of this.docs) if (d.kind === "text" && this.isDirty(d) && d.path) await this.save(d);
+      const dirty = this.docs.filter((d): d is TextDoc => d.kind === "text" && this.isDirty(d));
+      const untitled = dirty.filter((d) => !d.path);
+      for (const d of dirty) if (d.path) await this.save(d);
+      for (const d of untitled) if (!(await this.save(d))) break;
     });
     c("file.revert", "Revert File", async () => {
       const doc = this.activeText();
