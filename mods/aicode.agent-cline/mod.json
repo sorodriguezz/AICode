@@ -1,7 +1,7 @@
 {
   "id": "aicode.agent-cline",
   "name": "Cline",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Cline in the AI Chat, through the cline CLI in plan mode (it reads the folder, it does not change files).",
   "author": "AICode",
   "icon": "robot",
@@ -15,20 +15,20 @@
     "open-external"
   ],
   "dependencies": [
-    "aicode.agents"
+    "aicode.agent-runtime"
   ],
   "contributes": {
-    "chatAgents": [
-      {
-        "id": "cline",
-        "name": "Cline"
-      }
-    ],
     "commands": [
       {
         "id": "cline.configure",
         "title": "Configure Cline…",
         "category": "Chat"
+      }
+    ],
+    "agentProviders": [
+      {
+        "id": "cline",
+        "name": "Cline"
       }
     ]
   }

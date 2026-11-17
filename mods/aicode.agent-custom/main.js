@@ -6,7 +6,7 @@
 const parseLine = (line) => (line.match(/"[^"]*"|\S+/g) ?? []).map((p) => p.replace(/^"|"$/g, ""));
 
 export async function activate(ctx) {
-  const { kit } = await ctx.mods.get("aicode.agents");
+  const { kit } = await ctx.mods.get("aicode.agent-runtime");
 
   let list = await ctx.settings.get("commands", []);
   // Commands added before agents were mods of their own lived in the AI Chat's settings.
@@ -49,5 +49,5 @@ export async function activate(ctx) {
   });
   ctx.commands.register("customAgents.edit", () => ctx.commands.execute("preferences.settings"));
 
-  return { chatAgents };
+  return { agentProviders: chatAgents, chatAgents };
 }

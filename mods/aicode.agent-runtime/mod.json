@@ -1,0 +1,13 @@
+{
+  "id": "aicode.agent-runtime",
+  "name": "Agent Runtime",
+  "version": "1.1.0",
+  "description": "Shared agent provider contracts, discovery, CLI and API helpers. No chat or terminal UI.",
+  "author": "AICode",
+  "icon": "hubot",
+  "main": "main.js",
+  "api": 1,
+  "activation": [],
+  "permissions": [],
+  "dependencies": []
+}

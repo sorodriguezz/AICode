@@ -4,7 +4,7 @@
 //   api — the OpenAI API (Responses, streamed) with an API key kept in your Keychain.
 
 export async function activate(ctx) {
-  const { kit } = await ctx.mods.get("aicode.agents");
+  const { kit } = await ctx.mods.get("aicode.agent-runtime");
   const codex = kit.defineAgent(ctx, {
     id: "codex",
     name: "Codex",
@@ -16,6 +16,17 @@ export async function activate(ctx) {
       mcp: true,
       models: ["gpt-5", "gpt-5-codex", "gpt-5-mini"],
       interactive: (model) => (model ? ["--model", model] : []),
+      terminal: ({ model, sessionId, mcp }) => {
+        const args = sessionId ? ["resume", sessionId] : [];
+        if (model) args.push("--model", model);
+        const env = {};
+        if (mcp) {
+          args.push("-c", `mcp_servers.aicode.url=${JSON.stringify(mcp.url)}`);
+          args.push("-c", 'mcp_servers.aicode.env_http_headers={ "Authorization" = "AICODE_MCP_AUTH" }');
+          env.AICODE_MCP_AUTH = `Bearer ${mcp.token}`;
+        }
+        return { args, env };
+      },
       build: ({ prompt, mcp, model, autoApprove }) => {
         const args = ["exec", "--skip-git-repo-check"];
         // Edits and commands without asking, outside Codex's sandbox.
@@ -52,5 +63,5 @@ export async function activate(ctx) {
     },
   });
   ctx.commands.register("codex.configure", () => codex.configure());
-  return { chatAgents: { codex } };
+  return { agentProviders: { codex }, chatAgents: { codex } };
 }

@@ -11,7 +11,9 @@ pnpm install
 pnpm tauri dev          # debug build; bundled mods load live from ./mods
 pnpm check:mods         # validate the bundled mods
 pnpm test:terminal      # file drops, nested layouts, resizing, pane moves, focus and agent launches
+pnpm test:terminal-ai   # provider discovery, optional MCP, credentials and profile migration
 pnpm test:git           # operation cleanup, cancellation, timeouts and failed status refreshes
+pnpm test:editor        # saved content, manual reverts, save races and Git editor metadata
 (cd src-tauri && cargo test --locked)
 pnpm tauri build        # this OS's bundles in src-tauri/target/release/bundle
                         # (macOS .app/.dmg, Windows NSIS -setup.exe, Linux AppImage/.deb/.rpm)

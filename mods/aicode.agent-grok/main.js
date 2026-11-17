@@ -5,7 +5,7 @@
 const MODELS = ["grok-4", "grok-code-fast-1"];
 
 export async function activate(ctx) {
-  const { kit } = await ctx.mods.get("aicode.agents");
+  const { kit } = await ctx.mods.get("aicode.agent-runtime");
   const grok = kit.defineAgent(ctx, {
     id: "grok",
     name: "Grok",
@@ -37,5 +37,5 @@ export async function activate(ctx) {
     },
   });
   ctx.commands.register("grok.configure", () => grok.configure());
-  return { chatAgents: { grok } };
+  return { agentProviders: { grok }, chatAgents: { grok } };
 }

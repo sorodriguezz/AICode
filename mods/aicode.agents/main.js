@@ -1,7 +1,7 @@
 // AI Chat: the secondary side bar's chat — the panel only. The agents come from other mods (Claude,
 // Codex, Gemini, Grok, OpenCode, Cline, Ollama, custom commands): each declares
-// `contributes.chatAgents` and exports `chatAgents` from activate(), usually built with the `kit`
-// this mod exports (see kit.js). An agent answers through its CLI (the user's subscription) or its
+// `contributes.agentProviders` and exports `agentProviders` from activate(), built with Agent Runtime.
+// Legacy chatAgents providers remain supported. An agent answers through its CLI (the user's subscription) or its
 // API (an API key); with the MCP Server mod on, CLI agents that support it also get AICode's tools,
 // so the edits they propose open as a diff to accept or reject.
 //
@@ -9,7 +9,6 @@
 // "Add Context…"), agent and model pickers under it, slash commands, actions on each message,
 // and a history of past chats.
 
-import { kit } from "./kit.js";
 import { renderMarkdown } from "./markdown.js";
 
 const isMac = navigator.platform.toLowerCase().includes("mac");
@@ -120,6 +119,7 @@ const SLASH = [
 const SHELL_LANGS = new Set(["sh", "bash", "zsh", "shell", "console", "shellscript", "fish", "powershell", "ps1", "pwsh", "bat", "cmd"]);
 
 export async function activate(ctx) {
+  const { kit, listProviders } = await ctx.mods.get("aicode.agent-runtime");
   const { h, icon, iconButton, clear, basename, dirname, fileIcon, fileIconColor } = ctx.ui;
   const style = document.createElement("style");
   style.textContent = STYLE;
@@ -136,22 +136,11 @@ export async function activate(ctx) {
   const models = await ctx.settings.get("models", {});
   const refreshStatuses = (fresh = false) =>
     Promise.all(agents.map(async (a) => statuses.set(a.id, await a.status(fresh).catch((e) => ({ ready: false, detail: String(e), models: [] })))));
-  // Loaded once the chat is first drawn — never inside activate(), since each agent mod asks this
-  // one for its kit while it activates.
+  // Load providers only when the chat needs them; the runtime has no UI dependency.
   let loading = null;
   const loadAgents = () =>
     (loading ??= (async () => {
-      const owners = [...new Set(ctx.mods.contributions("chatAgents").map((c) => c.mod))];
-      const found = [];
-      for (const id of owners) {
-        try {
-          const exported = await ctx.mods.get(id);
-          for (const a of Object.values(exported?.chatAgents ?? {})) if (a?.id && a.run) found.push(a);
-        } catch (e) {
-          console.error(`AI Chat: the agent mod ${id} failed`, e);
-        }
-      }
-      agents = found;
+      agents = (await listProviders()).filter((a) => a.run);
       await refreshStatuses();
       const ready = (id) => statuses.get(id)?.ready;
       if (!agents.some((a) => a.id === agentId) || !ready(agentId)) agentId = agents.find((a) => ready(a.id))?.id ?? (agents.some((a) => a.id === agentId) ? agentId : agents[0]?.id ?? null);
@@ -400,6 +389,7 @@ export async function activate(ctx) {
     try {
       running = await a.run({
         prompt,
+        autoApprove: fullAccess(),
         message,
         history,
         sessionId: chat.sessions[a.id],
@@ -896,14 +886,12 @@ export async function activate(ctx) {
   // ---------- the view ----------
 
   const openInTerminal = async () => {
-    if (!ctx.mods.isEnabled("aicode.terminal")) return ctx.window.showInfo("Enable the Terminal mod to run agents interactively.", { label: "Open Mods", run: () => ctx.commands.execute("mods.manage") });
+    if (!ctx.mods.isEnabled("aicode.terminal-ai")) return ctx.window.showInfo("Enable Terminal AI to run agents interactively.", { label: "Open Mods", run: () => ctx.commands.execute("mods.manage") });
     await loadAgents();
     const a = agent();
     if (!a) return showAgentMods();
-    const line = await a.terminal?.(models[a.id] || statusOf(a)?.defaultModel || "");
-    if (!line) return ctx.window.showInfo(`${a.name} answers through its API here. Switch it to its CLI to open it in a terminal.`, { label: `Configure ${a.name}…`, run: () => configureAgent(a) });
-    const term = await ctx.mods.get("aicode.terminal");
-    term.open({ command: line.command, args: line.args, name: a.name, cwd: ctx.workspace.folder() ?? undefined });
+    const bridge = await ctx.mods.get("aicode.terminal-ai");
+    return bridge.open({ agent: a, model: models[a.id] || statusOf(a)?.defaultModel || "" });
   };
 
   ctx.views.provide("agents.chat", {
@@ -1061,7 +1049,7 @@ export async function activate(ctx) {
       await send(String(prompt));
     },
     attach: (path) => attachFile(path),
-    /** For agent mods: `kit.defineAgent(ctx, spec)` and the pieces it is made of (kit.js). */
+    /** For agent mods: `kit.defineAgent(ctx, spec)` and the pieces it is made of (Agent Runtime). */
     kit,
   };
 }

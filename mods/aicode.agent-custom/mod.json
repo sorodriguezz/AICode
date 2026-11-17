@@ -1,7 +1,7 @@
 {
   "id": "aicode.agent-custom",
   "name": "Custom Agent Commands",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Any program that takes a message and prints an answer (aider, llm, a script of yours) as an agent in the AI Chat. Add one with “Chat: Add a Custom Agent Command…”.",
   "author": "AICode",
   "icon": "terminal-cmd",
@@ -15,15 +15,9 @@
     "process"
   ],
   "dependencies": [
-    "aicode.agents"
+    "aicode.agent-runtime"
   ],
   "contributes": {
-    "chatAgents": [
-      {
-        "id": "custom",
-        "name": "Custom commands"
-      }
-    ],
     "commands": [
       {
         "id": "customAgents.add",
@@ -42,6 +36,12 @@
         "default": [],
         "description": "One agent per entry: { \"id\", \"name\", \"program\", \"args\": [\"--message\", \"{prompt}\"] }. {prompt} is the message, {model} the model typed in the chat."
       }
-    }
+    },
+    "agentProviders": [
+      {
+        "id": "custom",
+        "name": "Custom commands"
+      }
+    ]
   }
 }

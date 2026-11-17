@@ -35,7 +35,9 @@ On macOS, **Option (⌥)** types `@`, `|`, braces, brackets, and accents using t
 
 Use the split button's dropdown to split right, left, up, or down. **New Terminal Below Entire Group** adds a full-width terminal below the existing layout. With four terminals open, **Arrange Panes… → 3 Above + 1 Wide Below** creates that arrangement; equal rows, columns, and a grid are also available. Drag an entry from the terminal list onto a pane edge to move it there, or onto an outer group edge to span the group. A preview marks the destination; **Esc** cancels. The **Move Pane…** context menu offers the same moves without dragging. Rearranging keeps existing processes and their output.
 
-The robot button and **Terminal: Open Agent…** launch enabled agents' CLIs, including Claude, Codex, Gemini, and OpenCode. Use **Open Agent in Split…** to launch one beside the current terminal. **Add Agent Profile…** adds other executables; optional arguments live in the `Terminal → agentProfiles` setting.
+Enable **Terminal AI** to add the robot button and **Terminal AI: Open Agent…**, which launch enabled agents' CLIs, including Claude, Codex, Gemini, and OpenCode. Use **Open Agent in Split…** to launch one beside the current terminal. **Add Agent Profile…** adds other executables; optional arguments live in `Terminal AI → agentProfiles`. Existing profiles are preserved when upgrading. Terminal AI works without enabling AI Chat.
+
+The editor context menu's **Send Selection to Agent Terminal…** and **Send File to Agent Terminal…** let you choose the session that receives the context, including unsaved changes. Text is pasted for review before you submit it. With **MCP Server** enabled, Terminal AI automatically passes its configuration to Claude and Codex CLIs. The **MCP** badge means the configuration was supplied; confirm the connection from the CLI itself.
 
 ## Make it yours
 

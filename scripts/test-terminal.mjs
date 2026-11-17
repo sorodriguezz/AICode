@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { test } from "node:test";
+import { activate as activateTerminalAI } from "../mods/aicode.terminal-ai/main.js";
 import ts from "typescript";
 import { Terminal as XtermTerminal } from "../node_modules/@xterm/xterm/lib/xterm.mjs";
 import { fileReferences, resizePair } from "../mods/aicode.terminal/interaction.js";
@@ -195,9 +196,9 @@ test("terminal splits resize, retain order and shell, follow keyboard focus, pas
   let provider;
   let pick = () => null;
   const agent = {
-    name: "Test Agent", icon: "robot",
+    id: "test", name: "Test Agent", icon: "robot",
     status: async () => ({ ready: true, terminal: true, detail: "Installed CLI" }),
-    terminal: async () => ({ command: "test-agent", args: ["--interactive"] }),
+    terminal: async () => ({ command: "test-agent", args: ["--interactive"], env: { TEST_AGENT_ENV: "value with spaces" } }),
   };
   const ctx = {
     subscriptions: [], asset: (path) => path,
@@ -215,10 +216,27 @@ test("terminal splits resize, retain order and shell, follow keyboard focus, pas
     views: { provide: (_id, value) => { provider = value; }, isVisible: () => true, reveal: async () => {}, refreshActions() {} },
     commands: { register: (id, fn) => commands.set(id, fn), execute: async (id, ...args) => commands.get(id)?.(...args) },
     workbench: { addFileDropTarget: (el, spec) => drops.add(el, spec) },
-    mods: { contributions: () => [{ mod: "test.agent" }], isEnabled: () => true, get: async () => ({ chatAgents: { test: agent } }) },
+    mods: { contributions: () => [] },
     window: { showQuickPick: async (items) => pick(items), showInfo: (message) => infos.push(message) },
   };
   const terminal = await activate(ctx);
+  assert.equal(commands.has("terminal.newAgent"), false, "Terminal alone has no agent launcher");
+  const changes = [];
+  const changeListener = terminal.onDidChange((e) => changes.push(e));
+  const bridgeSettings = new Map();
+  let selectedText = "const unsaved = true;";
+  const bridgeCtx = {
+    ...ctx, subscriptions: [],
+    settings: { get: async (k, f) => bridgeSettings.get(k) ?? f, set: async (k, v) => bridgeSettings.set(k, v) },
+    config: { getFor: (_owner, k, f) => settings.get(k) ?? f },
+    editor: { active: () => ({ id: "editor", path: "/workspace/file.js" }), getSelection: () => ({ text: selectedText, startLine: 2, endLine: 3 }), getText: () => "unsaved file text" },
+    mods: { isEnabled: () => false, get: async (id) => {
+      assert.notEqual(id, "aicode.agents", "opening CLI agents must not load Chat");
+      if (id === "aicode.terminal") return terminal;
+      if (id === "aicode.agent-runtime") return { listProviders: async () => [agent] };
+    } },
+  };
+  const bridge = await activateTerminalAI(bridgeCtx);
   // render normally creates a shell, as it does when first opening the real terminal view.
   const view = new Element();
   provider.render(view);
@@ -314,13 +332,31 @@ test("terminal splits resize, retain order and shell, follow keyboard focus, pas
   const launched = await commands.get("terminal.splitAgent")();
   assert.equal(launched.pty.options.command, "test-agent");
   assert.deepEqual(launched.pty.options.args, ["--interactive"]);
+  assert.deepEqual(launched.pty.options.env, { TEST_AGENT_ENV: "value with spaces" });
   assert.equal(launched.cwd, "/workspace");
   assert.equal(launched.icon, "robot");
-  settings.set("agentProfiles", [{ name: "Other CLI", command: "other-agent", args: ["--chat", "with spaces"] }]);
+  bridgeSettings.set("agentProfiles", [{ name: "Other CLI", command: "other-agent", args: ["--chat", "with spaces"] }]);
   pick = (items) => items.find((item) => item.profile);
   const custom = await commands.get("terminal.newAgent")();
   assert.equal(custom.pty.options.command, "other-agent");
   assert.deepEqual(custom.pty.options.args, ["--chat", "with spaces"]);
+  assert.equal(terminal.list().length, spawns.length - 1, "closed terminals are removed from the public list");
+  third.term.focus();
+  const shellWrites = [...third.pty.writes];
+  pick = (items) => items.find((item) => item.id === launched.id);
+  await commands.get("terminalAI.sendSelection")();
+  assert.match(launched.pty.writes.at(-1), /file.js:2-3/);
+  assert.match(launched.pty.writes.at(-1), /const unsaved = true;/);
+  assert.notEqual(launched.pty.writes.at(-1), "\r", "context is pasted for review, without Enter");
+  assert.deepEqual(third.pty.writes, shellWrites, "the focused shell never receives agent context");
+  await commands.get("terminalAI.sendFile")();
+  assert.match(launched.pty.writes.at(-1), /unsaved file text/);
+  selectedText = "";
+  await commands.get("terminalAI.sendSelection")();
+  assert.match(infos.at(-1), /Select some code/);
+  assert.equal(bridge.sessions().length, 2);
+  changeListener.dispose();
+  assert.ok(changes.some((e) => e.type === "close"));
   // A tab from another group can join the visible layout; dragging never starts another process.
   third.term.focus();
   const customTab = view.querySelectorAll(".term-tab").at(-1);
@@ -351,10 +387,15 @@ test("terminal splits resize, retain order and shell, follow keyboard focus, pas
   assert.equal(custom.group.layout, beforeCancel, "Escape cancels without changing the layout");
   assert.equal(view.querySelectorAll(".term-layout-preview").length, 0);
   custom.exited = true;
+  const beforeFailedPaste = spawns.length;
+  await assert.rejects(terminal.paste(custom.id, "context"), /no longer running/);
+  assert.equal(spawns.length, beforeFailedPaste, "a stale destination must not open a shell");
   hit = custom.el;
   await drops.at({ x: 100, y: 100 }).spec.drop(["/tmp/image.png"]);
   assert.equal(custom.pty.writes.length, 0);
   assert.match(infos.at(-1), /not running/);
+  bridgeCtx.subscriptions.forEach((sub) => sub.dispose());
+  assert.equal(bridge.sessions().length, 0);
   ctx.subscriptions.forEach((sub) => sub.dispose());
   assert.equal(drops.at({ x: 100, y: 100 }), null);
 });

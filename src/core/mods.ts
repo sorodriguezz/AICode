@@ -988,8 +988,8 @@ export class ModHost {
       pty: {
         /** { default, shells }: the login shell and the other shells installed. */
         shells: () => call<{ default: string | null; shells: string[] }>("pty_shells"),
-        spawn: async (opts: { cwd?: string; command?: string; args?: string[]; cols: number; rows: number; onData: (data: string) => void; onExit?: (code: number | null) => void }) => {
-          const id = await call<number>("pty_spawn", { cwd: opts.cwd ?? workspace.folder ?? undefined, command: opts.command, args: opts.args, cols: opts.cols, rows: opts.rows });
+        spawn: async (opts: { cwd?: string; command?: string; args?: string[]; env?: Record<string, string>; cols: number; rows: number; onData: (data: string) => void; onExit?: (code: number | null) => void }) => {
+          const id = await call<number>("pty_spawn", { cwd: opts.cwd ?? workspace.folder ?? undefined, command: opts.command, args: opts.args, env: opts.env, cols: opts.cols, rows: opts.rows });
           let offExit: (() => void) | null = null;
           let exited = false;
           const offData = onStream("pty://data", id, (p) => opts.onData(p.data));

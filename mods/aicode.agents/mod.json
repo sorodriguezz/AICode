@@ -1,7 +1,7 @@
 {
   "id": "aicode.agents",
   "name": "AI Chat",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "The AI chat panel: chats with history, the active file and attachments as context, slash commands, code blocks you can apply as a diff or run in the terminal. The agents themselves are mods of their own — Claude, Codex, Gemini, Grok, OpenCode, Cline, Ollama, custom commands — each through its CLI (your subscription) or an API key.",
   "author": "AICode",
   "icon": "comment-discussion",
@@ -24,11 +24,12 @@
     "open-external"
   ],
   "dependencies": [
-    "aicode.secondary-sidebar"
+    "aicode.secondary-sidebar",
+    "aicode.agent-runtime"
   ],
   "optionalDependencies": [
     "aicode.mcp-server",
-    "aicode.terminal"
+    "aicode.terminal-ai"
   ],
   "contributes": {
     "views": [

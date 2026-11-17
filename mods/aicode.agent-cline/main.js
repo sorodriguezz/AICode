@@ -2,7 +2,7 @@
 // keeps its own providers and keys, so there is no API mode here.
 
 export async function activate(ctx) {
-  const { kit } = await ctx.mods.get("aicode.agents");
+  const { kit } = await ctx.mods.get("aicode.agent-runtime");
   const cline = kit.defineAgent(ctx, {
     id: "cline",
     name: "Cline",
@@ -15,5 +15,5 @@ export async function activate(ctx) {
     },
   });
   ctx.commands.register("cline.configure", () => cline.configure());
-  return { chatAgents: { cline } };
+  return { agentProviders: { cline }, chatAgents: { cline } };
 }

@@ -44,7 +44,7 @@ function streamJson({ onText, onTool, onSession, onResult }) {
 }
 
 export async function activate(ctx) {
-  const { kit } = await ctx.mods.get("aicode.agents");
+  const { kit } = await ctx.mods.get("aicode.agent-runtime");
   const claude = kit.defineAgent(ctx, {
     id: "claude",
     name: "Claude",
@@ -58,6 +58,16 @@ export async function activate(ctx) {
       models: CLI_MODELS,
       parser: streamJson,
       interactive: (model) => (model ? ["--model", model] : []),
+      terminal: ({ model, sessionId, mcp }) => {
+        const args = model ? ["--model", model] : [];
+        if (sessionId) args.push("--resume", sessionId);
+        const env = {};
+        if (mcp) {
+          args.push("--mcp-config", JSON.stringify({ mcpServers: { aicode: { type: "http", url: mcp.url, headers: { Authorization: "Bearer ${AICODE_MCP_TOKEN}" } } } }));
+          env.AICODE_MCP_TOKEN = mcp.token;
+        }
+        return { args, env };
+      },
       build: ({ prompt, sessionId, mcp, model, autoApprove }) => {
         const args = ["-p", prompt, "--output-format", "stream-json", "--verbose"];
         if (model) args.push("--model", model);
@@ -127,5 +137,5 @@ export async function activate(ctx) {
     },
   });
   ctx.commands.register("claude.configure", () => claude.configure());
-  return { chatAgents: { claude } };
+  return { agentProviders: { claude }, chatAgents: { claude } };
 }

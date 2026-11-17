@@ -1,8 +1,8 @@
 {
   "id": "aicode.terminal",
   "name": "Terminal",
-  "version": "1.2.1",
-  "description": "Integrated terminals with nested rows and columns, draggable panes, layout presets, resizable splits, dropped file references, and an agent CLI launcher. A shell only starts when you open one.",
+  "version": "1.3.0",
+  "description": "Integrated terminals with nested rows and columns, draggable panes, layout presets, resizable splits, dropped file references, and generic APIs for other mods. A shell only starts when you open one.",
   "author": "AICode",
   "icon": "terminal",
   "main": "main.js",
@@ -22,7 +22,9 @@
     "fs:read",
     "open-external"
   ],
-  "dependencies": ["aicode.bottom-panel"],
+  "dependencies": [
+    "aicode.bottom-panel"
+  ],
   "contributes": {
     "views": [
       {
@@ -48,22 +50,7 @@
       },
       {
         "id": "terminal.newWithProfile",
-        "title": "Create New Terminal (With Profile)…",
-        "category": "Terminal"
-      },
-      {
-        "id": "terminal.newAgent",
-        "title": "Open Agent…",
-        "category": "Terminal"
-      },
-      {
-        "id": "terminal.splitAgent",
-        "title": "Open Agent in Split…",
-        "category": "Terminal"
-      },
-      {
-        "id": "terminal.addAgentProfile",
-        "title": "Add Agent Profile…",
+        "title": "Create New Terminal (With Profile)\u2026",
         "category": "Terminal"
       },
       {
@@ -93,12 +80,12 @@
       },
       {
         "id": "terminal.movePane",
-        "title": "Move Pane…",
+        "title": "Move Pane\u2026",
         "category": "Terminal"
       },
       {
         "id": "terminal.arrange",
-        "title": "Arrange Panes…",
+        "title": "Arrange Panes\u2026",
         "category": "Terminal"
       },
       {
@@ -118,7 +105,7 @@
       },
       {
         "id": "terminal.rename",
-        "title": "Rename…",
+        "title": "Rename\u2026",
         "category": "Terminal"
       },
       {
@@ -147,11 +134,6 @@
         "type": "number",
         "default": 12,
         "description": "Font size of terminals"
-      },
-      "agentProfiles": {
-        "type": "array",
-        "default": [],
-        "description": "Additional interactive agent CLIs shown in Open Agent: [{ \"name\": \"My agent\", \"command\": \"agent-cli\", \"args\": [] }]. Commands use the login-shell PATH and start in the current workspace."
       }
     }
   }

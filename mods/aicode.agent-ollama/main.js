@@ -6,7 +6,7 @@
 const MODELS = ["llama3.2", "qwen2.5-coder", "deepseek-r1", "gpt-oss"];
 
 export async function activate(ctx) {
-  const { kit } = await ctx.mods.get("aicode.agents");
+  const { kit } = await ctx.mods.get("aicode.agent-runtime");
   const ollama = kit.defineAgent(ctx, {
     id: "ollama",
     name: "Ollama",
@@ -41,5 +41,5 @@ export async function activate(ctx) {
     },
   });
   ctx.commands.register("ollama.configure", () => ollama.configure());
-  return { chatAgents: { ollama } };
+  return { agentProviders: { ollama }, chatAgents: { ollama } };
 }

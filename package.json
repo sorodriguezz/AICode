@@ -1,7 +1,7 @@
 {
   "name": "aicode",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "module",
   "packageManager": "pnpm@12.18.0",
   "scripts": {
@@ -11,7 +11,9 @@
     "tauri": "tauri",
     "check:mods": "node scripts/check-mods.mjs",
     "test:terminal": "node --test scripts/test-terminal.mjs",
+    "test:terminal-ai": "node --test scripts/test-terminal-ai.mjs",
     "test:git": "node --test scripts/test-git.mjs",
+    "test:editor": "node --test scripts/test-editor.mjs",
     "release": "node scripts/release.mjs"
   },
   "dependencies": {

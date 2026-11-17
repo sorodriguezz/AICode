@@ -61,7 +61,8 @@ export interface TextDoc {
   path: string | null;
   title: string;
   model: monaco.editor.ITextModel;
-  savedVersion: number;
+  /** The text last read from or successfully written to disk, with its line endings. */
+  savedText: string;
   bom: boolean;
   lossy: boolean;
   untitled?: number;
@@ -212,6 +213,7 @@ function languageName(id: string): string {
 export class EditorService {
   readonly editor: monaco.editor.IStandaloneCodeEditor;
   private docs: Doc[] = [];
+  private dirtyStates = new WeakMap<monaco.editor.ITextModel, { version: number; savedText: string; dirty: boolean }>();
   private active: Doc | null = null;
   private monacoHost: HTMLElement;
   private customHost: HTMLElement;
@@ -383,8 +385,8 @@ export class EditorService {
   // ---------- queries ----------
 
   info(doc: Doc): EditorInfo {
-    if (doc.kind === "custom") return { id: doc.id, path: null, title: doc.title, language: "", dirty: false, active: doc === this.active };
-    return { id: doc.id, path: doc.path, title: doc.title, language: doc.model.getLanguageId(), dirty: this.isDirty(doc), active: doc === this.active };
+    if (doc.kind === "custom") return { id: doc.id, editorType: doc.spec.editorType ?? "custom", path: null, title: doc.title, language: "", dirty: false, active: doc === this.active };
+    return { id: doc.id, editorType: "default", path: doc.path, title: doc.title, language: doc.model.getLanguageId(), dirty: this.isDirty(doc), active: doc === this.active };
   }
 
   list(): EditorInfo[] {
@@ -400,7 +402,15 @@ export class EditorService {
   }
 
   isDirty(doc: TextDoc): boolean {
-    return doc.model.getAlternativeVersionId() !== doc.savedVersion;
+    const model = doc.model;
+    const version = model.getVersionId();
+    const cached = this.dirtyStates.get(model);
+    if (cached?.version === version && cached.savedText === doc.savedText) return cached.dirty;
+    // A manually reverted edit has a new undo version even when its text is identical.
+    // Compare once per model version, avoiding a full text read when lengths already differ.
+    const dirty = model.getValueLength() !== doc.savedText.length || model.getValue() !== doc.savedText;
+    this.dirtyStates.set(model, { version, savedText: doc.savedText, dirty });
+    return dirty;
   }
 
   find(idOrPath: string): TextDoc | undefined {
@@ -431,7 +441,7 @@ export class EditorService {
     let n = 1;
     while (used.has(n)) n++;
     const model = monaco.editor.createModel(text, language, monaco.Uri.parse(`untitled:Untitled-${n}`));
-    const doc: TextDoc = { kind: "text", id: `doc-${nextId++}`, path: null, title: `Untitled-${n}`, model, savedVersion: text ? -1 : model.getAlternativeVersionId(), bom: false, lossy: false, untitled: n, viewState: null, preview: false };
+    const doc: TextDoc = { kind: "text", id: `doc-${nextId++}`, path: null, title: `Untitled-${n}`, model, savedText: "", bom: false, lossy: false, untitled: n, viewState: null, preview: false };
     this.docs.push(doc);
     this.activate(doc);
     return doc;
@@ -503,7 +513,7 @@ export class EditorService {
       monaco.editor.getModel(uri)?.dispose();
       const model = monaco.editor.createModel(file.text, detectLanguage(path), uri);
       model.setEOL(file.eol === "\r\n" ? monaco.editor.EndOfLineSequence.CRLF : monaco.editor.EndOfLineSequence.LF);
-      doc = { kind: "text", id: `doc-${nextId++}`, path, title: basename(path), model, savedVersion: model.getAlternativeVersionId(), bom: file.bom, lossy: file.lossy, viewState: null, preview: !!opts.preview && this.previewEnabled };
+      doc = { kind: "text", id: `doc-${nextId++}`, path, title: basename(path), model, savedText: model.getValue(), bom: file.bom, lossy: file.lossy, viewState: null, preview: !!opts.preview && this.previewEnabled };
       // A preview tab (single click in the explorer) is replaced by the next preview.
       const previewDoc = opts.preview && this.previewEnabled ? this.replaceablePreview() : undefined;
       if (previewDoc?.kind === "text") {
@@ -1352,13 +1362,15 @@ export class EditorService {
   async save(doc: TextDoc | null = this.activeText()): Promise<boolean> {
     if (!doc) return false;
     if (!doc.path) return this.saveAs(doc);
+    const text = doc.model.getValue();
     try {
-      await invoke("fs_write_text", { modId: "core", path: doc.path, text: doc.model.getValue(), bom: doc.bom });
+      await invoke("fs_write_text", { modId: "core", path: doc.path, text, bom: doc.bom });
     } catch (e) {
       notify("error", `Could not save ${doc.title}: ${e}`);
       return false;
     }
-    doc.savedVersion = doc.model.getAlternativeVersionId();
+    // Edits made while the write was pending still differ from what reached disk.
+    doc.savedText = text;
     doc.preview = false;
     this.renderTabs();
     this.onDidSave.fire(this.info(doc));
@@ -1371,7 +1383,6 @@ export class EditorService {
     for (const doc of this.docs) {
       if (doc.kind !== "text" || !doc.path || (doc.path !== from && !doc.path.startsWith(from + "/"))) continue;
       const target = to + doc.path.slice(from.length);
-      const dirty = this.isDirty(doc);
       const old = doc.model;
       const viewState = this.active === doc ? this.editor.saveViewState() : doc.viewState;
       const uri = monaco.Uri.file(target);
@@ -1379,7 +1390,6 @@ export class EditorService {
       const detected = detectLanguage(target);
       doc.model = monaco.editor.createModel(old.getValue(), detected === "plaintext" ? old.getLanguageId() : detected, uri);
       doc.model.setEOL(old.getEOL() === "\r\n" ? monaco.editor.EndOfLineSequence.CRLF : monaco.editor.EndOfLineSequence.LF);
-      doc.savedVersion = dirty ? -1 : doc.model.getAlternativeVersionId();
       doc.path = target;
       doc.title = basename(target);
       doc.viewState = viewState;
@@ -1414,9 +1424,9 @@ export class EditorService {
     monaco.editor.getModel(uri)?.dispose();
     const old = doc.model;
     const detected = detectLanguage(target);
-    doc.model = monaco.editor.createModel(text, detected === "plaintext" ? language : detected, uri);
+    doc.model = monaco.editor.createModel(old.getValue(), detected === "plaintext" ? language : detected, uri);
     doc.model.setEOL(old.getEOL() === "\r\n" ? monaco.editor.EndOfLineSequence.CRLF : monaco.editor.EndOfLineSequence.LF);
-    doc.savedVersion = doc.model.getAlternativeVersionId();
+    doc.savedText = text;
     doc.path = target;
     doc.title = basename(target);
     doc.untitled = undefined;
@@ -1631,7 +1641,6 @@ export class EditorService {
             continue;
           }
           const doc = this.newUntitled(s.text ?? "", s.language ?? "plaintext");
-          if (!s.text) doc.savedVersion = doc.model.getAlternativeVersionId();
           doc.viewState = s.viewState ?? null;
           restored.push(doc);
         }
@@ -1692,7 +1701,7 @@ export class EditorService {
       if (!doc?.path) return;
       const file = await invoke<TextFile>("fs_read_text", { modId: "core", path: doc.path });
       doc.model.setValue(file.text);
-      doc.savedVersion = doc.model.getAlternativeVersionId();
+      doc.savedText = doc.model.getValue();
       this.renderTabs();
     });
     c("editor.close", "Close Editor", () => this.close(), "View");

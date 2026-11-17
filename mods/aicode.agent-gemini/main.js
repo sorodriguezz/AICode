@@ -5,7 +5,7 @@
 const MODELS = ["gemini-2.5-pro", "gemini-2.5-flash"];
 
 export async function activate(ctx) {
-  const { kit } = await ctx.mods.get("aicode.agents");
+  const { kit } = await ctx.mods.get("aicode.agent-runtime");
   const gemini = kit.defineAgent(ctx, {
     id: "gemini",
     name: "Gemini",
@@ -49,5 +49,5 @@ export async function activate(ctx) {
     },
   });
   ctx.commands.register("gemini.configure", () => gemini.configure());
-  return { chatAgents: { gemini } };
+  return { agentProviders: { gemini }, chatAgents: { gemini } };
 }

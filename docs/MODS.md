@@ -302,10 +302,22 @@ also tracked by the mod host; dispose it when removing a target. The terminal us
 references into the hovered pane without submitting the current prompt.
 
 The Terminal mod exports `open(opts)`, `split(opts)`, and `sendText(text, opts)`. In addition to
-process options (`command`, `args`, `cwd`, `name`), `split` accepts `direction` (`"left"`, `"right"`,
+process options (`command`, `args`, `env`, `cwd`, `name`), `split` accepts `direction` (`"left"`, `"right"`,
 `"above"`, `"below"`; defaults to `"right"`) and `scope` (`"pane"` or `"group"`; defaults to the
 active pane). For example, `terminal.split({ direction: "below", scope: "group" })` adds a terminal
 below the whole existing layout. Nested splits and the built-in layout presets retain existing PTYs.
+
+For integrations, `list()` and `active()` return snapshots (`id`, `name`, `cwd`, `exited`, `icon`),
+where `cwd` is the launch directory. `paste(id, text, { run: false })` targets a running terminal
+without pressing Enter; it rejects closed or exited terminals instead of creating a shell.
+`readOutput(id, { lines: 100 })` reads the active xterm buffer, limited to 1,000 lines and 64,000
+characters. `onDidChange(fn)` emits `{ type: "open" | "exit" | "close", terminal }` and returns a
+disposable. `setDecoration(id, { text, tooltip })` adds a small label; passing `null` removes it.
+Consumers dispose subscriptions and clear decorations when unloading.
+
+Mods add launcher buttons through `contributes.terminalActions: [{ icon, title, command }]`.
+The command is activated only when used. The `terminal/new` menu accepts contributions alongside
+the existing `terminal/context` menu. Terminal itself has no dependency on AI providers or MCP.
 
 **Floating panels**: `ctx.workbench.floatView("terminal", { x: 80, y: 60, w: 600, h: 320 })`, or as a
 default (the user can still change it): `"configurationDefaults": { "core": { "workbench.viewPlacement":
@@ -478,18 +490,21 @@ A mod can also ship a helper script (Node, Python) in its folder and talk to it 
 `ctx.process.spawn("node", [path, …], { keepStdin: true })` with the path from the mod's folder
 (`ctx.manifest.dir`). Passwords and connection strings go in `ctx.secrets`, never in settings.
 
-## Agents for the AI Chat
+## Agent providers, Chat and Terminal AI
 
-The AI Chat (`aicode.agents`) contributes the Chat view and depends on `aicode.secondary-sidebar`.
+The AI Chat (`aicode.agents`) contributes the Chat view and depends on `aicode.secondary-sidebar`
+and `aicode.agent-runtime`. Terminal AI (`aicode.terminal-ai`) depends on `aicode.terminal` and
+the same runtime, with optional `aicode.mcp-server` integration. Neither agent providers nor
+Terminal AI require the Chat UI.
 Every agent is a mod of its own (`aicode.agent-claude`,
 `-codex`, `-gemini`, `-grok`, `-opencode`, `-cline`, `-ollama`, `-custom`) — copy one to add another.
-An agent mod depends on `aicode.agents`, declares itself, and exports the agent:
+An agent mod depends on `aicode.agent-runtime`, declares itself, and exports the agent:
 
 ```jsonc
-"dependencies": ["aicode.agents"],
+"dependencies": ["aicode.agent-runtime"],
 "permissions": ["process", "open-external"],
 "contributes": {
-  "chatAgents": [{ "id": "mistral", "name": "Mistral" }]
+  "agentProviders": [{ "id": "mistral", "name": "Mistral" }]
 }
 ```
 
@@ -498,7 +513,7 @@ An agent with both a `cli` and an `api` part also declares the setting that pick
 
 ```js
 export async function activate(ctx) {
-  const { kit } = await ctx.mods.get("aicode.agents");
+  const { kit } = await ctx.mods.get("aicode.agent-runtime");
   const mistral = kit.defineAgent(ctx, {
     id: "mistral", name: "Mistral", icon: "sparkle",
     api: {
@@ -511,14 +526,16 @@ export async function activate(ctx) {
       stream: (out) => (ev) => ev.choices?.[0]?.delta?.content && out.text(ev.choices[0].delta.content),
     },
   });
-  return { chatAgents: { mistral } };
+  return { agentProviders: { mistral } };
 }
 ```
 
-- **cli** (the user's subscription): `bin`, `build({ prompt, sessionId, mcp, model }) → { args, env }`,
+- **cli** (the user's subscription): `bin`, `build({ prompt, sessionId, mcp, model, autoApprove }) → { args, env }`,
   optionally `parser({ onText, onTool, onSession, onResult })` for structured output (Claude Code's
   stream-json), `resumable`, `mcp` (gets AICode's MCP server), `models`, `needsModel`, `install`
-  (a command or URL offered when the CLI is missing), `interactive(model)` (for *Open Agent in Terminal*).
+  (a command or URL offered when the CLI is missing), `interactive(model)` (basic interactive arguments),
+  or `terminal({ model, cwd, sessionId, mcp }) → { args, env }` for richer interactive launches.
+  The calling interface supplies `autoApprove` to `run(opts)`; Chat uses its existing setting.
 - **api** (an API key): `request(...)` returns the HTTP request, `stream(out)` returns a handler for
   each event (`format`: `"sse"`, `"ndjson"` or `"json"`); call `out.text`, `out.result({ tokens, model,
   cost })`, `out.error(message)`. The key is kept in the system's password store (*Configure …*), or read from one
@@ -526,7 +543,27 @@ export async function activate(ctx) {
   `/usr/bin/curl` with the agent mod's `process` permission, so the key is never on a command line.
 - The kit adds the *Configure …* menu (CLI or API, set/remove the key, install the CLI) and the status
   the chat shows. A mod can skip the kit and export any object with `id`, `name`, `status()`, `run(opts)`
-  → `{ done, kill }` and, optionally, `configure()` and `terminal(model)` — see `mods/aicode.agents/kit.js`.
+  → `{ done, kill }` and, optionally, `configure()` and `terminal(modelOrOptions)` — see
+  `mods/aicode.agent-runtime/kit.js`.
+
+The runtime exports `kit` and lazy `listProviders()`. Legacy `contributes.chatAgents` and
+`chatAgents` exports remain discoverable, and Chat still re-exports `kit` for older mods.
+New providers should use the runtime directly to avoid enabling Chat as a dependency.
+
+Terminal AI owns the launcher commands (`terminal.newAgent`, `terminal.splitAgent`,
+`terminal.addAgentProfile`), custom `agentProfiles`, and the associations between terminals and
+agents. Its `open({ agent, model, inSplit, placement, sessionId })` export is also used by Chat.
+`terminalAI.sendSelection` and `terminalAI.sendFile` capture the editor buffer before choosing
+a destination, then paste into a live agent terminal in that workspace without submitting.
+The session associations last for the current window; they do not restore conversations after restart.
+The generic terminal remains usable when Terminal AI is disabled.
+
+Providers declare `terminalCapabilities.mcp` when their interactive builder handles MCP.
+The kit sets it from `cli.terminal` and `cli.mcp`; the bridge supplies the optional server
+connection only to those providers. Claude and Codex use per-process environment variables for
+the bearer token, with configuration references in their arguments. The PTY API accepts `env`
+alongside `command`, `args` and `cwd`. The MCP badge denotes configuration supplied to the CLI,
+not a verified client handshake. Interactive launches retain the CLI's own approval behavior.
 
 ## Checking a mod
 

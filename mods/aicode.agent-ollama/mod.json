@@ -1,7 +1,7 @@
 {
   "id": "aicode.agent-ollama",
   "name": "Ollama",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Local models in the AI Chat through Ollama: `ollama run` per message, or the local Ollama server with the conversation as messages. Nothing leaves your Mac.",
   "author": "AICode",
   "icon": "vm",
@@ -15,15 +15,9 @@
     "open-external"
   ],
   "dependencies": [
-    "aicode.agents"
+    "aicode.agent-runtime"
   ],
   "contributes": {
-    "chatAgents": [
-      {
-        "id": "ollama",
-        "name": "Ollama"
-      }
-    ],
     "commands": [
       {
         "id": "ollama.configure",
@@ -41,6 +35,12 @@
         "default": "api",
         "description": "cli: `ollama run` for each message. api: the local Ollama server (ollama serve, port 11434), which keeps the conversation as messages."
       }
-    }
+    },
+    "agentProviders": [
+      {
+        "id": "ollama",
+        "name": "Ollama"
+      }
+    ]
   }
 }

@@ -2,7 +2,7 @@
 // and keys (`opencode auth login`), so there is no API mode here: it is already one.
 
 export async function activate(ctx) {
-  const { kit } = await ctx.mods.get("aicode.agents");
+  const { kit } = await ctx.mods.get("aicode.agent-runtime");
   const opencode = kit.defineAgent(ctx, {
     id: "opencode",
     name: "OpenCode",
@@ -15,5 +15,5 @@ export async function activate(ctx) {
     },
   });
   ctx.commands.register("opencode.configure", () => opencode.configure());
-  return { chatAgents: { opencode } };
+  return { agentProviders: { opencode }, chatAgents: { opencode } };
 }

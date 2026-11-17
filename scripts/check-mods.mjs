@@ -73,6 +73,15 @@ for (const dir of ids) {
     if (!(m.dependencies ?? []).includes("aicode.agents")) fail(dir, `chatAgents needs "aicode.agents" in dependencies`);
     for (const a of c.chatAgents) if (!a?.id || !a?.name) fail(dir, `a chat agent needs id and name`);
   }
+  if (c.agentProviders) {
+    if (!m.main) fail(dir, `agentProviders needs a main that exports them`);
+    if (!(m.dependencies ?? []).includes("aicode.agent-runtime")) fail(dir, `agentProviders needs "aicode.agent-runtime" in dependencies`);
+    for (const a of c.agentProviders) if (!a?.id || !a?.name) fail(dir, `an agent provider needs id and name`);
+  }
+  for (const action of c.terminalActions ?? []) {
+    if (!action.icon || !action.title || !action.command) fail(dir, `a terminal action needs icon, title and command`);
+    if (!(c.commands ?? []).some((cmd) => cmd.id === action.command)) fail(dir, `terminal action command ${action.command} is not declared`);
+  }
   if (c.configurationDefaults !== undefined && (typeof c.configurationDefaults !== "object" || Array.isArray(c.configurationDefaults))) fail(dir, `configurationDefaults must be an object`);
   for (const [name, l] of Object.entries(c.windowLayouts ?? {})) {
     if (!l || typeof l !== "object") fail(dir, `window layout ${name} must be an object`);

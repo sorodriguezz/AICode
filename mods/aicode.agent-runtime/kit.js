@@ -1,4 +1,4 @@
-// What the AI Chat gives the mods that bring it an agent (Claude, Codex, Gemini…): one call,
+// Shared runtime for agent providers, independent of the Chat and Terminal interfaces: one call,
 // `defineAgent(ctx, spec)`, turns a description of a CLI and/or an HTTP API into the agent object
 // the chat drives. It runs everything with the *agent mod's* ctx, so its `process` permission is
 // the one checked — the chat itself starts nothing.
@@ -134,7 +134,7 @@ const SYSTEM = "You are a coding assistant inside AICode, a code editor. Answer 
  *     cli: { label, bin, install, readsFiles, resumable, mcp, models, defaultModel, needsModel,
  *            build({ prompt, sessionId, mcp, model }) → { args, env },
  *            parser?({ onText, onTool, onSession, onResult }) → (chunk) => void,
- *            interactive?(model) → args, stderr: "log" },
+ *            interactive?(model) → args, terminal?({ model, cwd, sessionId, mcp }) → { args, env }, stderr: "log" },
  *     api: { label, keyUrl, keyHint, envVars: ["ANTHROPIC_API_KEY"], noKey, models, defaultModel, format,
  *            request({ model, system, messages: [{ role, text }], key }) → { url, headers, body },
  *            stream({ text, tool, result, error }) → (event) => void   — one per request } }
@@ -230,8 +230,9 @@ export function defineAgent(ctx, spec) {
 
   const runCli = async (o) => {
     const c = spec.cli;
-    // On by default: the agent edits files and runs commands on its own, without asking.
-    const autoApprove = ctx.config.getFor("aicode.agents", "autoApprove", true) !== false;
+    // The calling interface owns its approval setting. Preserve the previous default for
+    // callers that omit it, without depending on Chat's configuration.
+    const autoApprove = o.autoApprove !== false;
     const { args, env } = c.build({ prompt: o.prompt, sessionId: o.sessionId, mcp: o.mcp, model: o.model, autoApprove });
     const parse = c.parser ? c.parser({ onText: o.onText, onTool: o.onTool, onSession: o.onSession, onResult: o.onResult }) : (chunk) => o.onText(stripAnsi(chunk));
     let log = "";
@@ -278,10 +279,15 @@ export function defineAgent(ctx, spec) {
     /** Runs one turn. Resolves `done` with `{ error }` (null when it went well). */
     run: async (o) => ((await mode()) === "cli" ? runCli(o) : runApi(o)),
     /** The command line for "Open Agent in Terminal" (CLI mode only). */
-    terminal: async (model) => {
+    terminal: async (modelOrOptions = {}) => {
       if ((await mode()) !== "cli" || !spec.cli) return null;
-      return { command: spec.cli.bin, args: spec.cli.interactive ? spec.cli.interactive(model) : [] };
+      const options = typeof modelOrOptions === "string" ? { model: modelOrOptions } : modelOrOptions;
+      const launch = spec.cli.terminal
+        ? await spec.cli.terminal(options)
+        : { args: spec.cli.interactive ? spec.cli.interactive(options.model ?? "") : [] };
+      return { command: spec.cli.bin, ...launch, cwd: options.cwd };
     },
+    terminalCapabilities: { mcp: !!spec.cli?.terminal && !!spec.cli?.mcp },
   };
 }
 

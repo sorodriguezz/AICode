@@ -33,7 +33,9 @@ En macOS, **Option (⌥)** permite escribir `@`, `|`, llaves, corchetes y acento
 
 La flecha junto al botón de dividir permite crear un panel a la derecha, izquierda, arriba o abajo del activo. **New Terminal Below Entire Group** agrega uno que ocupa todo el ancho debajo del grupo. Para obtener tres arriba y uno ancho abajo, abre cuatro terminales y elige **Arrange Panes… → 3 Above + 1 Wide Below** en ese mismo menú. También hay filas, columnas y una cuadrícula. Puedes arrastrar una entrada de la lista de terminales sobre el borde de un panel para moverla allí; el borde exterior del grupo permite colocarla por encima o debajo de todo el conjunto. La previsualización indica el destino y **Esc** cancela. El menú contextual **Move Pane…** ofrece los mismos movimientos sin arrastrar. Reorganizar conserva los procesos y su contenido.
 
-El botón del robot y **Terminal: Open Agent…** abren los CLI de los agentes habilitados, como Claude, Codex, Gemini y OpenCode. **Open Agent in Split…** los abre junto a la terminal actual. **Add Agent Profile…** permite agregar otros ejecutables; sus argumentos se pueden configurar en el ajuste `Terminal → agentProfiles`.
+Activa **Terminal AI** para agregar el botón del robot y **Terminal AI: Open Agent…**, que abren los CLI de los agentes habilitados, como Claude, Codex, Gemini y OpenCode. **Open Agent in Split…** los abre junto a la terminal actual. **Add Agent Profile…** permite agregar otros ejecutables; sus argumentos se configuran en `Terminal AI → agentProfiles`. Los perfiles existentes se conservan al actualizar. Terminal AI funciona sin activar AI Chat.
+
+Desde el menú contextual del editor, **Send Selection to Agent Terminal…** y **Send File to Agent Terminal…** permiten elegir la sesión que recibirá el contexto, incluidos los cambios sin guardar. El texto se pega para revisarlo antes de enviarlo. Si activas **MCP Server**, Terminal AI pasa automáticamente su configuración a los CLI de Claude y Codex. La etiqueta **MCP** indica que se entregó la configuración; puedes confirmar la conexión desde el propio CLI.
 
 ## Hazlo tuyo
 

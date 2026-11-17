@@ -133,6 +133,7 @@ pub const SPLIT_FROM: &[(&str, &[&str])] = &[
     ),
     ("aicode.glass", &["aicode.soft-look"]),
     ("aicode.git", &["aicode.git-core", "aicode.git-graph", "aicode.git-decorations"]),
+    ("aicode.terminal", &["aicode.terminal-ai"]),
 ];
 
 impl Profile {
@@ -173,6 +174,18 @@ impl Profile {
                     views.entry("git.graph").or_insert_with(|| serde_json::json!({ "location": location }));
                 }
             }
+        }
+        // Agent providers no longer require Chat. Existing profiles get their shared runtime
+        // once, including profiles where Terminal AI was just split out of Terminal.
+        const RUNTIME: &str = "aicode.agent-runtime";
+        if !self.defaults_offered.iter().any(|id| id == RUNTIME) {
+            self.defaults_offered.push(RUNTIME.into());
+            if self.enabled.iter().any(|id| id == "aicode.agents" || id == "aicode.terminal-ai" || id.starts_with("aicode.agent-"))
+                && !self.enabled.iter().any(|id| id == RUNTIME)
+            {
+                self.enabled.push(RUNTIME.into());
+            }
+            changed = true;
         }
         self.split_local_autocomplete() || changed
     }
@@ -713,29 +726,48 @@ mod tests {
     }
 
     #[test]
-    fn claude_requires_chat_and_the_secondary_side_bar() {
+    fn claude_requires_runtime_without_chat_or_side_bar() {
         const PANEL: &str = "aicode.secondary-sidebar";
         const CHAT: &str = "aicode.agents";
         const CLAUDE: &str = "aicode.agent-claude";
+        const RUNTIME: &str = "aicode.agent-runtime";
         let mut mods = BTreeMap::new();
         for manifest in [
             include_str!("../../mods/aicode.secondary-sidebar/mod.json"),
             include_str!("../../mods/aicode.agents/mod.json"),
             include_str!("../../mods/aicode.agent-claude/mod.json"),
+            include_str!("../../mods/aicode.agent-runtime/mod.json"),
         ] {
             let manifest: Manifest = serde_json::from_str(manifest).unwrap();
-            let enabled = manifest.id != PANEL;
+            let enabled = manifest.id == CLAUDE;
             mods.insert(manifest.id.clone(), ModInfo { manifest, source: "bundled", dir: String::new(), enabled, problems: vec![] });
         }
         assert!(mods[PANEL].manifest.dependencies.is_empty());
         check_enabled_dependencies(&mut mods);
-        assert_eq!(mods[CHAT].problems, [format!("needs {PANEL} enabled and loadable")]);
-        assert_eq!(mods[CLAUDE].problems, [format!("needs {CHAT} enabled and loadable")]);
+        assert_eq!(mods[CLAUDE].problems, [format!("needs {RUNTIME} enabled and loadable")]);
 
         let by_id = mods.iter().map(|(id, m)| (id.as_str(), m)).collect();
-        let mut enabled = vec![CHAT.to_string()];
+        let mut enabled = vec![];
         enable_with_dependencies(CLAUDE, &by_id, &mut enabled).unwrap();
-        assert_eq!(enabled, [CHAT, CLAUDE, PANEL]);
+        assert_eq!(enabled, [CLAUDE, RUNTIME]);
+        assert!(!enabled.iter().any(|id| id == CHAT || id == PANEL));
+    }
+
+    #[test]
+    fn existing_terminal_profiles_keep_the_launcher_once() {
+        let mut profile: Profile = serde_json::from_value(serde_json::json!({
+            "enabled": ["aicode.terminal"],
+            "settings": { "aicode.terminal": { "agentProfiles": [{ "name": "Custom", "command": "my-cli" }] } }
+        })).unwrap();
+        assert!(profile.offer_defaults());
+        for id in ["aicode.terminal-ai", "aicode.agent-runtime"] {
+            assert!(profile.enabled.iter().any(|on| on == id));
+        }
+        assert!(!profile.enabled.iter().any(|id| id == "aicode.agents"));
+        assert_eq!(profile.settings["aicode.terminal"]["agentProfiles"][0]["command"], "my-cli");
+        profile.enabled.retain(|id| id != "aicode.terminal-ai");
+        assert!(!profile.offer_defaults());
+        assert!(!profile.enabled.iter().any(|id| id == "aicode.terminal-ai"));
     }
 
     #[test]

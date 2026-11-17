@@ -321,6 +321,7 @@ pub fn pty_spawn(
     cwd: Option<String>,
     command: Option<String>,
     args: Option<Vec<String>>,
+    env: Option<HashMap<String, String>>,
     cols: u16,
     rows: u16,
 ) -> Result<u32, String> {
@@ -350,6 +351,9 @@ pub fn pty_spawn(
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env("TERM_PROGRAM", "AICode");
+    for (key, value) in env.unwrap_or_default() {
+        cmd.env(key, value);
+    }
     if std::env::var("LANG").is_err() {
         cmd.env("LANG", "en_US.UTF-8");
     }

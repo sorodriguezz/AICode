@@ -49,6 +49,7 @@ const STYLE = `
 .term-tab:hover .tactions, .term-tab.active .tactions { display: flex; }
 .term-tab .tactions .icon-button { width: 18px; height: 18px; }
 body .term-tab .codicon { font-size: 14px; }
+.term-decoration { font-size: 10px; color: var(--aicode-descriptionForeground); padding: 0 4px; }
 .term-tab input { flex: 1; min-width: 0; height: 18px; font: inherit; color: var(--aicode-input-foreground); background: var(--aicode-input-background); border: 1px solid var(--aicode-focusBorder); outline: none; padding: 0 3px; user-select: text; -webkit-user-select: text; }
 .term-msg { position: absolute; left: 16px; right: 16px; bottom: 8px; font-size: 12px; color: var(--aicode-descriptionForeground); }
 .xterm .xterm-viewport { scrollbar-width: thin; }
@@ -78,6 +79,14 @@ export async function activate(ctx) {
   let stopResize = null;
   let stopPaneDrag = null;
   let swallowTabClick = false;
+  const listeners = new Set();
+  const decorations = new Map();
+  const snapshot = (t) => ({ id: t.id, name: label(t), cwd: t.cwd, exited: t.exited, icon: t.icon });
+  const changed = (type, t) => {
+    for (const fn of listeners) {
+      try { fn({ type, terminal: snapshot(t) }); } catch (e) { console.error("Terminal listener failed", e); }
+    }
+  };
 
   const color = (key, fallback) => getComputedStyle(document.documentElement).getPropertyValue(`--aicode-${key.replace(/\./g, "-")}`).trim() || fallback;
   const theme = () => ({
@@ -364,12 +373,14 @@ export async function activate(ctx) {
       t.pty = await ctx.pty.spawn({
         cwd: t.cwd ?? undefined,
         command: opts.command,
+        env: opts.env,
         args: opts.args ?? (opts.command && /(?:^|\/)(?:zsh|bash|fish|sh|ksh|tcsh|nu)$/.test(opts.command) ? ["-l"] : undefined),
         cols: t.term.cols,
         rows: t.term.rows,
         onData: (data) => t.term.write(data),
         onExit: (code) => {
           t.exited = true;
+          changed("exit", t);
           // A shell that ended cleanly (exit, ⌃D) closes its terminal, as in VS Code; otherwise
           // the output stays to be read, and any key closes it.
           if ((code === 0 || code == null) && !opts.keepOpen && !opts.command) return kill(t, { quiet: true });
@@ -385,6 +396,7 @@ export async function activate(ctx) {
       t.term.write(`\x1b[31m${e}\x1b[0m\r\n`);
       t.exited = true;
     }
+    changed(t.exited ? "exit" : "open", t);
     t.term.onData((data) => t.pty && !t.exited && t.pty.write(data));
     t.term.onResize(({ cols, rows }) => t.pty && !t.exited && t.pty.resize(cols, rows));
     if (opts.input) setTimeout(() => t.pty?.write(opts.input), 300);
@@ -462,6 +474,8 @@ export async function activate(ctx) {
     if (!t) return;
     if (!t.exited) t.pty?.kill();
     t.exited = true;
+    decorations.delete(t.id);
+    changed("close", t);
     t.fileDrop.dispose();
     t.term.dispose();
     t.pane.remove();
@@ -652,67 +666,6 @@ export async function activate(ctx) {
     if (choice) create({ command: choice.path, shellCommand: choice.path });
   };
 
-  const addAgentProfile = async () => {
-    const name = await ctx.window.showInputBox({ prompt: "Agent name", placeholder: "My agent" });
-    if (!name?.trim()) return;
-    const command = await ctx.window.showInputBox({ prompt: "Agent executable (name on PATH or full path)", placeholder: "aider" });
-    if (!command?.trim()) return;
-    const profiles = await ctx.settings.get("agentProfiles", []);
-    await ctx.settings.set("agentProfiles", [...profiles, { name: name.trim(), command: command.trim(), args: [] }]);
-    ctx.window.showInfo(`${name.trim()} added to the terminal agent picker. Optional launch arguments are in Terminal settings.`);
-  };
-
-  /** Reuse the agent mods' CLI setup; no second set of credentials or providers. */
-  const pickAgent = async (inSplit = false, placement = {}) => {
-    const owners = [...new Set(ctx.mods.contributions("chatAgents").filter((c) => ctx.mods.isEnabled(c.mod)).map((c) => c.mod))];
-    const items = [];
-    for (const owner of owners) {
-      try {
-        const exported = await ctx.mods.get(owner);
-        for (const agent of Object.values(exported?.chatAgents ?? {})) {
-          if (!agent?.terminal) continue;
-          const status = await agent.status(true);
-          if (!status.terminal && !status.modes?.includes("cli")) continue;
-          items.push({ label: agent.name, description: status.detail, agent, status, icon: agent.icon ?? "robot" });
-        }
-      } catch (error) {
-        console.warn(`Terminal: could not load ${owner}`, error);
-      }
-    }
-    for (const profile of await ctx.settings.get("agentProfiles", [])) {
-      if (!profile?.name || typeof profile.command !== "string" || !profile.command.trim()) continue;
-      items.push({ label: profile.name, description: profile.command, profile });
-    }
-    const choice = await ctx.window.showQuickPick([
-      ...items,
-      { label: "Add Agent Profile…", description: "Run another agent CLI", add: true },
-      { label: "Manage Agent Mods…", description: "Enable or install agent integrations", manage: true },
-    ], { placeholder: inSplit ? "Open an agent in a split terminal" : "Open an agent in a new terminal" });
-    if (!choice) return;
-    if (choice.add) return addAgentProfile();
-    if (choice.manage) return ctx.commands.execute("mods.manage");
-    let line;
-    if (choice.profile) {
-      const { command, args } = choice.profile;
-      if (args !== undefined && (!Array.isArray(args) || args.some((a) => typeof a !== "string"))) {
-        return ctx.window.showInfo("This agent profile's args must be a list of strings. Update it in Terminal settings.");
-      }
-      line = { command, args: args ?? [] };
-    } else {
-      const agent = choice.agent;
-      let status = choice.status;
-      if (!status.terminal || !status.ready) {
-        await agent.configure?.();
-        status = await agent.status(true);
-      }
-      if (!status.terminal || !status.ready) return ctx.window.showInfo(status.detail || `Configure ${agent.name}'s CLI before opening it in a terminal.`);
-      line = await agent.terminal(status.defaultModel ?? "");
-    }
-    if (!line?.command) return;
-    const opts = { ...line, name: choice.label, icon: choice.icon ?? "robot", keepOpen: true, cwd: (inSplit ? active()?.cwd : null) ?? ctx.workspace.folder() ?? undefined };
-    return inSplit ? split({ ...opts, ...placement }) : create(opts);
-  };
-
   const newMenu = (e) => {
     const r = e.currentTarget.getBoundingClientRect();
     const list = shells.shells.length ? shells.shells : [];
@@ -722,11 +675,7 @@ export async function activate(ctx) {
       { label: "Split Terminal", keybinding: isMac ? "mod+\\" : "ctrl+shift+5", run: () => split() },
       { label: "Split Down", run: () => split({ direction: "below" }) },
       { label: "New Terminal Below Entire Group", run: () => split({ direction: "below", scope: "group" }) },
-      { separator: true, label: "" },
-      { label: "Open Agent…", run: () => pickAgent() },
-      { label: "Open Agent in Split…", run: () => pickAgent(true) },
-      { label: "Open Agent Below Entire Group…", run: () => pickAgent(true, { direction: "below", scope: "group" }) },
-    ]);
+    ], { menu: "terminal/new", context: { id: active()?.id } });
   };
 
   const termMenu = (e, t) => {
@@ -748,7 +697,6 @@ export async function activate(ctx) {
       { label: "New Terminal Below Entire Group", run: () => split({ direction: "below", scope: "group" }) },
       { label: "Move Pane…", run: () => movePane(t) },
       { label: "New Terminal", keybinding: "ctrl+shift+`", run: () => create() },
-      { label: "Open Agent in Split…", run: () => pickAgent(true) },
       { separator: true, label: "" },
       { label: "Kill Terminal", run: () => kill(t) },
     ], { menu: "terminal/context", context: { id: t.id, selection: sel ? t.term.getSelection() : "" } });
@@ -833,6 +781,7 @@ export async function activate(ctx) {
             h("span", { class: "branch" }, branch),
             icon(t.icon),
             nameEl,
+            ...(decorations.get(t.id) ? [h("span", { class: "term-decoration", title: decorations.get(t.id).tooltip ?? "" }, decorations.get(t.id).text)] : []),
             h(
               "span",
               { class: "tactions", onclick: (e) => e.stopPropagation() },
@@ -850,7 +799,7 @@ export async function activate(ctx) {
     actions: [
       { icon: "add", title: "New Terminal (⌃⇧`)", run: () => create(), dropdownTitle: "Launch Profile…", dropdown: (e) => newMenu(e) },
       { icon: "split-horizontal", title: `Split Right (${isMac ? "⌘\\" : "Ctrl+Shift+5"})`, run: () => split(), dropdownTitle: "Split Direction and Layout…", dropdown: splitMenu },
-      { icon: "robot", title: "Open Agent…", run: () => pickAgent() },
+      ...ctx.mods.contributions("terminalActions").map((action) => ({ icon: action.icon, title: action.title, run: () => ctx.commands.execute(action.command) })),
       { icon: "trash", title: "Kill Terminal", run: () => kill() },
       {
         icon: "ellipsis",
@@ -897,9 +846,6 @@ export async function activate(ctx) {
 
   ctx.commands.register("terminal.new", (opts) => create(opts && typeof opts === "object" ? opts : {}));
   ctx.commands.register("terminal.newWithProfile", pickShell);
-  ctx.commands.register("terminal.newAgent", () => pickAgent());
-  ctx.commands.register("terminal.splitAgent", () => pickAgent(true));
-  ctx.commands.register("terminal.addAgentProfile", addAgentProfile);
   ctx.commands.register("terminal.split", () => split());
   ctx.commands.register("terminal.splitDown", () => split({ direction: "below" }));
   ctx.commands.register("terminal.splitUp", () => split({ direction: "above" }));
@@ -953,9 +899,43 @@ export async function activate(ctx) {
     stopResize?.();
     stopPaneDrag?.();
     themeObserver.disconnect();
+    listeners.clear();
+    decorations.clear();
     for (const t of allTerms()) { t.fileDrop.dispose(); t.pty?.kill(); t.term.dispose(); }
   } });
 
   /** For other mods: open a terminal running a command (an agent CLI, a script). */
-  return { open: (opts) => create({ keepOpen: true, ...opts }), split: (opts) => split(opts), sendText };
+  return {
+    open: (opts) => create({ keepOpen: true, ...opts }), split: (opts) => split(opts), sendText,
+    list: () => allTerms().map(snapshot),
+    active: () => active() ? snapshot(active()) : null,
+    paste: async (id, text, { run = false } = {}) => {
+      const t = allTerms().find((t) => t.id === id);
+      if (!t?.pty || t.exited) throw new Error("This terminal is no longer running.");
+      if (typeof text !== "string" || !text) return;
+      await ctx.views.reveal("terminal", false);
+      t.term.paste(text);
+      if (run) await t.pty.write("\r");
+      focusTerm(t);
+    },
+    readOutput: (id, { lines = 100 } = {}) => {
+      const t = allTerms().find((t) => t.id === id);
+      if (!t) throw new Error("This terminal is closed.");
+      const buffer = t.term.buffer.active;
+      const count = Number.isFinite(lines) ? Math.max(1, Math.min(1000, Math.floor(lines))) : 100;
+      const output = [];
+      for (let i = Math.max(0, buffer.length - count); i < buffer.length; i++) output.push(buffer.getLine(i)?.translateToString(true) ?? "");
+      return output.join("\n").slice(-64000);
+    },
+    onDidChange: (fn) => {
+      listeners.add(fn);
+      return { dispose: () => listeners.delete(fn) };
+    },
+    setDecoration: (id, value) => {
+      if (!allTerms().some((t) => t.id === id)) return;
+      if (value) decorations.set(id, { ...value });
+      else decorations.delete(id);
+      paintTabs();
+    },
+  };
 }
