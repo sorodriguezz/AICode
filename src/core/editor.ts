@@ -1215,6 +1215,7 @@ export class EditorService {
   }
 
   private renderTabs() {
+    this.wb.setNavigationState(!!this.navigationTarget(-1), !!this.navigationTarget(1));
     this.onWillRenderTabs.fire();
     const host = this.wb.editorTabs;
     // Like VS Code: an empty editor area has no tab bar, only the watermark.
@@ -1454,8 +1455,9 @@ export class EditorService {
     if (i < 0) return true;
     this.docs.splice(i, 1);
     this.knownTabs.delete(doc.id);
+    this.historyIndex -= this.history.slice(0, this.historyIndex + 1).filter((id) => id === doc.id).length;
     this.history = this.history.filter((id) => id !== doc.id);
-    this.historyIndex = this.history.length - 1;
+    this.historyIndex = Math.min(Math.max(this.historyIndex, 0), this.history.length - 1);
     if (doc.kind === "text") {
       if (this.editor.getModel() === doc.model) this.editor.setModel(null);
       doc.model.dispose();
@@ -1465,7 +1467,7 @@ export class EditorService {
     }
     if (this.active === doc) {
       this.active = null;
-      const lastId = this.history[this.history.length - 1];
+      const lastId = this.history[this.historyIndex];
       const next = this.docs.find((d) => d.id === lastId) ?? this.docs[Math.min(i, this.docs.length - 1)] ?? null;
       if (next) this.activate(next, false);
       else {
@@ -1790,13 +1792,19 @@ export class EditorService {
     this.activate(this.docs[(i + step + this.docs.length) % this.docs.length]);
   }
 
-  private navigate(step: number) {
-    const next = this.historyIndex + step;
-    if (next < 0 || next >= this.history.length) return;
-    const doc = this.docs.find((d) => d.id === this.history[next]);
-    if (!doc) return;
-    this.historyIndex = next;
-    this.activate(doc, false);
+  private navigationTarget(step: -1 | 1): { index: number; doc: Doc } | null {
+    for (let index = this.historyIndex + step; index >= 0 && index < this.history.length; index += step) {
+      const doc = this.docs.find((d) => d.id === this.history[index]);
+      if (doc && doc !== this.active) return { index, doc };
+    }
+    return null;
+  }
+
+  private navigate(step: -1 | 1) {
+    const target = this.navigationTarget(step);
+    if (!target) return;
+    this.historyIndex = target.index;
+    this.activate(target.doc, false);
   }
 
   async pickLanguage() {

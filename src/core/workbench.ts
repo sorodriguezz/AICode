@@ -223,6 +223,7 @@ export class Workbench {
   private statusLeft: HTMLElement;
   private statusRight: HTMLElement;
   private commandCenterLabel: HTMLElement;
+  private navigationButtons: { back: HTMLButtonElement; forward: HTMLButtonElement };
   private toggles: Record<ViewLocation, HTMLButtonElement>;
   private views = new Map<string, ViewEntry>();
   /** Whether each part is on screen, as last drawn (animations run between the two states). */
@@ -291,6 +292,8 @@ export class Workbench {
     );
     const back = iconButton("arrow-left", "Go Back", () => commands.execute("editor.navigateBack"));
     const forward = iconButton("arrow-right", "Go Forward", () => commands.execute("editor.navigateForward"));
+    this.navigationButtons = { back, forward };
+    this.setNavigationState(false, false);
     this.toggles = {
       sidebar: iconButton("layout-sidebar-left", "Toggle Primary Side Bar", () => this.toggle("sidebar")),
       panel: iconButton("layout-panel", "Toggle Panel", () => this.toggle("panel")),
@@ -413,6 +416,12 @@ export class Workbench {
 
   setTitle(text: string) {
     this.commandCenterLabel.textContent = text;
+  }
+
+  /** Navigation is available only when the editor has a destination in that direction. */
+  setNavigationState(canGoBack: boolean, canGoForward: boolean) {
+    this.navigationButtons.back.disabled = !canGoBack;
+    this.navigationButtons.forward.disabled = !canGoForward;
   }
 
   // ---------- views ----------

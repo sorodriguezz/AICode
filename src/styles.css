@@ -1077,14 +1077,6 @@ body .modal-editor-title .codicon { font-size: 14px; }
 .modal-editor-actions .icon-button { width: 22px; height: 22px; color: inherit; }
 .modal-editor-action-separator { width: 1px; height: 16px; margin: 0 4px; background: currentColor; opacity: 0.3; }
 .modal-editor-content { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--aicode-editor-background); }
-.modal-editor-sash { position: absolute; z-index: 2; }
-.modal-editor-sash.n, .modal-editor-sash.s { left: 0; right: 0; height: 4px; cursor: ns-resize; }
-.modal-editor-sash.n { top: 0; }
-.modal-editor-sash.s { bottom: 0; }
-.modal-editor-sash.e, .modal-editor-sash.w { top: 0; bottom: 0; width: 4px; cursor: ew-resize; }
-.modal-editor-sash.e { right: 0; }
-.modal-editor-sash.w { left: 0; }
-.modal-editor.maximized .modal-editor-sash { display: none; }
 
 /* Right of the command center: the pin (always on top) and the layout controls. */
 .titlebar-right { justify-content: space-between; padding-left: 4px; }
