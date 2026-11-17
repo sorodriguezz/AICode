@@ -1090,6 +1090,11 @@ body .modal-editor-title .codicon { font-size: 14px; }
 .titlebar-right { justify-content: space-between; padding-left: 4px; }
 .titlebar-right > .group { display: flex; align-items: center; gap: 2px; }
 
+/* Individual floating windows keep the pin at the right edge. */
+:root.single-window .titlebar-right { justify-content: flex-end; }
+:root.single-window .titlebar-right > [data-part="titleBar.layoutControls"],
+:root.single-window .titlebar-right > .title-items { display: none; }
+
 /* Windows and Linux: the window has no frame, so the title bar carries the app's icon, the menus
    and the window buttons, laid out as VS Code's (titlebar.ts). macOS is untouched. */
 :root:not([data-platform="mac"]) .titlebar { grid-template-columns: 1fr minmax(160px, 500px) 1fr; }

@@ -79,6 +79,9 @@ async function boot() {
   // restart, else from whoever opened it.
   const takenSpec = await invoke<WindowSpec | null>("window_take_spec").catch(() => null);
   const spec: WindowSpec | null = session?.window ?? takenSpec ?? null;
+  // Detached editors and single-view windows only need the pin in their title bar.
+  const singleWindow = !!spec?.view || spec?.layout === "editor" || spec?.layout === "view";
+  document.documentElement.classList.toggle("single-window", singleWindow);
   const freshSpec = !session?.window && !!takenSpec;
   const layout: WindowLayout | null = spec ? resolveLayout(spec) : null;
   if (layout?.settings) config.setWindowLayer({ core: layout.settings });

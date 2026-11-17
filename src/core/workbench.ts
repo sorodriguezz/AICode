@@ -297,7 +297,7 @@ export class Workbench {
       secondary: iconButton("layout-sidebar-right", "Toggle Secondary Side Bar", () => this.toggle("secondary")),
     };
     commandCenter.dataset.part = "titleBar.commandCenter";
-    this.pinButton = iconButton("pin", "Keep on Top", () => commands.execute("window.toggleAlwaysOnTop"));
+    this.pinButton = iconButton("pinned", "Keep on Top", () => commands.execute("window.toggleAlwaysOnTop"));
     this.pinButton.dataset.part = "titleBar.pin";
     this.pinButton.style.display = "none";
     this.titleHosts = {
