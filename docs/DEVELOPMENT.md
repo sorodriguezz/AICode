@@ -10,6 +10,8 @@ Use Node.js LTS, pnpm, and the stable Rust toolchain. The release workflow lists
 pnpm install
 pnpm tauri dev          # debug build; bundled mods load live from ./mods
 pnpm check:mods         # validate the bundled mods
+pnpm test:terminal      # file drops, nested layouts, resizing, pane moves, focus and agent launches
+pnpm test:git           # operation cleanup, cancellation, timeouts and failed status refreshes
 (cd src-tauri && cargo test --locked)
 pnpm tauri build        # this OS's bundles in src-tauri/target/release/bundle
                         # (macOS .app/.dmg, Windows NSIS -setup.exe, Linux AppImage/.deb/.rpm)

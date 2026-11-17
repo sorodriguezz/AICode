@@ -28,6 +28,7 @@ import { h, icon, iconButton, clear, basename, dirname, joinPath, isAbsolute, pa
 import { ThemeEntry, VsTheme } from "./theme";
 import type { GrammarSource } from "./textmate";
 import { Emitter } from "./events";
+import { fileDrops, type FileDropSpec } from "./fileDrops";
 import { byLayer, insertStyle, setModSources } from "./layers";
 import { Declarative, checkActions } from "./declarative";
 import { fileIconEl, folderIconEl, registerIconTheme, drawIconThemeWith } from "./fileIcons";
@@ -562,13 +563,15 @@ export class ModHost {
         env?: Record<string, string>;
         /** Keep the input open: write to the program while it runs with `write()`, close it with `end()`. */
         keepStdin?: boolean;
+        /** Stop this program's children too when killed (e.g. Git's SSH transport). */
+        killTree?: boolean;
         /** "base64": `onData` gets the raw bytes (a Uint8Array), for programs that print binary. */
         encoding?: "utf8" | "base64";
         onData?: (data: any, stream: "stdout" | "stderr") => void;
         onExit?: (code: number | null) => void;
       } = {},
     ) => {
-      const id = await call<number>("proc_spawn", { program, args, cwd: opts.cwd ?? workspace.folder ?? undefined, stdin: opts.stdin, env: opts.env, keepStdin: !!opts.keepStdin, encoding: opts.encoding });
+      const id = await call<number>("proc_spawn", { program, args, cwd: opts.cwd ?? workspace.folder ?? undefined, stdin: opts.stdin, env: opts.env, keepStdin: !!opts.keepStdin, killTree: !!opts.killTree, encoding: opts.encoding });
       let resolveDone: (code: number | null) => void;
       const done = new Promise<number | null>((r) => (resolveDone = r));
       // A quick program may have exited already: its buffered exit then arrives inside onStream,
@@ -1120,6 +1123,8 @@ export class ModHost {
         },
         /** Makes an element take dragged views and tabs: `{ kinds, over(item, e), drop(item, e), hoverClass }`. */
         addDropTarget: (el: HTMLElement, spec: DropTargetSpec) => track(wb.addDropTarget(el, spec)),
+        /** Takes files dropped from the OS before the default open-in-editor handler. */
+        addFileDropTarget: (el: HTMLElement, spec: FileDropSpec) => track(fileDrops.add(el, spec)),
         onDidMoveView: (fn: (e: ViewMove) => void) => track(wb.onDidMoveView.event(fn)),
         onDidChangeLayout: (fn: () => void) => track(wb.onDidChangeLayout.event(fn)),
         /** Around each redraw of the activity bar and part headers (measure before, animate after). */

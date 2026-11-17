@@ -18,6 +18,7 @@ import { configureFileIcons, setIconTheme, iconThemes, currentIconTheme } from "
 import { quickInput, fuzzyScore, highlight, pick, notify, QuickItem, dialog, inputBox } from "./core/widgets";
 import { basename, h, icon, isAbsolute, uiPath } from "./core/ui";
 import { motionEnabled, setMotion } from "./core/motion";
+import { fileDrops } from "./core/fileDrops";
 import { openProfiles, openSettings, switchProfile, createProfile, importProfile, exportProfile, ProfileView } from "./core/profiles";
 import { ModHost as ModHostClass } from "./core/mods";
 import { initUpdates, checkForUpdates, checkOnStartup } from "./core/updates";
@@ -357,13 +358,27 @@ async function boot() {
   openLater = (paths) => openPaths(paths);
 
   // Drag and drop of files and folders from Finder (or anywhere) onto the window.
-  const dropHint = h("div", { class: "drop-overlay" }, h("div", { class: "drop-card" }, icon("files"), h("span", null, "Drop to open")));
+  const dropLabel = h("span", null, "Drop to open");
+  const dropHint = h("div", { class: "drop-overlay" }, h("div", { class: "drop-card" }, icon("files"), dropLabel));
   document.body.append(dropHint);
   await getCurrentWebview().onDragDropEvent((e) => {
     const p = e.payload;
-    if (p.type === "enter" || p.type === "over") dropHint.classList.add("visible");
-    else dropHint.classList.remove("visible");
-    if (p.type === "drop" && p.paths.length) openPaths(p.paths.map((x) => uiPath(x)), true);
+    if (p.type === "enter" || p.type === "over") {
+      const target = fileDrops.hover(p.position);
+      dropLabel.textContent = target?.spec.label ?? "Drop to open";
+      dropHint.classList.toggle("targeted", !!target);
+      dropHint.classList.add("visible");
+    } else {
+      dropHint.classList.remove("visible", "targeted");
+      fileDrops.clear();
+    }
+    if (p.type === "drop" && p.paths.length) {
+      const paths = p.paths.map((x) => uiPath(x));
+      const target = fileDrops.at(p.position);
+      // A target owns the drop even if it fails: never open the files behind the user's back.
+      Promise.resolve().then(() => target ? target.spec.drop(paths) : openPaths(paths, true))
+        .catch((error) => notify("error", `Could not drop files: ${error}`));
+    }
   });
 
   // Hot exit: the session (unsaved text included) is written as you type, so quitting, a crash or

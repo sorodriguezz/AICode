@@ -46,6 +46,7 @@ struct Proc {
     program: String,
     pid: u32,
     child: Arc<Mutex<std::process::Child>>,
+    kill_tree: bool,
     /// Kept open when the mod asked to write to the program while it runs (`keepStdin`).
     stdin: Option<Arc<Mutex<std::process::ChildStdin>>>,
 }
@@ -160,13 +161,20 @@ pub fn proc_spawn(
     stdin: Option<String>,
     env: Option<HashMap<String, String>>,
     keep_stdin: Option<bool>,
+    kill_tree: Option<bool>,
     encoding: Option<String>,
 ) -> Result<u32, String> {
     require(&mods, &mod_id, "process")?;
     let keep_stdin = keep_stdin.unwrap_or(false);
+    let kill_tree = kill_tree.unwrap_or(false);
     let base64_out = encoding.as_deref() == Some("base64");
     let resolved = which(&program).ok_or_else(|| format!("{program} was not found on this machine"))?;
     let mut cmd = command(&resolved);
+    #[cfg(unix)]
+    if kill_tree {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     cmd.args(&args)
         .current_dir(default_cwd(cwd))
         .env("PATH", login_path())
@@ -195,7 +203,7 @@ pub fn proc_spawn(
     let pid = child.id();
     let child = Arc::new(Mutex::new(child));
     let label = window.label().to_string();
-    procs.procs.lock().unwrap().insert(id, Proc { owner: mod_id, window: label.clone(), program, pid, child: child.clone(), stdin: kept.map(|k| Arc::new(Mutex::new(k))) });
+    procs.procs.lock().unwrap().insert(id, Proc { owner: mod_id, window: label.clone(), program, pid, child: child.clone(), kill_tree, stdin: kept.map(|k| Arc::new(Mutex::new(k))) });
 
     let mut readers = Vec::new();
     for (stream, pipe) in [("stdout", stdout.map(|p| Box::new(p) as Box<dyn Read + Send>)), ("stderr", stderr.map(|p| Box::new(p) as Box<dyn Read + Send>))] {
@@ -273,10 +281,33 @@ pub fn proc_end(procs: State<'_, ProcState>, id: u32) -> Result<(), String> {
 
 #[tauri::command]
 pub fn proc_kill(procs: State<'_, ProcState>, id: u32) -> Result<(), String> {
-    if let Some(p) = procs.procs.lock().unwrap().get(&id) {
-        let _ = p.child.lock().unwrap().kill();
+    let target = procs.procs.lock().unwrap().get(&id).map(|p| (p.child.clone(), p.pid, p.kill_tree));
+    if let Some((child, pid, tree)) = target {
+        terminate_process(&child, pid, tree).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+fn terminate_process(child: &Arc<Mutex<std::process::Child>>, _pid: u32, tree: bool) -> std::io::Result<()> {
+    #[cfg(unix)]
+    if tree {
+        // This process was started in its own group. Killing only Git leaves SSH/credential
+        // helpers holding its pipes open, so proc://exit (and the UI's progress) never arrives.
+        let result = unsafe { libc::kill(-(_pid as libc::pid_t), libc::SIGKILL) };
+        if result != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) { return Err(error); }
+        }
+        return Ok(());
+    }
+    #[cfg(windows)]
+    if tree {
+        let status = command("taskkill").args(["/PID", &_pid.to_string(), "/T", "/F"])
+            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status()?;
+        if status.success() { return Ok(()); }
+    }
+    let _ = tree;
+    child.lock().unwrap().kill()
 }
 
 /// Opens a terminal. Output arrives as `pty://data`, the end as `pty://exit`.
@@ -534,7 +565,7 @@ pub fn kill_owned_by(app: &AppHandle, window: &str) {
         }
     });
     for p in state.procs.lock().unwrap().values().filter(|p| p.window == window) {
-        let _ = p.child.lock().unwrap().kill();
+        let _ = terminate_process(&p.child, p.pid, p.kill_tree);
     }
 }
 
@@ -544,7 +575,7 @@ pub fn kill_all(app: &AppHandle) {
         let _ = pty.killer.kill();
     }
     for (_, p) in state.procs.lock().unwrap().drain() {
-        let _ = p.child.lock().unwrap().kill();
+        let _ = terminate_process(&p.child, p.pid, p.kill_tree);
     }
 }
 
@@ -564,6 +595,32 @@ mod tests {
     #[test]
     fn login_path_finds_sh() {
         assert!(which("sh").is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancelling_process_tree_closes_pipes_inherited_by_children() {
+        use std::os::unix::process::CommandExt;
+        use std::time::Duration;
+        let mut cmd = command("/bin/sh");
+        cmd.args(["-c", "sleep 30 & printf ready; wait"])
+            .process_group(0).stdout(Stdio::piped()).stderr(Stdio::null());
+        let mut process = cmd.spawn().unwrap();
+        let pid = process.id();
+        let mut stdout = process.stdout.take().unwrap();
+        let mut ready = [0; 5];
+        stdout.read_exact(&mut ready).unwrap();
+        assert_eq!(&ready, b"ready");
+        let child = Arc::new(Mutex::new(process));
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut rest = Vec::new();
+            let result = stdout.read_to_end(&mut rest);
+            let _ = tx.send(result);
+        });
+        terminate_process(&child, pid, true).unwrap();
+        assert!(rx.recv_timeout(Duration::from_secs(2)).unwrap().is_ok(), "a child kept the output pipe open");
+        assert!(!child.lock().unwrap().wait().unwrap().success());
     }
 }
 

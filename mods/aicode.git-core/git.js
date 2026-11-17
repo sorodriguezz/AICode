@@ -2,21 +2,48 @@
 // machine-readable output (`--porcelain=v2 -z`), never through a library of our own.
 
 /** `onRun(args, code, stderr, ms)`: every git that ran (the "Git Output"). */
-export function makeGit(ctx, onRun = null) {
+export function makeGit(ctx, onRun = null, { remoteTimeoutMs = 120000 } = {}) {
   /** Runs git; resolves { code, stdout, stderr } (never rejects on a non-zero exit). */
-  const run = async (args, { cwd, stdin, quiet = false } = {}) => {
+  const run = async (args, { cwd, stdin, quiet = false, signal, timeoutMs = quiet ? 30000 : ["fetch", "pull", "push", "clone", "ls-remote"].includes(args[0]) ? remoteTimeoutMs : 0 } = {}) => {
+    const aborted = () => Object.assign(new Error("Git operation cancelled."), { name: "AbortError" });
+    if (signal?.aborted) throw aborted();
     const started = performance.now();
     let stdout = "";
     let stderr = "";
     const proc = await ctx.process.spawn("git", ["-c", "core.quotepath=off", "-c", "color.ui=false", ...args], {
       cwd,
       stdin,
+      killTree: true,
       env: { GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: quiet ? "0" : "1", LC_ALL: "C" },
       onData: (data, stream) => (stream === "stdout" ? (stdout += data) : (stderr += data)),
     });
-    const code = await proc.done;
-    onRun?.(args, code, stderr, Math.round(performance.now() - started));
-    return { code, stdout, stderr };
+    let timer;
+    let onAbort;
+    let interruption = null;
+    const interrupted = new Promise((_, reject) => {
+      const stop = (error) => {
+        if (interruption) return;
+        interruption = error;
+        // Wait for the process tree to stop before allowing another Git operation.
+        Promise.resolve().then(() => proc.kill()).then(() => proc.done).then(() => reject(error), reject);
+      };
+      onAbort = () => stop(aborted());
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) onAbort(); // cancellation may have arrived during spawn
+      if (timeoutMs > 0) timer = setTimeout(() => stop(Object.assign(new Error(`git ${args[0]} timed out after ${Math.round(timeoutMs / 1000)} seconds. Check your connection and Git authentication, then retry.`), { name: "TimeoutError" })), timeoutMs);
+    });
+    try {
+      const code = await Promise.race([proc.done, interrupted]);
+      if (interruption) throw interruption;
+      onRun?.(args, code, stderr, Math.round(performance.now() - started));
+      return { code, stdout, stderr };
+    } catch (error) {
+      onRun?.(args, null, `${stderr}\n${error.message ?? error}`, Math.round(performance.now() - started));
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    }
   };
 
   const ok = async (args, opts) => {

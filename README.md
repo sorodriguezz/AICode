@@ -25,6 +25,16 @@ Core editing works offline with no account setup. AICode uses Tauri and your ope
 
 Use **Settings → Updates → Check for Updates** to update an installed copy.
 
+In **Source Control**, fetch, pull, and push show **Cancel Operation** while running. Remote operations stop with an error after 120 seconds; adjust the limit in **Settings → Source Control (Git) → remoteTimeout**. Details appear in **Git: Show Git Output**.
+
+In **Terminal**, drag images, documents, or folders from your system's file manager onto a pane to paste their paths into the current prompt, including agent CLIs. Multiple files are supported, and the prompt stays ready for review before you submit it. Drag the separator to resize panes, double-click it to equalize them, or focus it and use the arrow keys. A subtle border marks the active pane.
+
+On macOS, **Option (⌥)** types `@`, `|`, braces, brackets, and accents using the same keyboard layout as the editor. **Option + ←/→** still moves the cursor by word.
+
+Use the split button's dropdown to split right, left, up, or down. **New Terminal Below Entire Group** adds a full-width terminal below the existing layout. With four terminals open, **Arrange Panes… → 3 Above + 1 Wide Below** creates that arrangement; equal rows, columns, and a grid are also available. Drag an entry from the terminal list onto a pane edge to move it there, or onto an outer group edge to span the group. A preview marks the destination; **Esc** cancels. The **Move Pane…** context menu offers the same moves without dragging. Rearranging keeps existing processes and their output.
+
+The robot button and **Terminal: Open Agent…** launch enabled agents' CLIs, including Claude, Codex, Gemini, and OpenCode. Use **Open Agent in Split…** to launch one beside the current terminal. **Add Agent Profile…** adds other executables; optional arguments live in the `Terminal → agentProfiles` setting.
+
 ## Make it yours
 
 Mods can add commands, snippets, themes, and panels. A single JSON file is enough to build a launcher for your project commands. Use JavaScript when you need a custom view or deeper editor integration. Export a mod as an `.aicode-mod` file or share a profile, including its mods, as an `.aicode-profile` file.

@@ -666,6 +666,7 @@ body .profile-current .mod-icon .codicon { font-size: 24px; }
   opacity: 0; transition: opacity .08s;
 }
 .drop-overlay.visible { opacity: 1; }
+.drop-overlay.targeted { background: transparent; outline: none; }
 .drop-card {
   display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-radius: 8px;
   background: var(--aicode-editorWidget-background); border: 1px solid var(--aicode-widget-border);

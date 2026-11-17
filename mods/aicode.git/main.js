@@ -14,6 +14,7 @@ const STYLE = `
 .scm-input { padding: 2px 12px 8px 20px; }
 .scm-input textarea { width: 100%; min-height: 30px; max-height: 200px; resize: none; display: block; }
 .scm-input .btn { margin-top: 6px; }
+.scm-cancel { width: 100%; }
 /* Like VS Code: Commit with its options behind a chevron set into the same button. */
 .scm-commit { display: flex; margin-top: 6px; }
 .scm-commit .btn { margin-top: 0; }
@@ -61,12 +62,13 @@ export async function activate(ctx) {
   // "Show Git Output": every git command this mod ran, with how long it took and what it said.
   const output = [];
   const outputWatchers = new Set();
+  const remoteTimeoutMs = Math.min(3600, Math.max(10, Number(await ctx.settings.get("remoteTimeout", 120)) || 120)) * 1000;
   const git = makeGit(ctx, (args, code, stderr, ms) => {
     const t = new Date().toLocaleTimeString([], { hour12: false });
     output.push(`${t} > git ${args.join(" ")} [${ms}ms]${code ? ` (exit ${code})` : ""}${stderr.trim() ? `\n${stderr.trim()}` : ""}`);
     if (output.length > 3000) output.splice(0, 1000);
     outputWatchers.forEach((f) => f());
-  });
+  }, { remoteTimeoutMs });
   const { diffTab, openCommitDiff } = service.makeDiffTools(ctx, git);
   const style = document.createElement("style");
   style.textContent = STYLE;
@@ -84,6 +86,7 @@ export async function activate(ctx) {
   let busy = "";
   /** The running operation talks to the remote (fetch, pull, push): the sync icon turns. */
   let busyRemote = false;
+  let operationController = null;
   const collapsed = new Set();
   // View & Sort, as VS Code: the changes as a list (each with its folder) or a tree of folders.
   let viewMode = await ctx.settings.get("viewMode", "list"); // "list" | "tree"
@@ -131,18 +134,28 @@ export async function activate(ctx) {
     if (busy) return; // one at a time: a second click while fetching does nothing
     busy = label;
     busyRemote = remote;
+    operationController = remote ? new AbortController() : null;
+    let succeeded = false;
     render();
     paintStatus();
     try {
-      await fn();
+      await fn(operationController?.signal);
+      succeeded = true;
     } catch (e) {
-      ctx.window.showError(`Git: ${String(e.message ?? e)}`);
+      if (e.name === "AbortError") ctx.window.showInfo(e.message);
+      else ctx.window.showError(`Git: ${String(e.message ?? e)}`);
     } finally {
       busy = "";
       busyRemote = false;
-      await service.refreshAfterChange();
+      operationController = null;
+      // Completion must repaint even if refreshing status is slow or fails.
+      render();
+      paintStatus();
+      Promise.resolve().then(() => service.refreshAfterChange()).catch((e) => ctx.window.showError(`Git refresh: ${e.message ?? e}`));
     }
+    return succeeded;
   };
+  const cancelOperation = () => operationController?.abort();
 
   const stage = (paths) => op("Staging…", () => git.ok(["add", "-A", "--", ...paths], { cwd: root }));
   const unstage = (paths) => op("Unstaging…", async () => {
@@ -289,15 +302,15 @@ export async function activate(ctx) {
 
   const sync = async (kind) => {
     if (!root) return;
-    await op(kind === "fetch" ? "Fetching…" : kind === "pull" ? "Pulling…" : "Pushing…", async () => {
-      if (kind === "fetch") await git.ok(["fetch"], { cwd: root });
-      else if (kind === "pull") await git.ok(["pull", "--ff-only"], { cwd: root });
-      else if (status?.upstream) await git.ok(["push"], { cwd: root });
+    return op(kind === "fetch" ? "Fetching…" : kind === "pull" ? "Pulling…" : "Pushing…", async (signal) => {
+      if (kind === "fetch") await git.ok(["fetch"], { cwd: root, signal });
+      else if (kind === "pull") await git.ok(["pull", "--ff-only"], { cwd: root, signal });
+      else if (status?.upstream) await git.ok(["push"], { cwd: root, signal });
       else {
-        const remotes = (await git.ok(["remote"], { cwd: root })).split("\n").filter(Boolean);
+        const remotes = (await git.ok(["remote"], { cwd: root, signal })).split("\n").filter(Boolean);
         if (!remotes.length) throw new Error("This repository has no remote to publish to.");
         const remote = remotes.includes("origin") ? "origin" : remotes[0];
-        await git.ok(["push", "-u", remote, status.branch], { cwd: root });
+        await git.ok(["push", "-u", remote, status.branch], { cwd: root, signal });
       }
     }, { remote: true });
   };
@@ -305,7 +318,7 @@ export async function activate(ctx) {
   // ---------- more operations (the "…" menu, VS Code's) ----------
 
   /** A git operation against a remote: the sync icon turns while it runs. */
-  const remoteOp = (label, args) => root && op(label, () => git.ok(args, { cwd: root }), { remote: true });
+  const remoteOp = (label, args) => root && op(label, (signal) => git.ok(args, { cwd: root, signal }), { remote: true });
   const localOp = (label, args) => root && op(label, () => git.ok(args, { cwd: root }));
 
   const pickRemote = async (placeholder) => {
@@ -499,8 +512,8 @@ export async function activate(ctx) {
     const name = url.replace(/\/+$/, "").split(/[/:]/).pop().replace(/\.git$/, "") || "repository";
     const dest = `${parent}/${name}`;
     let ok = false;
-    await op("Cloning…", async () => {
-      await git.ok(["clone", url, dest], { cwd: parent });
+    await op("Cloning…", async (signal) => {
+      await git.ok(["clone", url, dest], { cwd: parent, signal });
       ok = true;
     }, { remote: true });
     if (ok) ctx.window.showInfo(`Cloned ${name}.`, { label: "Open", run: () => ctx.workspace.setFolder(dest) });
@@ -571,6 +584,7 @@ export async function activate(ctx) {
       { label: "Clone", disabled: !!busy, run: clone },
       { label: "Checkout to…", disabled: no, run: checkout },
       { label: "Fetch", disabled: no, run: () => sync("fetch") },
+      { label: "Cancel Git Operation", disabled: !busyRemote, run: cancelOperation },
       sep,
       {
         label: "Commit",
@@ -949,7 +963,7 @@ export async function activate(ctx) {
         { class: "scm-commit" },
         h("button", { class: "btn commit-main", disabled: !!busy, onclick: () => commit() }, icon(busy ? "loading" : "check", busy ? "codicon-modifier-spin" : ""), busy || "Commit"),
         h("button", { class: "btn commit-more", title: "More Actions…", disabled: !!busy, onclick: commitMenu }, icon("chevron-down")),
-      )),
+      ), busyRemote ? h("button", { class: "btn secondary scm-cancel", onclick: cancelOperation }, icon("debug-stop"), "Cancel Operation") : null),
       section("merge", "Merge Changes", g.merge, [iconButton("add", "Stage All Merge Changes", () => stage(g.merge.map((f) => f.path)))]),
       section("staged", "Staged Changes", g.staged, [iconButton("remove", "Unstage All Changes", () => unstage(g.staged.map((f) => f.path)))]),
       section("changes", "Changes", unstagedAll, [
@@ -991,12 +1005,14 @@ export async function activate(ctx) {
   ctx.commands.register("git.fetch", () => sync("fetch"));
   ctx.commands.register("git.pull", () => sync("pull"));
   ctx.commands.register("git.push", () => sync("push"));
+  ctx.commands.register("git.cancelOperation", cancelOperation);
   ctx.commands.register("git.sync", async () => {
     if (busy) return;
     if (!status?.upstream) return sync("push");
-    if (status.behind) await sync("pull");
-    if (status?.ahead) await sync("push");
-    if (!status?.ahead && !status?.behind) await sync("fetch");
+    const { ahead, behind } = status;
+    if (behind && !(await sync("pull"))) return;
+    if (ahead) await sync("push");
+    if (!ahead && !behind) await sync("fetch");
   });
   ctx.commands.register("git.acceptCommitMessage", acceptMessage);
   ctx.commands.register("git.stash", stash);
@@ -1056,6 +1072,7 @@ export async function activate(ctx) {
   });
 
   ctx.subscriptions.push(service.onDidChangeStatus(updateStatus));
+  ctx.subscriptions.push({ dispose: () => operationController?.abort() });
   await refresh();
   return { refresh, status: () => status, root: () => root };
 }

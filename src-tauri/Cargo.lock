@@ -36,6 +36,7 @@ dependencies = [
  "dirs 5.0.1",
  "ignore",
  "keyring",
+ "libc",
  "notify",
  "objc2",
  "objc2-app-kit",

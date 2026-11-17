@@ -1,10 +1,12 @@
 // Terminal: xterm.js in the panel, a real PTY in Rust. Works like VS Code's: several terminals in a
-// tab list, split side by side, a shell picker, ⌘-click on file paths and URLs, the usual macOS
+// tab list, nested rows and columns, a shell picker, ⌘-click on file paths and URLs, the usual macOS
 // keys (⌘K clears, ⌘← / ⌘→ / ⌘⌫ edit the line). Ships its own copy of xterm (vendor/), so the core
 // stays free of it until this mod is used.
 
 import { Terminal } from "./vendor/xterm.mjs";
 import { FitAddon } from "./vendor/addon-fit.mjs";
+import { fileReferences, resizePair } from "./interaction.js";
+import { insertPane, removePane, layoutTerms, arrangeLayout } from "./layout.js";
 
 const isMac = navigator.platform.toLowerCase().includes("mac");
 
@@ -13,9 +15,25 @@ const STYLE = `
 .term-stage { flex: 1 1 auto; min-width: 0; position: relative; }
 .term-group { position: absolute; inset: 0; display: none; }
 .term-group.active { display: flex; }
-.term-pane { position: relative; flex: 1 1 0; min-width: 60px; }
-.term-pane + .term-pane { border-left: 1px solid var(--aicode-terminal-border, var(--aicode-panel-border)); }
-.term-pane .xterm-host { position: absolute; inset: 4px 0 0 16px; }
+.term-split { position: relative; display: flex; flex: 1 1 0; min-width: 0; min-height: 0; overflow: hidden; }
+.term-split.column { flex-direction: column; }
+.term-pane { position: relative; flex: 1 1 0; min-width: 0; min-height: 0; overflow: hidden; }
+.term-pane::after { content: ""; position: absolute; inset: 0; z-index: 3; border: 1px solid transparent; pointer-events: none; }
+.term-pane.focused::after { border-color: color-mix(in srgb, var(--aicode-focusBorder) 45%, transparent); }
+.term-pane:focus-within::after { border-color: color-mix(in srgb, var(--aicode-focusBorder) 75%, transparent); }
+.term-pane.file-drop-target::after { border: 2px dashed var(--aicode-focusBorder); background: color-mix(in srgb, var(--aicode-focusBorder) 8%, transparent); }
+.term-pane .xterm-host { position: absolute; inset: 4px 2px 2px 16px; }
+.term-sash { flex: 0 0 5px; position: relative; z-index: 4; cursor: col-resize; touch-action: none; outline: none; }
+.term-sash::after { content: ""; position: absolute; inset: 0 2px; background: var(--aicode-terminal-border, var(--aicode-panel-border)); }
+.term-sash:hover::after, .term-sash:focus-visible::after, .term-sash.dragging::after { inset: 0 1px; background: var(--aicode-focusBorder); }
+.term-sash.column { cursor: row-resize; }
+.term-sash.column::after { inset: 2px 0; }
+.term-sash.column:hover::after, .term-sash.column:focus-visible::after, .term-sash.column.dragging::after { inset: 1px 0; }
+.term-root.resizing, .term-root.resizing * { cursor: col-resize !important; user-select: none !important; }
+.term-root.resizing[data-resize-axis="column"], .term-root.resizing[data-resize-axis="column"] * { cursor: row-resize !important; }
+.term-root.moving-pane, .term-root.moving-pane * { user-select: none !important; }
+.term-layout-preview { position: absolute; z-index: 8; pointer-events: none; border: 2px solid var(--aicode-focusBorder); background: color-mix(in srgb, var(--aicode-focusBorder) 15%, transparent); box-sizing: border-box; }
+.term-drag-ghost { position: fixed; z-index: 500; pointer-events: none; padding: 5px 10px; border: 1px solid var(--aicode-focusBorder); border-radius: 4px; background: var(--aicode-editorWidget-background); color: var(--aicode-foreground); font-size: 12px; }
 .term-group.split .term-pane .xterm-host { left: 10px; }
 .term-group.split .term-pane:not(.focused) { opacity: .82; }
 .term-tabs { flex: 0 0 auto; width: var(--term-tabs-w, 170px); border-left: 1px solid var(--aicode-panel-border); overflow-y: auto; padding-top: 2px; display: none; }
@@ -57,6 +75,9 @@ export async function activate(ctx) {
   let host, rootEl, stage, tabsEl;
   let counter = 0;
   let renaming = null;
+  let stopResize = null;
+  let stopPaneDrag = null;
+  let swallowTabClick = false;
 
   const color = (key, fallback) => getComputedStyle(document.documentElement).getPropertyValue(`--aicode-${key.replace(/\./g, "-")}`).trim() || fallback;
   const theme = () => ({
@@ -94,6 +115,94 @@ export async function activate(ctx) {
     for (const t of activeGroup?.terms ?? []) {
       try { t.fit.fit(); } catch {}
     }
+  };
+
+  const applyRatio = (node, first, second) => {
+    first.style.flexGrow = String(node.ratio * 100);
+    second.style.flexGrow = String((1 - node.ratio) * 100);
+  };
+
+  const resizeSash = (e, node, first, second, sash) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    stopResize?.();
+    const vertical = node.axis === "column";
+    const x = vertical ? e.clientY : e.clientX;
+    const dimension = vertical ? "height" : "width";
+    const lw = first.getBoundingClientRect()[dimension];
+    const rw = second.getBoundingClientRect()[dimension];
+    const weights = [node.ratio, 1 - node.ratio];
+    if (!lw || !rw) return;
+    const move = (event) => {
+      const [a, b] = resizePair(...weights, lw, rw, (vertical ? event.clientY : event.clientX) - x, vertical ? 60 : 80);
+      node.ratio = a / (a + b);
+      applyRatio(node, first, second);
+      fitAll();
+    };
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      window.removeEventListener("blur", end);
+      sash.classList.remove("dragging");
+      rootEl.classList.remove("resizing");
+      delete rootEl.dataset.resizeAxis;
+      stopResize = null;
+      fitAll();
+    };
+    stopResize = end;
+    sash.classList.add("dragging");
+    rootEl.classList.add("resizing");
+    rootEl.dataset.resizeAxis = node.axis;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    window.addEventListener("blur", end);
+  };
+
+  const layoutGroup = (g) => {
+    stopResize?.();
+    g.terms = layoutTerms(g.layout);
+    g.el.classList.toggle("split", g.terms.length > 1);
+    const draw = (node) => {
+      if (node.term) return node.term.pane;
+      const first = draw(node.first);
+      const second = draw(node.second);
+      const vertical = node.axis === "column";
+      const reset = () => {
+        node.ratio = 0.5;
+        applyRatio(node, first, second);
+        fitAll();
+      };
+      const sash = h("div", {
+        class: `term-sash ${node.axis}`, role: "separator", tabindex: "0", "aria-orientation": vertical ? "horizontal" : "vertical",
+        "aria-label": "Resize terminal panes", title: "Drag to resize · Double-click to equalize this split",
+        onpointerdown: (e) => resizeSash(e, node, first, second, sash),
+        ondblclick: reset,
+        onkeydown: (e) => {
+          if (e.key === "Enter" || e.key === "Home") { e.preventDefault(); reset(); return; }
+          const keys = vertical ? ["ArrowUp", "ArrowDown"] : ["ArrowLeft", "ArrowRight"];
+          if (!keys.includes(e.key)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const dimension = vertical ? "height" : "width";
+          const [a, b] = resizePair(node.ratio, 1 - node.ratio, first.getBoundingClientRect()[dimension], second.getBoundingClientRect()[dimension], (e.key === keys[0] ? -1 : 1) * (e.shiftKey ? 40 : 10), vertical ? 60 : 80);
+          node.ratio = a / (a + b);
+          applyRatio(node, first, second);
+          fitAll();
+        },
+      });
+      applyRatio(node, first, second);
+      return h("div", { class: `term-split ${node.axis}` }, first, sash, second);
+    };
+    clear(g.el);
+    if (g.layout) {
+      const tree = draw(g.layout);
+      tree.style.flexGrow = "1";
+      g.el.append(tree);
+    }
+    requestAnimationFrame(fitAll);
   };
 
   // ---------- links: ⌘-click (Ctrl-click) on URLs and file paths ----------
@@ -166,7 +275,9 @@ export async function activate(ctx) {
       cursorBlink: true,
       allowProposedApi: true,
       scrollback: 10000,
-      macOptionIsMeta: true,
+      // Let the keyboard layout produce @, |, brackets and accents with Option.
+      // Option+arrows are handled below for shell word navigation.
+      macOptionIsMeta: false,
       macOptionClickForcesSelection: true,
       rightClickSelectsWord: false,
       drawBoldTextInBrightColors: true,
@@ -177,9 +288,22 @@ export async function activate(ctx) {
     term.loadAddon(fit);
     const shellName = opts.command ? basename(opts.command) : basename(shells.default ?? "zsh");
     const isShell = (c) => /(?:^|[\\/])(?:zsh|bash|fish|sh|ksh|tcsh|nu|pwsh|powershell|cmd)(?:\.exe)?$/.test(c ?? "");
-    const t = { id: ++counter, shellCommand: opts.shellCommand ?? (isShell(opts.command) ? opts.command : undefined), name: opts.name ?? shellName, title: null, term, fit, el, pane, pty: null, exited: false, cwd: opts.cwd ?? ctx.workspace.folder() ?? null, group };
+    const t = { id: ++counter, shellCommand: opts.shellCommand ?? (isShell(opts.command) ? opts.command : undefined), name: opts.name ?? shellName, icon: opts.icon ?? "terminal", title: null, term, fit, el, pane, pty: null, exited: false, cwd: opts.cwd ?? ctx.workspace.folder() ?? null, group };
     pane.addEventListener("mousedown", () => focusTerm(t), true);
+    pane.addEventListener("focusin", () => selectTerm(t));
     pane.addEventListener("contextmenu", (e) => termMenu(e, t));
+    t.fileDrop = ctx.workbench.addFileDropTarget(pane, {
+      label: "Drop to paste file references into terminal",
+      drop: (paths) => {
+        if (!t.pty || t.exited) {
+          ctx.window.showInfo("This terminal is not running. Open a terminal or agent before dropping files.");
+          return;
+        }
+        const text = fileReferences(paths, t.shellCommand ?? shells.default ?? "");
+        focusTerm(t);
+        t.term.paste(text);
+      },
+    });
     term.open(el);
     term.registerLinkProvider(linkProvider(t));
     term.onTitleChange((title) => {
@@ -276,13 +400,13 @@ export async function activate(ctx) {
   const create = async (opts = {}) => {
     creating = true;
     await ensureView();
-    const g = { id: ++counter, terms: [], active: null, el: h("div", { class: "term-group" }) };
+    const g = { id: ++counter, terms: [], layout: null, active: null, el: h("div", { class: "term-group" }) };
     stage.append(g.el);
     groups.push(g);
     const t = await newTerm(opts, g);
-    g.terms.push(t);
+    g.layout = insertPane(null, null, t);
+    layoutGroup(g);
     g.active = t;
-    g.el.append(t.pane);
     showGroup(g);
     await startPty(t, opts);
     focusTerm(t);
@@ -290,20 +414,19 @@ export async function activate(ctx) {
     return t;
   };
 
-  /** Another terminal next to the active one, in the same tab. */
+  /** Split a pane, or the whole group, in any direction without restarting existing sessions. */
   const split = async (opts = {}) => {
     await ensureView();
     const g = activeGroup;
     if (!g) return create(opts);
     const from = g.active;
-    const t = await newTerm({ cwd: from?.cwd ?? undefined, command: from?.shellCommand, ...opts }, g);
-    const i = g.terms.indexOf(from);
-    g.terms.splice(i + 1, 0, t);
-    from?.pane.after(t.pane) ?? g.el.append(t.pane);
-    g.el.classList.add("split");
+    const options = { cwd: from?.cwd ?? undefined, command: from?.shellCommand, ...opts };
+    const t = await newTerm(options, g);
+    g.layout = insertPane(g.layout, opts.scope === "group" ? null : from, t, opts.direction ?? "right");
+    layoutGroup(g);
     g.active = t;
     requestAnimationFrame(fitAll);
-    await startPty(t, opts);
+    await startPty(t, options);
     focusTerm(t);
     paintTabs();
     return t;
@@ -313,30 +436,38 @@ export async function activate(ctx) {
     activeGroup = g;
     for (const x of groups) x.el.classList.toggle("active", x === g);
     requestAnimationFrame(() => {
+      if (activeGroup !== g || !groups.includes(g)) return;
       fitAll();
-      g.active?.term.focus();
+      focusTerm(g.active);
     });
     paintTabs();
   };
 
-  const focusTerm = (t) => {
+  const selectTerm = (t) => {
     if (!t) return;
     if (activeGroup !== t.group) showGroup(t.group);
+    const changed = t.group.active !== t || !t.pane.classList.contains("focused");
     t.group.active = t;
     for (const x of t.group.terms) x.pane.classList.toggle("focused", x === t);
+    if (changed) paintTabs();
+  };
+
+  const focusTerm = (t) => {
+    if (!t) return;
+    selectTerm(t);
     t.term.focus();
-    paintTabs();
   };
 
   const kill = (t = active(), { quiet = false } = {}) => {
     if (!t) return;
     if (!t.exited) t.pty?.kill();
     t.exited = true;
+    t.fileDrop.dispose();
     t.term.dispose();
     t.pane.remove();
     const g = t.group;
-    g.terms.splice(g.terms.indexOf(t), 1);
-    g.el.classList.toggle("split", g.terms.length > 1);
+    g.layout = removePane(g.layout, t);
+    layoutGroup(g);
     if (!g.terms.length) {
       g.el.remove();
       const gi = groups.indexOf(g);
@@ -359,6 +490,157 @@ export async function activate(ctx) {
     t.term.clear();
   };
 
+  const moveTerm = (t, destination, target, direction) => {
+    if (!t || target === t || !groups.includes(destination)) return;
+    const source = t.group;
+    if (!source.terms.includes(t) || (target && !destination.terms.includes(target))) return;
+    if (source === destination && source.terms.length === 1) return;
+    source.layout = removePane(source.layout, t);
+    destination.layout = insertPane(destination.layout, target, t, direction);
+    t.group = destination;
+    if (source !== destination) {
+      layoutGroup(source);
+      if (source.active === t) source.active = source.terms[0] ?? null;
+      if (!source.terms.length) {
+        source.el.remove();
+        groups.splice(groups.indexOf(source), 1);
+      }
+    }
+    layoutGroup(destination);
+    destination.active = t;
+    showGroup(destination);
+    focusTerm(t);
+  };
+
+  const movePane = async (t = active()) => {
+    if (!t) return;
+    const choice = await ctx.window.showQuickPick([
+      { label: "Below Entire Group", direction: "below", scope: "group" },
+      { label: "Above Entire Group", direction: "above", scope: "group" },
+      { label: "Left of Entire Group", direction: "left", scope: "group" },
+      { label: "Right of Entire Group", direction: "right", scope: "group" },
+      { label: "Below Another Pane…", direction: "below" },
+      { label: "Above Another Pane…", direction: "above" },
+      { label: "Left of Another Pane…", direction: "left" },
+      { label: "Right of Another Pane…", direction: "right" },
+    ], { placeholder: `Move ${label(t)} without restarting it` });
+    if (!choice) return;
+    if (choice.scope === "group") return moveTerm(t, t.group, null, choice.direction);
+    const target = await ctx.window.showQuickPick(allTerms().filter((other) => other !== t).map((other) => ({ label: label(other), description: other.cwd ?? "", term: other })), { placeholder: "Choose the destination pane" });
+    if (target) moveTerm(t, target.term.group, target.term, choice.direction);
+  };
+
+  const arrangePanes = async () => {
+    const g = activeGroup;
+    if (!g || g.terms.length < 2) return ctx.window.showInfo("Split a terminal first to arrange its panes.");
+    const count = g.terms.length - 1;
+    const choice = await ctx.window.showQuickPick([
+      { label: "Equal Columns", preset: "columns" },
+      { label: "Equal Rows", preset: "rows" },
+      { label: "Grid", preset: "grid" },
+      { label: `${count} Above + 1 Wide Below`, preset: "bottom" },
+      { label: `${count} on the Left + 1 Tall on the Right`, preset: "right" },
+    ], { placeholder: "Arrange the existing terminals without restarting them" });
+    if (!choice || !groups.includes(g)) return;
+    g.layout = arrangeLayout(g.terms, choice.preset);
+    layoutGroup(g);
+    showGroup(g);
+  };
+
+  /** Drag a terminal from the tab list onto a pane edge, or an outer edge of the whole group. */
+  const startPaneDrag = (down, t) => {
+    if (down.button !== 0 || renaming || down.target.closest(".tactions, input")) return;
+    stopPaneDrag?.();
+    const start = { x: down.clientX, y: down.clientY };
+    let ghost, preview, destination;
+    const findDestination = (e) => {
+      const g = activeGroup;
+      if (!g) return null;
+      const r = g.el.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return null;
+      const edges = [
+        ["left", e.clientX - r.left], ["right", r.right - e.clientX],
+        ["above", e.clientY - r.top], ["below", r.bottom - e.clientY],
+      ].sort((a, b) => a[1] - b[1]);
+      if (edges[0][1] < 22) return { group: g, target: null, direction: edges[0][0], rect: r };
+      const under = document.elementFromPoint(e.clientX, e.clientY)?.closest(".term-pane");
+      const target = g.terms.find((other) => other.pane === under);
+      if (!target || target === t) return null;
+      const pane = target.pane.getBoundingClientRect();
+      const x = (e.clientX - pane.left) / pane.width;
+      const y = (e.clientY - pane.top) / pane.height;
+      const direction = [["left", x], ["right", 1 - x], ["above", y], ["below", 1 - y]].sort((a, b) => a[1] - b[1])[0][0];
+      return { group: g, target, direction, rect: pane };
+    };
+    const move = (e) => {
+      if (!ghost) {
+        if (Math.hypot(e.clientX - start.x, e.clientY - start.y) < 5) return;
+        ghost = h("div", { class: "term-drag-ghost" }, label(t));
+        preview = h("div", { class: "term-layout-preview" });
+        document.body.append(ghost);
+        stage.append(preview);
+        rootEl.classList.add("moving-pane");
+      }
+      e.preventDefault();
+      ghost.style.left = `${e.clientX + 12}px`;
+      ghost.style.top = `${e.clientY + 12}px`;
+      destination = findDestination(e);
+      preview.style.display = destination ? "block" : "none";
+      if (!destination) return;
+      const { rect: r, direction } = destination;
+      const stageRect = stage.getBoundingClientRect();
+      const row = direction === "left" || direction === "right";
+      Object.assign(preview.style, {
+        left: `${r.left - stageRect.left + (direction === "right" ? r.width / 2 : 0)}px`,
+        top: `${r.top - stageRect.top + (direction === "below" ? r.height / 2 : 0)}px`,
+        width: `${row ? r.width / 2 : r.width}px`, height: `${row ? r.height : r.height / 2}px`,
+      });
+    };
+    const end = (e) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      window.removeEventListener("keydown", escape);
+      window.removeEventListener("blur", end);
+      stopPaneDrag = null;
+      if (!ghost) return;
+      // Recheck the release position so a last movement outside the group cancels the move.
+      const drop = e?.type === "pointerup" ? findDestination(e) : null;
+      ghost.remove();
+      preview.remove();
+      rootEl.classList.remove("moving-pane");
+      swallowTabClick = true;
+      setTimeout(() => { swallowTabClick = false; }, 0);
+      if (drop) moveTerm(t, drop.group, drop.target, drop.direction);
+    };
+    const escape = (e) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      end();
+    };
+    stopPaneDrag = () => end();
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    window.addEventListener("keydown", escape);
+    window.addEventListener("blur", end);
+  };
+
+  const splitMenu = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    ctx.window.contextMenu(r.left, r.bottom + 2, [
+      { label: "Split Right", run: () => split() },
+      { label: "Split Down", run: () => split({ direction: "below" }) },
+      { label: "Split Left", run: () => split({ direction: "left" }) },
+      { label: "Split Up", run: () => split({ direction: "above" }) },
+      { separator: true, label: "" },
+      { label: "New Terminal Below Entire Group", run: () => split({ direction: "below", scope: "group" }) },
+      { label: "New Terminal Above Entire Group", run: () => split({ direction: "above", scope: "group" }) },
+      { label: "Move Active Pane…", run: () => movePane() },
+      { label: "Arrange Panes…", run: () => arrangePanes() },
+    ]);
+  };
+
   // ---------- menus and the tab list ----------
 
   const pickShell = async () => {
@@ -370,6 +652,67 @@ export async function activate(ctx) {
     if (choice) create({ command: choice.path, shellCommand: choice.path });
   };
 
+  const addAgentProfile = async () => {
+    const name = await ctx.window.showInputBox({ prompt: "Agent name", placeholder: "My agent" });
+    if (!name?.trim()) return;
+    const command = await ctx.window.showInputBox({ prompt: "Agent executable (name on PATH or full path)", placeholder: "aider" });
+    if (!command?.trim()) return;
+    const profiles = await ctx.settings.get("agentProfiles", []);
+    await ctx.settings.set("agentProfiles", [...profiles, { name: name.trim(), command: command.trim(), args: [] }]);
+    ctx.window.showInfo(`${name.trim()} added to the terminal agent picker. Optional launch arguments are in Terminal settings.`);
+  };
+
+  /** Reuse the agent mods' CLI setup; no second set of credentials or providers. */
+  const pickAgent = async (inSplit = false, placement = {}) => {
+    const owners = [...new Set(ctx.mods.contributions("chatAgents").filter((c) => ctx.mods.isEnabled(c.mod)).map((c) => c.mod))];
+    const items = [];
+    for (const owner of owners) {
+      try {
+        const exported = await ctx.mods.get(owner);
+        for (const agent of Object.values(exported?.chatAgents ?? {})) {
+          if (!agent?.terminal) continue;
+          const status = await agent.status(true);
+          if (!status.terminal && !status.modes?.includes("cli")) continue;
+          items.push({ label: agent.name, description: status.detail, agent, status, icon: agent.icon ?? "robot" });
+        }
+      } catch (error) {
+        console.warn(`Terminal: could not load ${owner}`, error);
+      }
+    }
+    for (const profile of await ctx.settings.get("agentProfiles", [])) {
+      if (!profile?.name || typeof profile.command !== "string" || !profile.command.trim()) continue;
+      items.push({ label: profile.name, description: profile.command, profile });
+    }
+    const choice = await ctx.window.showQuickPick([
+      ...items,
+      { label: "Add Agent Profile…", description: "Run another agent CLI", add: true },
+      { label: "Manage Agent Mods…", description: "Enable or install agent integrations", manage: true },
+    ], { placeholder: inSplit ? "Open an agent in a split terminal" : "Open an agent in a new terminal" });
+    if (!choice) return;
+    if (choice.add) return addAgentProfile();
+    if (choice.manage) return ctx.commands.execute("mods.manage");
+    let line;
+    if (choice.profile) {
+      const { command, args } = choice.profile;
+      if (args !== undefined && (!Array.isArray(args) || args.some((a) => typeof a !== "string"))) {
+        return ctx.window.showInfo("This agent profile's args must be a list of strings. Update it in Terminal settings.");
+      }
+      line = { command, args: args ?? [] };
+    } else {
+      const agent = choice.agent;
+      let status = choice.status;
+      if (!status.terminal || !status.ready) {
+        await agent.configure?.();
+        status = await agent.status(true);
+      }
+      if (!status.terminal || !status.ready) return ctx.window.showInfo(status.detail || `Configure ${agent.name}'s CLI before opening it in a terminal.`);
+      line = await agent.terminal(status.defaultModel ?? "");
+    }
+    if (!line?.command) return;
+    const opts = { ...line, name: choice.label, icon: choice.icon ?? "robot", keepOpen: true, cwd: (inSplit ? active()?.cwd : null) ?? ctx.workspace.folder() ?? undefined };
+    return inSplit ? split({ ...opts, ...placement }) : create(opts);
+  };
+
   const newMenu = (e) => {
     const r = e.currentTarget.getBoundingClientRect();
     const list = shells.shells.length ? shells.shells : [];
@@ -377,9 +720,13 @@ export async function activate(ctx) {
       ...list.map((p) => ({ label: basename(p) + (p === shells.default ? " (default)" : ""), run: () => create({ command: p }) })),
       { separator: true, label: "" },
       { label: "Split Terminal", keybinding: isMac ? "mod+\\" : "ctrl+shift+5", run: () => split() },
+      { label: "Split Down", run: () => split({ direction: "below" }) },
+      { label: "New Terminal Below Entire Group", run: () => split({ direction: "below", scope: "group" }) },
       { separator: true, label: "" },
-      { label: "Select Default Profile…", disabled: true },
-    ].filter((x, i, all) => !(x.label === "Select Default Profile…") && !(x.separator && i === all.length - 2)));
+      { label: "Open Agent…", run: () => pickAgent() },
+      { label: "Open Agent in Split…", run: () => pickAgent(true) },
+      { label: "Open Agent Below Entire Group…", run: () => pickAgent(true, { direction: "below", scope: "group" }) },
+    ]);
   };
 
   const termMenu = (e, t) => {
@@ -395,7 +742,13 @@ export async function activate(ctx) {
       { label: "Clear Terminal", keybinding: isMac ? "mod+k" : undefined, run: () => clearTerm(t) },
       { separator: true, label: "" },
       { label: "Split Terminal", keybinding: isMac ? "mod+\\" : "ctrl+shift+5", run: () => split() },
+      { label: "Split Down", run: () => split({ direction: "below" }) },
+      { label: "Split Up", run: () => split({ direction: "above" }) },
+      { label: "Split Left", run: () => split({ direction: "left" }) },
+      { label: "New Terminal Below Entire Group", run: () => split({ direction: "below", scope: "group" }) },
+      { label: "Move Pane…", run: () => movePane(t) },
       { label: "New Terminal", keybinding: "ctrl+shift+`", run: () => create() },
+      { label: "Open Agent in Split…", run: () => pickAgent(true) },
       { separator: true, label: "" },
       { label: "Kill Terminal", run: () => kill(t) },
     ], { menu: "terminal/context", context: { id: t.id, selection: sel ? t.term.getSelection() : "" } });
@@ -421,6 +774,9 @@ export async function activate(ctx) {
     ctx.window.contextMenu(e.clientX, e.clientY, [
       { label: "Rename…", run: () => startRename(t) },
       { label: "Split Terminal", run: () => { focusTerm(t); split(); } },
+      { label: "Split Down", run: () => { focusTerm(t); split({ direction: "below" }); } },
+      { label: "Move Pane…", run: () => movePane(t) },
+      { label: "Move Below Entire Group", disabled: t.group.terms.length < 2, run: () => moveTerm(t, t.group, null, "below") },
       { separator: true, label: "" },
       { label: "Clear Terminal", run: () => clearTerm(t) },
       { label: "Kill Terminal", run: () => kill(t) },
@@ -468,13 +824,14 @@ export async function activate(ctx) {
             "div",
             {
               class: `term-tab${t === active() ? " active" : ""}`,
-              title: `${label(t)}${t.cwd ? `\n${t.cwd}` : ""}`,
-              onclick: () => focusTerm(t),
+              title: `${label(t)}${t.cwd ? `\n${t.cwd}` : ""}\nDrag onto a pane or group edge to rearrange`,
+              onpointerdown: (e) => startPaneDrag(e, t),
+              onclick: () => { if (!swallowTabClick) focusTerm(t); },
               ondblclick: () => startRename(t),
               oncontextmenu: (e) => tabMenu(e, t),
             },
             h("span", { class: "branch" }, branch),
-            icon("terminal"),
+            icon(t.icon),
             nameEl,
             h(
               "span",
@@ -492,7 +849,8 @@ export async function activate(ctx) {
   ctx.views.provide("terminal", {
     actions: [
       { icon: "add", title: "New Terminal (⌃⇧`)", run: () => create(), dropdownTitle: "Launch Profile…", dropdown: (e) => newMenu(e) },
-      { icon: "split-horizontal", title: `Split Terminal (${isMac ? "⌘\\" : "Ctrl+Shift+5"})`, run: () => split() },
+      { icon: "split-horizontal", title: `Split Right (${isMac ? "⌘\\" : "Ctrl+Shift+5"})`, run: () => split(), dropdownTitle: "Split Direction and Layout…", dropdown: splitMenu },
+      { icon: "robot", title: "Open Agent…", run: () => pickAgent() },
       { icon: "trash", title: "Kill Terminal", run: () => kill() },
       {
         icon: "ellipsis",
@@ -502,6 +860,7 @@ export async function activate(ctx) {
           ctx.window.contextMenu(r.left - 160, r.bottom + 4, [
             { label: "Clear Terminal", run: () => clearTerm() },
             { label: "Rename…", disabled: !active(), run: () => active() && startRename(active()) },
+            { label: "Arrange Panes…", disabled: (activeGroup?.terms.length ?? 0) < 2, run: () => arrangePanes() },
             { separator: true, label: "" },
             { label: "Kill All Terminals", disabled: !groups.length, run: () => [...groups].forEach(killGroup) },
           ]);
@@ -514,7 +873,9 @@ export async function activate(ctx) {
       tabsEl = h("div", { class: "term-tabs", role: "list" });
       rootEl = h("div", { class: "term-root", dataset: { ownKeys: isMac ? "mod+k mod+\\ mod+backspace mod+left mod+right" : "ctrl+shift+5" } }, stage, tabsEl);
       host.append(rootEl);
-      new ResizeObserver(() => fitAll()).observe(stage);
+      const observer = new ResizeObserver(() => fitAll());
+      observer.observe(stage);
+      ctx.subscriptions.push({ dispose: () => observer.disconnect() });
       if (!groups.length && !creating) create();
     },
     onShow: () => {
@@ -536,7 +897,16 @@ export async function activate(ctx) {
 
   ctx.commands.register("terminal.new", (opts) => create(opts && typeof opts === "object" ? opts : {}));
   ctx.commands.register("terminal.newWithProfile", pickShell);
+  ctx.commands.register("terminal.newAgent", () => pickAgent());
+  ctx.commands.register("terminal.splitAgent", () => pickAgent(true));
+  ctx.commands.register("terminal.addAgentProfile", addAgentProfile);
   ctx.commands.register("terminal.split", () => split());
+  ctx.commands.register("terminal.splitDown", () => split({ direction: "below" }));
+  ctx.commands.register("terminal.splitUp", () => split({ direction: "above" }));
+  ctx.commands.register("terminal.splitLeft", () => split({ direction: "left" }));
+  ctx.commands.register("terminal.splitGroupDown", () => split({ direction: "below", scope: "group" }));
+  ctx.commands.register("terminal.movePane", () => movePane());
+  ctx.commands.register("terminal.arrange", arrangePanes);
   ctx.commands.register("terminal.toggle", toggle);
   ctx.commands.register("terminal.focus", async () => {
     await ctx.views.reveal("terminal");
@@ -577,7 +947,14 @@ export async function activate(ctx) {
   });
 
   // Repaint terminals when the theme changes.
-  new MutationObserver(() => allTerms().forEach((t) => (t.term.options.theme = theme()))).observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
+  const themeObserver = new MutationObserver(() => allTerms().forEach((t) => (t.term.options.theme = theme())));
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
+  ctx.subscriptions.push({ dispose: () => {
+    stopResize?.();
+    stopPaneDrag?.();
+    themeObserver.disconnect();
+    for (const t of allTerms()) { t.fileDrop.dispose(); t.pty?.kill(); t.term.dispose(); }
+  } });
 
   /** For other mods: open a terminal running a command (an agent CLI, a script). */
   return { open: (opts) => create({ keepOpen: true, ...opts }), split: (opts) => split(opts), sendText };

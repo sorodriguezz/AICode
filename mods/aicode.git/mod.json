@@ -1,7 +1,7 @@
 {
   "id": "aicode.git",
   "name": "Source Control (Git)",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Git for the open folder: changes, stage, commit, diffs, branches, fetch / pull / push, and change markers in the editor gutter. Uses the git installed on this machine; talks to no hosting service.",
   "author": "AICode",
   "icon": "source-control",
@@ -74,6 +74,11 @@
       {
         "id": "git.push",
         "title": "Push",
+        "category": "Git"
+      },
+      {
+        "id": "git.cancelOperation",
+        "title": "Cancel Git Operation",
         "category": "Git"
       },
       {
@@ -256,6 +261,15 @@
         "title": "Commit All",
         "category": "Git"
       }
-    ]
+    ],
+    "settings": {
+      "remoteTimeout": {
+        "type": "number",
+        "default": 120,
+        "minimum": 10,
+        "maximum": 3600,
+        "description": "Maximum seconds for fetch, pull, push and clone before stopping the operation. Reload the window after changing this setting."
+      }
+    }
   }
 }

@@ -1,8 +1,8 @@
 {
   "id": "aicode.terminal",
   "name": "Terminal",
-  "version": "1.0.0",
-  "description": "Integrated terminals in the panel, using your login shell or another one installed: tabs, splits, ⌘-click on paths and links. A shell only starts when you open one.",
+  "version": "1.2.1",
+  "description": "Integrated terminals with nested rows and columns, draggable panes, layout presets, resizable splits, dropped file references, and an agent CLI launcher. A shell only starts when you open one.",
   "author": "AICode",
   "icon": "terminal",
   "main": "main.js",
@@ -52,8 +52,53 @@
         "category": "Terminal"
       },
       {
+        "id": "terminal.newAgent",
+        "title": "Open Agent…",
+        "category": "Terminal"
+      },
+      {
+        "id": "terminal.splitAgent",
+        "title": "Open Agent in Split…",
+        "category": "Terminal"
+      },
+      {
+        "id": "terminal.addAgentProfile",
+        "title": "Add Agent Profile…",
+        "category": "Terminal"
+      },
+      {
         "id": "terminal.split",
         "title": "Split Terminal",
+        "category": "Terminal"
+      },
+      {
+        "id": "terminal.splitDown",
+        "title": "Split Terminal Down",
+        "category": "Terminal"
+      },
+      {
+        "id": "terminal.splitUp",
+        "title": "Split Terminal Up",
+        "category": "Terminal"
+      },
+      {
+        "id": "terminal.splitLeft",
+        "title": "Split Terminal Left",
+        "category": "Terminal"
+      },
+      {
+        "id": "terminal.splitGroupDown",
+        "title": "New Terminal Below Entire Group",
+        "category": "Terminal"
+      },
+      {
+        "id": "terminal.movePane",
+        "title": "Move Pane…",
+        "category": "Terminal"
+      },
+      {
+        "id": "terminal.arrange",
+        "title": "Arrange Panes…",
         "category": "Terminal"
       },
       {
@@ -102,6 +147,11 @@
         "type": "number",
         "default": 12,
         "description": "Font size of terminals"
+      },
+      "agentProfiles": {
+        "type": "array",
+        "default": [],
+        "description": "Additional interactive agent CLIs shown in Open Agent: [{ \"name\": \"My agent\", \"command\": \"agent-cli\", \"args\": [] }]. Commands use the login-shell PATH and start in the current workspace."
       }
     }
   }

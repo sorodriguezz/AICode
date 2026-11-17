@@ -25,6 +25,16 @@ Puedes editar sin conexión y sin crear una cuenta de AICode. La aplicación usa
 
 Para actualizar una instalación existente, usa **Settings → Updates → Check for Updates**.
 
+En **Source Control**, fetch, pull y push muestran **Cancel Operation** mientras se ejecutan. Si una operación de red supera 120 segundos, se detiene y muestra un error; puedes ajustar ese plazo en **Settings → Source Control (Git) → remoteTimeout**. Los detalles quedan en **Git: Show Git Output**.
+
+En **Terminal**, arrastra imágenes, documentos o carpetas desde Finder o el explorador de archivos del sistema sobre una división para pegar sus rutas en la entrada actual, también cuando usas Claude u otro agente. Puedes soltar varios archivos; la entrada queda lista para revisar antes de enviarla. Arrastra el separador entre terminales para cambiar sus tamaños y haz doble clic para igualarlos. Un borde tenue identifica la división activa.
+
+En macOS, **Option (⌥)** permite escribir `@`, `|`, llaves, corchetes y acentos con la misma distribución de teclado que el editor. **Option + ←/→** sigue moviendo el cursor por palabras.
+
+La flecha junto al botón de dividir permite crear un panel a la derecha, izquierda, arriba o abajo del activo. **New Terminal Below Entire Group** agrega uno que ocupa todo el ancho debajo del grupo. Para obtener tres arriba y uno ancho abajo, abre cuatro terminales y elige **Arrange Panes… → 3 Above + 1 Wide Below** en ese mismo menú. También hay filas, columnas y una cuadrícula. Puedes arrastrar una entrada de la lista de terminales sobre el borde de un panel para moverla allí; el borde exterior del grupo permite colocarla por encima o debajo de todo el conjunto. La previsualización indica el destino y **Esc** cancela. El menú contextual **Move Pane…** ofrece los mismos movimientos sin arrastrar. Reorganizar conserva los procesos y su contenido.
+
+El botón del robot y **Terminal: Open Agent…** abren los CLI de los agentes habilitados, como Claude, Codex, Gemini y OpenCode. **Open Agent in Split…** los abre junto a la terminal actual. **Add Agent Profile…** permite agregar otros ejecutables; sus argumentos se pueden configurar en el ajuste `Terminal → agentProfiles`.
+
 ## Hazlo tuyo
 
 Los mods pueden agregar comandos, fragmentos de código, temas y paneles. Con un solo archivo JSON puedes crear un panel para lanzar los comandos de tu proyecto. Usa JavaScript si necesitas una vista personalizada o una integración más profunda con el editor. Exporta un mod como archivo `.aicode-mod` o comparte un perfil, con sus mods incluidos, como archivo `.aicode-profile`.

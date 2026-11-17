@@ -184,7 +184,7 @@ export async function activate(ctx) {
 | `ctx.workspace` | `folder()`, `setFolder(path)` (closes the previous folder's tabs first; resolves `false` if the user cancels a save prompt), `onDidChangeFolder(fn)`, `listFiles()` |
 | `ctx.fs` | `readText`, `writeText`, `readDir`, `stat`, `create(path, dir)`, `rename(from, to)` (open editors follow), `delete(path, { trash })` (to the Trash by default), `copy(from, to)`, `reveal(path)` (Finder / Explorer), `watch(dir, fn)` (changes directly inside `dir`), `listFiles(root)`, `search(root, query, opts)`, `home()` |
 | `ctx.decorations` | `register(path => ({ badge, color, tooltip, faded }))` → `{ fire, dispose }`, `get(path)`, `onDidChange(fn)` — how files show in the explorer (the Git mod's colors) |
-| `ctx.process` | `which(program)`, `spawn(program, args, { cwd, stdin, env, keepStdin, encoding, onData, onExit })` → `{ id, done, kill, write(text \| bytes), end() }` — `keepStdin` keeps the input open so you can talk to a REPL, a database client or a helper script over stdio; `encoding: "base64"` gives `onData` the raw bytes |
+| `ctx.process` | `which(program)`, `spawn(program, args, { cwd, stdin, env, keepStdin, killTree, encoding, onData, onExit })` → `{ id, done, kill, write(text \| bytes), end() }` — `keepStdin` keeps the input open so you can talk to a REPL, a database client or a helper script over stdio; `killTree: true` also terminates child processes when killed; `encoding: "base64"` gives `onData` the raw bytes |
 | `ctx.http` | `request({ url, method, headers, body, timeoutMs, followRedirects, insecure, onHead, onChunk })` → `{ status, statusText, ok, headers, header(name), body, text(), json(), timings: { ttfbMs, totalMs }, size }` (the promise also has `cancel()`); `get(url, opts)`, `post(url, body, opts)`. Sent from Rust: any address, no CORS or CSP, binary bodies, streaming. A non-string `body` goes as JSON |
 | `ctx.secrets` | `get(key)`, `set(key, value)`, `delete(key)` (`{ service }` to use another service) — passwords, tokens, connection strings in the system's password store: the macOS Keychain, the Windows Credential Manager, or the Secret Service on Linux (GNOME Keyring, KWallet) |
 | `ctx.menus` | `add(menuId, { id, label, icon, keybinding, command, args, run(context), when(context), checked, disabled, order, separatorBefore })` → disposable; `items(menuId)`. Menu ids below |
@@ -285,6 +285,27 @@ const dock = ctx.ui.h("div", { class: "my-dock" });
 stripe.el.append(dock);
 ctx.workbench.addDropTarget(dock, { kinds: ["view"], drop: ({ id }) => ctx.workbench.hostView(id, dock) });
 ```
+
+For files dragged from the operating system, register a separate native drop target:
+
+```js
+ctx.workbench.addFileDropTarget(element, {
+  label: "Drop to add file references",
+  drop: async (paths) => { /* absolute paths, normalized with forward slashes */ },
+  hoverClass: "file-drop-target", // optional
+});
+```
+
+The target under the pointer receives the files before the default open-in-editor handler.
+Nested targets prefer the innermost registered element. The registration returns a disposable,
+also tracked by the mod host; dispose it when removing a target. The terminal uses this to paste
+references into the hovered pane without submitting the current prompt.
+
+The Terminal mod exports `open(opts)`, `split(opts)`, and `sendText(text, opts)`. In addition to
+process options (`command`, `args`, `cwd`, `name`), `split` accepts `direction` (`"left"`, `"right"`,
+`"above"`, `"below"`; defaults to `"right"`) and `scope` (`"pane"` or `"group"`; defaults to the
+active pane). For example, `terminal.split({ direction: "below", scope: "group" })` adds a terminal
+below the whole existing layout. Nested splits and the built-in layout presets retain existing PTYs.
 
 **Floating panels**: `ctx.workbench.floatView("terminal", { x: 80, y: 60, w: 600, h: 320 })`, or as a
 default (the user can still change it): `"configurationDefaults": { "core": { "workbench.viewPlacement":
