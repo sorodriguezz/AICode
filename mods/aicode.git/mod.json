@@ -2,7 +2,7 @@
   "id": "aicode.git",
   "name": "Source Control (Git)",
   "version": "1.1.0",
-  "description": "Git for the open folder: changes, stage, commit, diffs, branches, fetch / pull / push, and change markers in the editor gutter. Uses the git installed on this machine; talks to no hosting service.",
+  "description": "Git for the open folder: changes, stage, commit, diffs, branches, fetch / pull / push, change markers in the editor gutter, and cursor-line authorship in the status bar. Uses the git installed on this machine; talks to no hosting service.",
   "author": "AICode",
   "icon": "source-control",
   "main": "main.js",

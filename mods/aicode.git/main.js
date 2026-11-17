@@ -1,5 +1,7 @@
 // Source Control: git for the open folder — changes, commits, branches and diffs.
 
+import { addLineBlame } from "./blame.js";
+
 const STYLE = `
 .scm { position: relative; height: 100%; display: flex; flex-direction: column; padding: 6px 0 4px; }
 .scm-changes { flex: 1 1 0; min-height: 0; overflow: auto; }
@@ -93,11 +95,13 @@ export async function activate(ctx) {
   let sortBy = await ctx.settings.get("sortBy", "path"); // "name" | "path" | "status"
   const branchItem = ctx.statusBar.add({ align: "left", priority: 100, icon: "source-control", text: "", command: "git.checkout", tooltip: "Checkout Branch/Tag…", animate: true });
   const syncItem = ctx.statusBar.add({ align: "left", priority: 99, icon: "sync", text: "", command: "git.sync", tooltip: "Synchronize Changes", animate: true });
+  const lineBlame = addLineBlame(ctx, git);
 
   const refresh = () => service.refreshStatus();
   let lastRefreshKey = "";
   const updateStatus = (snapshot) => {
     ({ root, status } = snapshot);
+    lineBlame.setRepository(root);
     headCache.clear();
     paintStatus();
     // Showing the view refreshes it: repaint only when something changed, so it doesn't redraw

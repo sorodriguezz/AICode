@@ -27,6 +27,8 @@ Use **Settings → Updates → Check for Updates** to update an installed copy.
 
 In **Source Control**, fetch, pull, and push show **Cancel Operation** while running. Remote operations stop with an error after 120 seconds; adjust the limit in **Settings → Source Control (Git) → remoteTimeout**. Details appear in **Git: Show Git Output**.
 
+With **Source Control (Git)** enabled, the status bar shows who last changed the cursor's line and how long ago. Hover for the commit details. Unsaved edits are included, and changed lines show **You, uncommitted changes**.
+
 In **Terminal**, drag images, documents, or folders from your system's file manager onto a pane to paste their paths into the current prompt, including agent CLIs. Multiple files are supported, and the prompt stays ready for review before you submit it. Drag the separator to resize panes, double-click it to equalize them, or focus it and use the arrow keys. A subtle border marks the active pane.
 
 On macOS, **Option (⌥)** types `@`, `|`, braces, brackets, and accents using the same keyboard layout as the editor. **Option + ←/→** still moves the cursor by word.
