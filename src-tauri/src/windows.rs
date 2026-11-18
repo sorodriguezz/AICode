@@ -39,6 +39,9 @@ pub struct WindowsState {
     pub transparent: Mutex<HashSet<String>>,
     /// "Reopen Last Session" was already offered in this run (once per launch, not per reload).
     pub previous_offered: AtomicBool,
+    /// Requests from the `aicode` command line (files at a line, a diff, a wait), per window, until
+    /// its page asks (`window_take_cli`); later ones arrive as `cli-request`.
+    pub pending_cli: Mutex<HashMap<String, Vec<Value>>>,
     /// Serialize webview IPC requests that allocate new window labels and write the registry.
     ipc_window_creation: tauri::async_runtime::Mutex<()>,
 }
@@ -419,7 +422,37 @@ pub fn open_in_window(app: &AppHandle, label: &str, paths_to_open: Vec<String>) 
     }
 }
 
-/// The window in front (or the first one), for things that belong to "the user's window": menu
+/// A request from the `aicode` command line for one window: queued until its page is ready, then
+/// an event. The window comes to the front, as `code` brings VS Code's.
+pub fn deliver_cli(app: &AppHandle, label: &str, request: Value) {
+    let state = app.state::<WindowsState>();
+    let ready = state.ready.lock().unwrap();
+    if !ready.iter().any(|l| l == label) {
+        state.pending_cli.lock().unwrap().entry(label.to_string()).or_default().push(request);
+        return;
+    }
+    drop(ready);
+    let _ = app.emit_to(label, "cli-request", request);
+    if let Some(w) = app.get_webview_window(label) {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
+/// The folder a window has open, as its session last saved it (`None`: no folder).
+pub fn window_folder(app: &AppHandle, label: &str) -> Option<String> {
+    let text = std::fs::read_to_string(session_path(app, label)).ok()?;
+    let session: Value = serde_json::from_str(&text).ok()?;
+    session.get("folder").and_then(Value::as_str).filter(|f| !f.is_empty()).map(String::from)
+}
+
+/// The open window that has `folder` open, if one does.
+pub fn window_with_folder(app: &AppHandle, folder: &str) -> Option<String> {
+    open_labels(app).into_iter().find(|l| window_folder(app, l).as_deref() == Some(folder))
+}
+
+/// The window in front (or the first one), for things/// The window in front (or the first one), for things that belong to "the user's window": menu
 /// commands, MCP tool calls.
 pub fn front_label(app: &AppHandle) -> Option<String> {
     let last = app.state::<WindowsState>().last_focused.lock().unwrap().clone();
@@ -448,6 +481,9 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
             crate::procs::kill_owned_by(app, &label);
             state.ready.lock().unwrap().retain(|l| l != &label);
             state.specs.lock().unwrap().remove(&label);
+            state.pending_cli.lock().unwrap().remove(&label);
+            // `aicode -w` waiting on this window returns.
+            crate::cli::window_closed(app, &label);
             let remaining: Vec<String> = open_labels(app).into_iter().filter(|l| l != &label).collect();
             // Closing one of several windows forgets it; quitting, or closing the last, keeps all.
             if !state.quitting.load(Ordering::SeqCst) && !state.switching.load(Ordering::SeqCst) && !remaining.is_empty() {
@@ -593,6 +629,13 @@ pub fn window_reopen(app: AppHandle, window: tauri::Window, spec: Option<Value>)
         });
     });
     Ok(())
+}
+
+/// The command-line requests waiting for this window (see [`deliver_cli`]). Asked after
+/// `window_take_pending`, which marks the window ready.
+#[tauri::command]
+pub fn window_take_cli(window: tauri::Window, state: State<'_, WindowsState>) -> Vec<Value> {
+    state.pending_cli.lock().unwrap().remove(window.label()).unwrap_or_default()
 }
 
 /// What this window should open now that it is loaded; later paths arrive as `open-paths`.

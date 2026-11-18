@@ -57,11 +57,12 @@ pub struct ProcState {
     procs: Mutex<HashMap<u32, Proc>>,
 }
 
-/// The PATH a login shell would have. An app started from the Dock gets a minimal PATH, which would
-/// hide every CLI installed with Homebrew, npm, cargo or a version manager.
-pub fn login_path() -> &'static str {
-    static PATH: OnceLock<String> = OnceLock::new();
-    PATH.get_or_init(|| {
+/// The PATH the user's login shell sets, as a terminal has it (nothing added): empty when it could
+/// not be read, and on Windows.
+pub fn shell_path() -> &'static [String] {
+    static PARTS: OnceLock<Vec<String>> = OnceLock::new();
+    PARTS.get_or_init(|| {
+        #[allow(unused_mut)]
         let mut parts: Vec<String> = Vec::new();
         #[cfg(unix)]
         {
@@ -78,10 +79,20 @@ pub fn login_path() -> &'static str {
             if let Ok(Ok(out)) = rx.recv_timeout(std::time::Duration::from_secs(4)) {
                 let text = String::from_utf8_lossy(&out.stdout);
                 if let Some(path) = text.split("__AICODE__").nth(1) {
-                    parts.extend(path.split(':').map(String::from));
+                    parts.extend(path.split(':').filter(|p| !p.is_empty()).map(String::from));
                 }
             }
         }
+        parts
+    })
+}
+
+/// The PATH a login shell would have. An app started from the Dock gets a minimal PATH, which would
+/// hide every CLI installed with Homebrew, npm, cargo or a version manager.
+pub fn login_path() -> &'static str {
+    static PATH: OnceLock<String> = OnceLock::new();
+    PATH.get_or_init(|| {
+        let mut parts: Vec<String> = shell_path().to_vec();
         if let Ok(current) = std::env::var("PATH") {
             parts.extend(std::env::split_paths(&current).map(|p| p.to_string_lossy().into_owned()));
         }

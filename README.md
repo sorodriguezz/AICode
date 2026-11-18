@@ -25,6 +25,22 @@ Core editing works offline with no account setup. AICode uses Tauri and your ope
 
 Use **Settings → Updates → Check for Updates** to update an installed copy.
 
+### The `aicode` command
+
+On first launch AICode installs `aicode` in your terminal's PATH, like VS Code's `code`. It uses a folder that needs no password, such as `/opt/homebrew/bin` or `~/.local/bin`. On Windows it adds `AICode\bin` to your user PATH, so open a new terminal after installing. If only `/usr/local/bin` is available, AICode asks once. The `.deb` and `.rpm` packages already install `/usr/bin/aicode`. You can install or remove it at any time with **Shell Command: Install 'aicode' Command in PATH** and **Shell Command: Uninstall 'aicode' Command from PATH**.
+
+```sh
+aicode .                    # open this folder (in the window that already has it, if any)
+aicode notes.md             # open a file; an empty one is created if it doesn't exist
+aicode -g src/app.ts:12:5   # open at line 12, column 5
+aicode -d old.txt new.txt   # compare two files
+aicode -n . / aicode -r .   # new window / the window in front
+git config --global core.editor "aicode -w"   # -w waits until the file is closed
+echo hello | aicode -       # open stdin
+```
+
+Run `aicode --help` for every option. If AICode isn't running, `aicode` starts it.
+
 In **Source Control**, fetch, pull, and push show **Cancel Operation** while running. Remote operations stop with an error after 120 seconds; adjust the limit in **Settings → Source Control (Git) → remoteTimeout**. Details appear in **Git: Show Git Output**.
 
 With **Source Control (Git)** enabled, the status bar shows who last changed the cursor's line and how long ago. Hover for the commit details. Unsaved edits are included, and changed lines show **You, uncommitted changes**.

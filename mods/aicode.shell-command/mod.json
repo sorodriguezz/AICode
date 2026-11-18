@@ -1,0 +1,26 @@
+{
+  "id": "aicode.shell-command",
+  "name": "Shell Command",
+  "version": "1.0.0",
+  "description": "The aicode command in your terminal, as VS Code has code: `aicode .` opens the folder, `aicode -g file:12` a line, `aicode -d a b` a diff, `aicode -w` waits for the file to close (git's editor). Installed in the PATH when AICode starts.",
+  "author": "AICode",
+  "icon": "terminal",
+  "main": "main.js",
+  "api": 1,
+  "activation": ["onStartup"],
+  "permissions": ["fs:write", "process"],
+  "contributes": {
+    "commands": [
+      { "id": "shellCommand.install", "title": "Install 'aicode' Command in PATH", "category": "Shell Command" },
+      { "id": "shellCommand.uninstall", "title": "Uninstall 'aicode' Command from PATH", "category": "Shell Command" },
+      { "id": "shellCommand.status", "title": "Where Is the 'aicode' Command?", "category": "Shell Command" }
+    ],
+    "settings": {
+      "autoInstall": {
+        "type": "boolean",
+        "default": true,
+        "description": "Install (and keep up to date) the aicode command when AICode starts, in a folder of the PATH that needs no password. When only /usr/local/bin is left (macOS), AICode asks once."
+      }
+    }
+  }
+}

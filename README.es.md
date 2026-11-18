@@ -25,6 +25,22 @@ Puedes editar sin conexión y sin crear una cuenta de AICode. La aplicación usa
 
 Para actualizar una instalación existente, usa **Settings → Updates → Check for Updates**.
 
+### El comando `aicode`
+
+La primera vez que se abre, AICode instala `aicode` en el PATH de tu terminal, como `code` en VS Code. Usa una carpeta que no pida contraseña, como `/opt/homebrew/bin` o `~/.local/bin`. En Windows agrega `AICode\bin` al PATH de tu usuario, así que abre una terminal nueva después de instalarlo. Si solo queda `/usr/local/bin`, AICode pregunta una vez. Los paquetes `.deb` y `.rpm` ya instalan `/usr/bin/aicode`. Puedes instalarlo o quitarlo cuando quieras con **Shell Command: Install 'aicode' Command in PATH** y **Shell Command: Uninstall 'aicode' Command from PATH**.
+
+```sh
+aicode .                    # abre esta carpeta (en la ventana que ya la tiene, si existe)
+aicode notas.md             # abre un archivo; si no existe, se crea vacío
+aicode -g src/app.ts:12:5   # abre en la línea 12, columna 5
+aicode -d viejo.txt nuevo.txt   # compara dos archivos
+aicode -n . / aicode -r .   # ventana nueva / la ventana del frente
+git config --global core.editor "aicode -w"   # -w espera a que cierres el archivo
+echo hola | aicode -        # abre lo que llega por stdin
+```
+
+`aicode --help` muestra todas las opciones. Si AICode no está abierto, `aicode` lo inicia.
+
 En **Source Control**, fetch, pull y push muestran **Cancel Operation** mientras se ejecutan. Si una operación de red supera 120 segundos, se detiene y muestra un error; puedes ajustar ese plazo en **Settings → Source Control (Git) → remoteTimeout**. Los detalles quedan en **Git: Show Git Output**.
 
 En **Terminal**, arrastra imágenes, documentos o carpetas desde Finder o el explorador de archivos del sistema sobre una división para pegar sus rutas en la entrada actual, también cuando usas Claude u otro agente. Puedes soltar varios archivos; la entrada queda lista para revisar antes de enviarla. Arrastra el separador entre terminales para cambiar sus tamaños y haz doble clic para igualarlos. Un borde tenue identifica la división activa.

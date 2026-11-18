@@ -27,6 +27,17 @@ import { Appearance, editorOptions } from "./core/appearance";
 import { openWindow, resolveLayout, layouts, type WindowSpec, type WindowLayout } from "./core/windows";
 import type { ViewLocation, LayoutState, TitleHandle, StatusHandle } from "./core/workbench";
 
+/** What the `aicode` command line asks a window to open (src-tauri/src/cli.rs). */
+interface CliRequest {
+  id?: number;
+  files: { path: string; line: number | null; column: number | null }[];
+  folders: string[];
+  diff: [string, string] | null;
+  newWindow: boolean;
+  reuseWindow: boolean;
+  wait: boolean;
+}
+
 // "mac", "windows" or "linux", for styles that differ (on macOS the title bar leaves room for the
 // window buttons; elsewhere the window has no frame and the title bar draws the menus and the
 // window buttons itself, see titlebar.ts).
@@ -309,7 +320,12 @@ async function boot() {
   let openLater: ((paths: string[]) => void) | null = null;
   const queued: string[][] = [];
   await webview.listen<string[]>("open-paths", (e) => (openLater ? openLater(e.payload) : queued.push(e.payload)));
+  // …and so do requests from the `aicode` command line (a line to go to, a diff, `-w`).
+  let cliLater: ((req: CliRequest) => void) | null = null;
+  const cliQueued: CliRequest[] = [];
+  await webview.listen<CliRequest>("cli-request", (e) => (cliLater ? cliLater(e.payload) : cliQueued.push(e.payload)));
   const pending = await invoke<string[]>("window_take_pending");
+  cliQueued.push(...(await invoke<CliRequest[]>("window_take_cli")));
   // Opened with nothing to show: the empty editor area (its watermark), as in VS Code. A new file
   // is a double click there, or ⌘N, away.
   updateTitle();
@@ -329,7 +345,7 @@ async function boot() {
   // ---------- opening files and folders from outside ----------
   /** `dropped`: dragged onto this window, so a folder replaces this one (VS Code's drop); otherwise
    *  (the Dock icon, `open -a`, the command line) a window with a folder keeps it. */
-  const openPaths = async (paths: string[], dropped = false) => {
+  const openPaths = async (paths: string[], dropped = false, at?: Map<string, { line?: number; column?: number }>) => {
     const folders: string[] = [];
     const files: string[] = [];
     for (const path of paths) {
@@ -354,11 +370,35 @@ async function boot() {
         ]);
     }
     // Files open as regular tabs (never a preview), next to what is open: the folder stays.
-    for (const path of files) if (await editors.openFile(path, { preview: false })) invoke("recent_add", { path });
+    for (const path of files) if (await editors.openFile(path, { preview: false, ...at?.get(path) })) invoke("recent_add", { path });
   };
   if (pending.length) await openPaths(pending);
   for (const paths of queued.splice(0)) await openPaths(paths);
   openLater = (paths) => openPaths(paths);
+
+  /** `aicode …` in a terminal (src-tauri/src/cli.rs chose this window). `-r` replaces the folder,
+   *  as a drop does; `-w` answers once every file it opened (or the diff) is closed — a request
+   *  with only a folder is answered when the window closes, by the core. */
+  const handleCli = async (req: CliRequest) => {
+    const at = new Map(req.files.map((f) => [f.path, { line: f.line ?? undefined, column: f.column ?? undefined }]));
+    await openPaths([...req.folders, ...req.files.map((f) => f.path)], req.reuseWindow, at);
+    const diff = req.diff?.length === 2 ? await editors.openDiff(req.diff[0], req.diff[1]) : null;
+    if (!req.wait || req.id == null) return;
+    const id = req.id;
+    const paths = req.files.map((f) => f.path).filter((p) => editors.hasOpen(p));
+    if (!paths.length && !diff) {
+      // Nothing left to wait for (a folder only: the window's close answers; a file that did not open: now).
+      if (req.files.length || req.diff) invoke("cli_done", { id });
+      return;
+    }
+    const watch = editors.onDidChangeDocs.event(() => {
+      if (paths.some((p) => editors.hasOpen(p)) || (diff && editors.isOpenId(diff.id))) return;
+      watch.dispose();
+      invoke("cli_done", { id });
+    });
+  };
+  for (const req of cliQueued.splice(0)) await handleCli(req).catch((e) => notify("error", `aicode: ${e}`));
+  cliLater = (req) => void handleCli(req).catch((e) => notify("error", `aicode: ${e}`));
 
   // Drag and drop of files and folders from Finder (or anywhere) onto the window.
   const dropLabel = h("span", null, "Drop to open");

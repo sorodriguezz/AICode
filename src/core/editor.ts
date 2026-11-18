@@ -1580,6 +1580,57 @@ export class EditorService {
     });
   }
 
+  /** Whether a tab shows `path`: as text, or a mod's view of it (an image). */
+  hasOpen(path: string): boolean {
+    return this.docs.some((d) => (d.kind === "text" ? d.path === path : d.spec.forPath === path));
+  }
+
+  /** Whether the tab with this id is still open. */
+  isOpenId(id: string): boolean {
+    return this.docs.some((d) => d.id === id);
+  }
+
+  /** Two files side by side (`aicode -d left right`, as `code --diff`). Read-only: it shows the difference. */
+  async openDiff(left: string, right: string): Promise<CustomDoc | null> {
+    const read = async (path: string) => {
+      const file = await invoke<TextFile>("fs_read_text", { modId: "core", path });
+      if (file.binary) throw new Error(`${basename(path)} is a binary file`);
+      return file.text;
+    };
+    let texts: [string, string];
+    try {
+      texts = [await read(left), await read(right)];
+    } catch (e) {
+      notify("error", `Could not compare: ${e instanceof Error ? e.message : e}`);
+      return null;
+    }
+    return this.openCustom({
+      title: `${basename(left)} ↔ ${basename(right)}`,
+      icon: "diff",
+      key: `diff:${left}\n${right}`,
+      render: (el) => {
+        const diffHost = h("div", { class: "proposal-diff monaco-component" });
+        el.append(
+          h(
+            "div",
+            { class: "proposal" },
+            h("div", { class: "proposal-bar" }, icon("diff"), h("div", { class: "what" }, h("b", null, basename(left)), " ↔ ", h("b", null, basename(right)), h("span", { class: "muted" }, ` — ${left} ↔ ${right}`))),
+            diffHost,
+          ),
+        );
+        const original = monaco.editor.createModel(texts[0], detectLanguage(left));
+        const modified = monaco.editor.createModel(texts[1], detectLanguage(right));
+        const diff = monaco.editor.createDiffEditor(diffHost, { automaticLayout: true, readOnly: true, originalEditable: false, renderSideBySide: true, fontSize: this.fontSize, minimap: { enabled: false } });
+        diff.setModel({ original, modified });
+        return toDisposable(() => {
+          diff.dispose();
+          original.dispose();
+          modified.dispose();
+        });
+      },
+    });
+  }
+
   // ---------- session ----------
 
   snapshot() {

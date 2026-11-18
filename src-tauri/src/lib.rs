@@ -4,6 +4,7 @@
 
 mod background;
 mod bundle;
+mod cli;
 #[cfg(target_os = "macos")]
 mod dock;
 mod fsops;
@@ -68,6 +69,12 @@ fn core_info() -> serde_json::Value {
     })
 }
 
+/// `aicode …` in a terminal: the command line runs and ends here, before any of the app starts.
+/// `None`: this is the app.
+pub fn cli_main() -> Option<i32> {
+    cli::client_main()
+}
+
 pub fn run() {
     paths::ensure();
     let builder = tauri::Builder::default();
@@ -83,6 +90,7 @@ pub fn run() {
         .manage(http::HttpState::default())
         .manage(mcp::McpState::default())
         .manage(windows::WindowsState::default())
+        .manage(cli::CliState::default())
         .manage(fsops::WatchState::default())
         .manage(updater::UpdateState::default())
         .manage(background::BgState::default())
@@ -131,6 +139,8 @@ pub fn run() {
             }
             windows::restore(app.handle(), initial)?;
             wins.started.store(true, std::sync::atomic::Ordering::SeqCst);
+            // `aicode` in a terminal reaches this AICode from here on.
+            cli::serve(app.handle());
             #[cfg(target_os = "macos")]
             dock::install(app.handle());
             native::install(app.handle());
@@ -227,6 +237,12 @@ pub fn run() {
             mcp::mcp_reply,
             windows::window_new,
             windows::window_take_pending,
+            windows::window_take_cli,
+            cli::cli_done,
+            cli::shell_command_status,
+            cli::shell_command_install,
+            cli::shell_command_uninstall,
+            cli::shell_command_claim_startup,
             windows::window_count,
             windows::window_take_spec,
             windows::window_is_transparent,
@@ -250,7 +266,10 @@ pub fn run() {
                     state.quitting.store(true, std::sync::atomic::Ordering::SeqCst);
                 }
             }
-            tauri::RunEvent::Exit => procs::kill_all(app),
+            tauri::RunEvent::Exit => {
+                cli::forget();
+                procs::kill_all(app)
+            }
             // The Dock icon clicked: hidden windows come back (a mod may have hidden them).
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { has_visible_windows, .. } => background::on_reopen(app, has_visible_windows),

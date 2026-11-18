@@ -112,6 +112,8 @@ pub struct Profile {
 pub const DEFAULT_ON: &[&str] = &[
     "aicode.icons", "aicode.json-yaml", "aicode.image-preview", "aicode.motion",
     "aicode.primary-sidebar", "aicode.secondary-sidebar", "aicode.bottom-panel",
+    // `aicode .` in a terminal, as editors are expected to have (VS Code's `code`).
+    "aicode.shell-command",
 ];
 
 /// Mods split out of another one: a profile that had the first on gets the others, once, so it

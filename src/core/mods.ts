@@ -721,6 +721,19 @@ export class ModHost {
         setBadge: (text: string | number | null) => invoke<void>("app_set_badge", { text: text == null ? null : String(text) }),
         /** Quits AICode (sessions are kept, as with ⌘Q). */
         quit: () => invoke<void>("app_quit"),
+        /**
+         * The `aicode` command in the terminal (like VS Code's `code`): `status()` says where it is
+         * and whether it runs this AICode; `install({ admin })` writes it to a folder of the PATH
+         * (`admin`: macOS may ask for the password for /usr/local/bin; without it such a folder
+         * fails with "needs-admin…"); `uninstall()` removes AICode's. `claimStartup()` is true for
+         * the first window that asks in a launch.
+         */
+        shellCommand: {
+          status: () => call<ShellCommandStatus>("shell_command_status"),
+          install: (opts: { admin?: boolean } = {}) => call<ShellCommandStatus>("shell_command_install", { admin: !!opts.admin }),
+          uninstall: () => call<ShellCommandStatus>("shell_command_uninstall"),
+          claimStartup: () => invoke<boolean>("shell_command_claim_startup"),
+        },
         /** The Dock icon was clicked; with no window on screen, hidden windows come back by themselves. */
         onReopen: (fn: (info: { hasVisibleWindows: boolean }) => void) => track(host.onDidReopen.event(fn)),
         /**
@@ -1279,6 +1292,21 @@ function toBase64(bytes: Uint8Array): string {
   let bin = "";
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(bin);
+}
+
+/** Where the `aicode` command is and what it runs (src-tauri/src/cli.rs). */
+export interface ShellCommandStatus {
+  supported: boolean;
+  reason: string | null;
+  installed: boolean;
+  path: string | null;
+  ours: boolean;
+  current: boolean;
+  packaged: boolean;
+  foreign: boolean;
+  dir: string | null;
+  needsAdmin: boolean;
+  onPath: boolean;
 }
 
 export interface HttpOptions {
