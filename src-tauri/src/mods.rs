@@ -116,6 +116,15 @@ pub const DEFAULT_ON: &[&str] = &[
     "aicode.shell-command",
 ];
 
+/// What a brand-new profile starts with on top of [`DEFAULT_ON`], so the first window already has
+/// the minimum to work with: the file tree, a terminal and Source Control (with its colors in the
+/// tree). Only for a profile that does not exist yet (the first run, or one the app creates
+/// itself): an existing profile is never changed, and an "Empty" one stays a notepad.
+pub const STARTER: &[&str] = &[
+    "aicode.explorer", "aicode.terminal",
+    "aicode.git", "aicode.git-core", "aicode.git-decorations",
+];
+
 /// Mods split out of another one: a profile that had the first on gets the others, once, so it
 /// keeps what it had (AI Chat carried every agent, Glass the pill tabs and cursor, and Source
 /// Control the graph and decorations).
@@ -139,6 +148,19 @@ pub const SPLIT_FROM: &[(&str, &[&str])] = &[
 ];
 
 impl Profile {
+    /// A profile that did not exist: the defaults (and every one-time move, so none of them pulls
+    /// in more than [`STARTER`] says) and the starter mods.
+    pub fn starter() -> Self {
+        let mut profile = Profile::default();
+        profile.offer_defaults();
+        for id in STARTER {
+            if !profile.enabled.iter().any(|e| e == id) {
+                profile.enabled.push(id.to_string());
+            }
+        }
+        profile
+    }
+
     /// Turns on the default mods this profile was never given. True when something changed.
     pub fn offer_defaults(&mut self) -> bool {
         let mut changed = false;
@@ -273,8 +295,15 @@ fn migrate(name: &str) {
 
 pub fn read_profile(name: &str) -> Profile {
     migrate(name);
-    let parsed: Option<Profile> = std::fs::read_to_string(profile_path(name)).ok().and_then(|s| serde_json::from_str(&s).ok());
+    let text = std::fs::read_to_string(profile_path(name));
+    let missing = matches!(&text, Err(e) if e.kind() == std::io::ErrorKind::NotFound);
+    let parsed: Option<Profile> = text.ok().and_then(|s| serde_json::from_str(&s).ok());
     let on_disk = parsed.is_some();
+    if missing {
+        // The first run: the starter set. Kept in memory like the empty profile was; the first
+        // change the user makes writes it out with everything else.
+        return Profile::starter();
+    }
     let mut profile = parsed.unwrap_or_default();
     // The default mods, once per profile. Saved only over a profile.json that read fine: one that
     // does not parse is the user's to fix, not to overwrite.
@@ -711,6 +740,56 @@ mod tests {
         assert!(saved.contains("defaultsOffered"));
         let mut again: Profile = serde_json::from_str(&saved).unwrap();
         assert!(!again.offer_defaults());
+    }
+
+    #[test]
+    fn a_new_profile_starts_with_explorer_terminal_and_git() {
+        let mut p = Profile::starter();
+        for id in STARTER.iter().chain(DEFAULT_ON) {
+            assert!(p.enabled.iter().any(|e| e == id), "{id}");
+        }
+        // The one-time moves are recorded, not applied: Git does not bring the graph, nor the
+        // Terminal its AI launcher and the agent runtime.
+        for id in ["aicode.git-graph", "aicode.terminal-ai", "aicode.agent-runtime", "aicode.agents"] {
+            assert!(!p.enabled.iter().any(|e| e == id), "{id}");
+        }
+        assert!(!p.offer_defaults());
+        // Turned off, they stay off.
+        p.enabled.retain(|e| e != "aicode.terminal");
+        assert!(!p.offer_defaults());
+        assert!(!p.enabled.iter().any(|e| e == "aicode.terminal"));
+    }
+
+    #[test]
+    fn starter_mods_have_their_dependencies() {
+        let manifests = [
+            include_str!("../../mods/aicode.explorer/mod.json"),
+            include_str!("../../mods/aicode.terminal/mod.json"),
+            include_str!("../../mods/aicode.git/mod.json"),
+            include_str!("../../mods/aicode.git-core/mod.json"),
+            include_str!("../../mods/aicode.git-decorations/mod.json"),
+        ];
+        let p = Profile::starter();
+        for text in manifests {
+            let m: Manifest = serde_json::from_str(text).unwrap();
+            assert!(STARTER.contains(&m.id.as_str()), "{}", m.id);
+            for dep in &m.dependencies {
+                assert!(p.enabled.contains(dep), "{} needs {dep}", m.id);
+            }
+        }
+    }
+
+    #[test]
+    fn existing_and_empty_profiles_do_not_get_the_starter_mods() {
+        let mut empty = Profile::default();
+        empty.offer_defaults();
+        let mut old: Profile = serde_json::from_str(r#"{"enabled":["aicode.icons"],"defaultsOffered":["aicode.icons"]}"#).unwrap();
+        old.offer_defaults();
+        for p in [empty, old] {
+            for id in STARTER {
+                assert!(!p.enabled.iter().any(|e| e == id), "{id}");
+            }
+        }
     }
 
     #[test]

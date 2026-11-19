@@ -21,7 +21,7 @@ Core editing works offline with no account setup. AICode uses Tauri and your ope
 
 1. [Download the installer for your platform](https://github.com/sorodriguezz/AICode/releases/latest). Choose a `.dmg` for macOS, a `-setup.exe` for Windows, or an AppImage, `.deb`, or `.rpm` for Linux.
 2. Open a file to write or open a folder to work on a project.
-3. Open **Mods** from the gear menu. Try **Explorer**, **Search**, and **Terminal** for a coding workspace. Enable **Source Control (Git)** and **Git Graph** to work with your repository. AICode activates their dependencies automatically.
+3. A new install starts with **Explorer**, **Terminal**, and **Source Control (Git)** on. Open **Mods** from the gear menu to add more, such as **Search** or **Git Graph**, or to turn any of them off. AICode activates their dependencies automatically.
 
 Use **Settings → Updates → Check for Updates** to update an installed copy.
 

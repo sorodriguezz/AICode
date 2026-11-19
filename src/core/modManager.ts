@@ -337,7 +337,7 @@ export function openModManager(host: ModHost, editors: EditorService, query = ""
         const hero = h(
           "header",
           { class: "mods-hero" },
-          h("div", null, h("h1", null, "Mods"), h("p", null, "AICode starts as a notepad. Each mod adds one thing — and only loads when you use it.")),
+          h("div", null, h("h1", null, "Mods"), h("p", null, "AICode starts small. Each mod adds one thing — and only loads when you use it.")),
           h(
             "div",
             { class: "mods-stats" },

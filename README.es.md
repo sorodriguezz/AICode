@@ -21,7 +21,7 @@ Puedes editar sin conexión y sin crear una cuenta de AICode. La aplicación usa
 
 1. [Descarga el instalador para tu plataforma](https://github.com/sorodriguezz/AICode/releases/latest). Elige un `.dmg` para macOS, un `-setup.exe` para Windows o un AppImage, `.deb` o `.rpm` para Linux.
 2. Abre un archivo para escribir o una carpeta para trabajar en un proyecto.
-3. Abre **Mods** desde el menú del engranaje. Prueba **Explorer**, **Search** y **Terminal** para armar tu espacio de trabajo. Activa **Source Control (Git)** y **Git Graph** para trabajar con tu repositorio. AICode activa sus dependencias automáticamente.
+3. Una instalación nueva parte con **Explorer**, **Terminal** y **Source Control (Git)** activos. Abre **Mods** desde el menú del engranaje para sumar otros, como **Search** o **Git Graph**, o para apagar cualquiera. AICode activa sus dependencias automáticamente.
 
 Para actualizar una instalación existente, usa **Settings → Updates → Check for Updates**.
 

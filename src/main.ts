@@ -362,13 +362,7 @@ async function boot() {
     const mine = workspace.folder === null || dropped ? folders[0] : folders.find((f) => f === workspace.folder);
     for (const other of folders.filter((f) => f !== mine)) invoke("window_new", { paths: [other] });
     // The folder first: replacing it closes the old folder's tabs, and the files below must not go with them.
-    if (mine && (await workspace.change(mine))) {
-      if (wb.hasView("explorer")) wb.showView("explorer", false);
-      else
-        notify("info", `Opened ${basename(mine)}. Turn on the Explorer mod to browse it (⌘P already finds its files).`, [
-          { label: "Open Mods", run: () => commands.execute("mods.manage") },
-        ]);
-    }
+    if (mine) await openFolderHere(wb, workspace, mine);
     // Files open as regular tabs (never a preview), next to what is open: the folder stays.
     for (const path of files) if (await editors.openFile(path, { preview: false, ...at?.get(path) })) invoke("recent_add", { path });
   };
@@ -726,6 +720,35 @@ async function boot() {
   (window as any).aicode = { wb, editors, workspace, host, commands, config, appearance, openWindow };
 }
 
+/** Opens a folder in this window — only when something shows it. Without the Explorer the title
+ *  would name a folder the window shows nothing of (it looked as if the drop did nothing), so
+ *  the folder waits for the user to turn the Explorer on, or to open it anyway. */
+async function openFolderHere(wb: Workbench, workspace: Workspace, folder: string): Promise<boolean> {
+  if (folder === workspace.folder) return true;
+  if (!wb.hasView("explorer")) {
+    notify("info", `Opening ${basename(folder)} needs the Explorer mod to show its files.`, [
+      {
+        label: "Turn On Explorer",
+        run: async () => {
+          try {
+            await invoke("profile_set_enabled", { id: "aicode.explorer", enabled: true });
+          } catch (e) {
+            notify("error", `Could not turn on the Explorer: ${e}`);
+            return;
+          }
+          // The reload brings the Explorer in; the session it saves brings the folder back.
+          if (await workspace.change(folder)) location.reload();
+        },
+      },
+      { label: "Open Anyway", run: () => void workspace.change(folder) },
+    ]);
+    return false;
+  }
+  if (!(await workspace.change(folder))) return false;
+  wb.showView("explorer", false);
+  return true;
+}
+
 function registerWorkbenchCommands(
   wb: Workbench,
   editors: EditorService,
@@ -881,8 +904,7 @@ function registerWorkbenchCommands(
   // Open a folder in this window (replacing the one it has), as VS Code's File ▸ Open Folder.
   reg("workbench.openFolder", "Open Folder…", async (path?: string) => {
     const folder = typeof path === "string" ? path : await openDialog({ directory: true, multiple: false });
-    if (typeof folder !== "string" || !(await workspace.change(folder))) return;
-    if (wb.hasView("explorer")) wb.showView("explorer", false);
+    if (typeof folder === "string") await openFolderHere(wb, workspace, folder);
   }, "File");
   reg("workbench.closeFolder", "Close Folder", () => workspace.change(null), "File");
   commands.bind("mod+k f", "workbench.closeFolder");
